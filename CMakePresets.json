@@ -1,0 +1,80 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "default",
+      "inherits": "base",
+      "displayName": "Default (RelWithDebInfo, autodetected TLS)",
+      "description": "What you get from a plain `cmake -B build`.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "dev",
+      "inherits": "base",
+      "displayName": "Development (debug build, warnings on)",
+      "description": "Unoptimised, DEBUGMODE compiled in, -Wall.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "IRCU_ENABLE_DEBUG": "ON",
+        "IRCU_ENABLE_WARNINGS": "ON"
+      }
+    },
+    {
+      "name": "asan",
+      "inherits": "dev",
+      "displayName": "Development with AddressSanitizer",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release (optimised, assertions off)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "IRCU_ENABLE_ASSERTS": "OFF"
+      }
+    },
+    {
+      "name": "no-tls",
+      "inherits": "base",
+      "displayName": "No TLS backend",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "IRCU_TLS": "none"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "default", "configurePreset": "default" },
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "asan", "configurePreset": "asan" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "no-tls", "configurePreset": "no-tls" }
+  ],
+  "testPresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "output": { "outputOnFailure": true }
+    },
+    { "name": "default", "inherits": "base", "configurePreset": "default" },
+    { "name": "dev", "inherits": "base", "configurePreset": "dev" },
+    { "name": "asan", "inherits": "base", "configurePreset": "asan" },
+    { "name": "release", "inherits": "base", "configurePreset": "release" },
+    { "name": "no-tls", "inherits": "base", "configurePreset": "no-tls" }
+  ]
+}

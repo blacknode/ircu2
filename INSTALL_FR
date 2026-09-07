@@ -9,9 +9,9 @@ voici:
 
 1) Déballer le module.
 2) cd dans le répertoire.
-3) `./configure'
-4) `make config'
-5) `make install'
+3) `cmake -B build'
+4) `cmake --build build'
+5) `cmake --install build'
 
 1) Déballer le module.
 ====================
@@ -101,25 +101,31 @@ ou ircu2.10 si vous utilisé cvs.
 
 Là où "ircu2.x.y.z" est le nom du répertoire dézippé.
 
-3) "./configure"
-=================
+3) "cmake -B build"
+===================
 
-Ceci produira le 'config/setup.h', votre configuration dépend du
-système d'exploitation.
+Ceci examine votre système d'exploitation et produit le 'config.h' ainsi
+que les fichiers de compilation, le tout dans le répertoire "build".  Le
+répertoire des sources n'est jamais modifié: vous pouvez effacer "build"
+et recommencer à tout moment, ou garder plusieurs répertoires de
+compilation en parallèle.
 
-Si ceci produit un message une erreur tel que "Permission Denied",
-alors essai avec "chmod a+x ./configure" pour avoir la permission
-d'excuter le fichier.
+Il vous faut CMake 3.16 ou plus récent, un compilateur C99, et bison.
 
-Pour plus d'information sur la commande configure, tapez "./configure
---help".
+Les options se passent avec -DNOM=VALEUR, par exemple:
 
-4) "make"
-=========
+cmake -B build -DIRCU_TLS=openssl -DIRCU_ENABLE_DEBUG=ON
+
+Pour voir toutes les options avec leur valeur actuelle, tapez "cmake -B
+build -LH".  La liste complète, et la correspondance avec les anciennes
+options de "./configure", se trouvent dans le fichier INSTALL.
+
+4) "cmake --build build"
+========================
 
 Tapez:
 
-make
+cmake --build build
 
 dans le répertoire de base. Il devrait compiler sans erreurs ou
 avertissements.  Veuillez expédier n'importe quel problème aux
@@ -128,12 +134,16 @@ pas une erreur de vous-même.  Si vous voulez que votre système
 d'exploitation soit supporté dans de futures versions, faite une
 connexion qui fixe réellement le problème.
 
-5) "make install"
-=================
+Pour exécuter les tests unitaires:
 
-Type:
+ctest --test-dir build
 
-make install
+5) "cmake --install build"
+==========================
+
+Tapez:
+
+cmake --install build
 
 Ceci devrait installer l'ircd et la dir man.  Veuillez revérifier les
 permissions du binaire.
@@ -154,8 +164,8 @@ un cerveau-mort /bin/sh pose le problème, dans ce cas je suggère
 d'installer le "bash" et de l'utiliser comme (as sh - > bash).  En
 conclusion, tout autre problèmes de compilent devrait être résolu
 quand vous installez le GCC.  Si vous avez des problemes avec le
-startage du ircd, executer "./configure" encore et mettez la commande
-"--enable-debug".  Recompiler l'ircd, et executer-le avec:
+startage du ircd, executer "cmake -B build -DIRCU_ENABLE_DEBUG=ON"
+encore.  Recompiler l'ircd, et executer-le avec:
 
 ircd -t -x9
 

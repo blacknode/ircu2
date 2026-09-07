@@ -2,60 +2,171 @@
 ircu - INSTALL
   Original by Run <carlo@runaway.xs4all.nl>,
   Isomer <isomer@coders.net>, and Kev <klmitch@mit.edu>
-  Rewritten by Sengaia <sengaia@undernet.org> 
+  Rewritten by Sengaia <sengaia@undernet.org>
   Updated by Entrope <entrope@undernet.org>
 
-Compiling and installing ircu should be a fairly straightforward process,
-if you have obtained this software as a (.tar.gz) package, please consider
-using CVS (described below). Using CVS will make updating your installation
-much easier. 
+ircu is built with CMake.  If you are used to the old "./configure && make"
+sequence, see the "Coming from autotools" section at the end for the option
+names that replaced each configure switch.
 
-After obtaining the latest version of the ircu source code, change into the
-source directory (ircu2.10.xx.yy), and run "./configure". To see the various
-ways in which you can customize your installation, run "./configure --help".
 
-The configure process will check your environment and prepare itself for
-compiling the source code. If one or more of the prerequisites cannot be
-found, configure will terminate with an error. You will need to resolve
-this and run configure again.
+REQUIREMENTS
 
-If configure runs without error(s), you are ready to compile. To compile ircu,
-run "make". Please use GNU make and gcc. If the source code does not compile,
-make sure your environment is setup correctly. If you are convinced the source
-of the failure is ircu, gather all relevant information about your system such
-as the Architecture, OS version, the configure statement you used, etc. and
-contact coder-com@undernet.org.
+  - CMake 3.16 or newer
+  - A C99 compiler (gcc or clang)
+  - GNU make or Ninja
+  - bison (or a yacc that understands -d), for the configuration file parser
+  - Optionally, development headers for one TLS library: OpenSSL, GnuTLS or
+    LibreSSL's libtls
 
-Once ircu is compiled, install it by running "make install".
+  On Debian or Ubuntu:
+    apt-get install cmake bison pkg-config libssl-dev
 
-Next, you will have to configure your IRC server by setting up your ircd.conf
-file. Use the included doc/example.conf as a starting point; it is installed
-in $HOME/lib/example.conf by default.
-Setting up ircd.conf can be a bit tricky, so if this is your first time doing
-it, begin with a bare-bones configuration and extend it as you go.
+  On Red Hat or Fedora:
+    dnf install cmake bison pkgconf openssl-devel
 
-If you are upgrading from ircu2.10.11, use the ircd/convert-conf
-program to convert your existing configuration file(s).  It is
-compiled during "make" and installed to $PREFIX/bin/convert-conf.
+  On FreeBSD:
+    pkg install cmake bison
+
+
+BUILDING
+
+Configure a build directory, build it, and run the unit tests:
+
+    cmake -B build
+    cmake --build build -j
+    ctest --test-dir build
+
+CMake never writes into the source tree, so the build directory can be thrown
+away and recreated at any time, and several of them can coexist:
+
+    cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DIRCU_ENABLE_DEBUG=ON
+    cmake -B build-gnutls -DIRCU_TLS=gnutls
+
+To see every option with its current value:
+
+    cmake -B build -LH
+
+CMakePresets.json ships a few ready-made configurations (CMake 3.21+):
+
+    cmake --list-presets
+    cmake --preset dev            # debug build, DEBUGMODE, -Wall
+    cmake --build --preset dev
+    ctest --preset dev
+
+Then install:
+
+    cmake --install build
+
+The default installation prefix is your home directory, as it has always been
+for ircu; pass -DCMAKE_INSTALL_PREFIX=/some/where to change it.
+
+
+CONFIGURATION OPTIONS
+
+Pass these to the first `cmake -B build` invocation as -DNAME=VALUE.  They are
+remembered in the build directory, so later builds do not need to repeat them.
+
+  Paths and identity
+    CMAKE_INSTALL_PREFIX    Installation prefix (default: $HOME)
+    IRCU_DOMAIN             Domain name used in local statistics gathering.
+                            Guessed from /etc/resolv.conf; required if that
+                            fails.
+    IRCU_DPATH              Directory for all server data files
+                            (default: <prefix>/lib)
+    IRCU_CPATH              Default configuration file (default: ircd.conf)
+    IRCU_LPATH              Default debugging log file (default: ircd.log)
+    IRCU_CHROOT             Directory the server will be chrooted into; every
+                            compiled-in path is rewritten relative to it.
+                            See doc/readme.chroot.
+
+  Installed binary
+    IRCU_SYMLINK            Name of the symlink placed next to the timestamped
+                            binary; "no" installs a plain `ircd` instead
+                            (default: ircd)
+    IRCU_MODE               Octal permissions for the binary (default: 711)
+    IRCU_OWNER              Owner of the installed binary (default: you)
+    IRCU_GROUP              Group of the installed binary (default: your group)
+
+  Features
+    IRCU_TLS                TLS backend: auto, none, openssl, gnutls or libtls
+                            (default: auto, which prefers OpenSSL)
+    IRCU_ENABLE_IPV6        IPv6 support (default: on where available)
+    IRCU_MAXCON             Maximum number of connections (default: 16384)
+    IRCU_ENABLE_DEBUG       Compile the debugging code (default: off)
+    IRCU_ENABLE_ASSERTS     Assertion checking (default: on)
+    IRCU_ENABLE_INLINES     Inline a few critical functions (default: on)
+    IRCU_ENABLE_WARNINGS    Compile with -Wall (default: off)
+    IRCU_ENABLE_PEDANTIC    Compile with -pedantic (default: off)
+    IRCU_ENABLE_PROFILE     Build for gprof, with -pg (default: off)
+    IRCU_LEAK_DETECT        Link against a patched Boehm GC: "yes", or the
+                            directory holding it (default: off)
+
+  Event engines
+    IRCU_ENABLE_POLL        poll() engine (default: on where it is a real
+                            system call)
+    IRCU_ENABLE_EPOLL       epoll() engine, Linux (default: on if available)
+    IRCU_ENABLE_KQUEUE      kqueue() engine, BSD (default: on if available)
+    IRCU_ENABLE_DEVPOLL     /dev/poll engine, Solaris (default: on if
+                            available)
+
+  CMAKE_BUILD_TYPE selects the optimisation level: Debug (-g), Release (-O3),
+  RelWithDebInfo (-O2 -g, the default) or MinSizeRel.  It does not affect
+  assertions; use IRCU_ENABLE_ASSERTS for those.
+
+
+AFTER INSTALLING
+
+Configure your server by setting up its ircd.conf.  doc/example.conf is a
+starting point and gets installed into the data directory for you.  Setting up
+ircd.conf can be a bit tricky, so if this is your first time doing it, begin
+with a bare-bones configuration and extend it as you go.
+
+If you are upgrading from ircu2.10.11, use the convert-conf program to convert
+your existing configuration file(s).  It is built alongside the server and
+installed next to it.
 
 Good Luck!
 
-RETRIEVING IRCU VIA CVS
 
-The recommended way to get the ircu package now is to use CVS.  CVS makes
-upgrades a lot less painful and lets you get the latest package.
+COMING FROM AUTOTOOLS
 
-The first thing you need to do is login to the cvs server:
-# cvs -d :pserver:anonymous@cvs.undernet.org:/cvsroot/undernet-ircu login
+  ./configure --enable-poll               -DIRCU_ENABLE_POLL=ON
+  ./configure --enable-debug              -DIRCU_ENABLE_DEBUG=ON
+  ./configure --disable-asserts           -DIRCU_ENABLE_ASSERTS=OFF
+  ./configure --enable-profile            -DIRCU_ENABLE_PROFILE=ON
+  ./configure --enable-pedantic           -DIRCU_ENABLE_PEDANTIC=ON
+  ./configure --enable-warnings           -DIRCU_ENABLE_WARNINGS=ON
+  ./configure --disable-inlines           -DIRCU_ENABLE_INLINES=OFF
+  ./configure --disable-devpoll           -DIRCU_ENABLE_DEVPOLL=OFF
+  ./configure --disable-kqueue            -DIRCU_ENABLE_KQUEUE=OFF
+  ./configure --disable-epoll             -DIRCU_ENABLE_EPOLL=OFF
+  ./configure --without-ipv6              -DIRCU_ENABLE_IPV6=OFF
+  ./configure --with-leak-detect[=dir]    -DIRCU_LEAK_DETECT=yes  (or =dir)
+  ./configure --with-symlink=name         -DIRCU_SYMLINK=name
+  ./configure --with-mode=711             -DIRCU_MODE=711
+  ./configure --with-owner=user           -DIRCU_OWNER=user
+  ./configure --with-group=group          -DIRCU_GROUP=group
+  ./configure --with-domain=example.com   -DIRCU_DOMAIN=example.com
+  ./configure --with-chroot=/chroot       -DIRCU_CHROOT=/chroot
+  ./configure --with-dpath=dir            -DIRCU_DPATH=dir
+  ./configure --with-cpath=ircd.conf      -DIRCU_CPATH=ircd.conf
+  ./configure --with-lpath=ircd.log       -DIRCU_LPATH=ircd.log
+  ./configure --with-maxcon=16384         -DIRCU_MAXCON=16384
+  ./configure --with-tls=openssl          -DIRCU_TLS=openssl
+  ./configure --prefix=/some/where        -DCMAKE_INSTALL_PREFIX=/some/where
 
-(we recommend that you cut and paste the above line to use it :)
-When it prompts you for a password hit enter since there isn't one.
+  make                                    cmake --build build
+  make check                              ctest --test-dir build
+  make install                            cmake --install build
+  make clean                              cmake --build build --target clean
+  ./autogen.sh                            (no longer needed)
 
-To check out the the last development version of ircu, use:
-# cvs -d :pserver:anonymous@cvs.undernet.org:/cvsroot/undernet-ircu co -P ircu2.10
-The latest stable version has a tag name that depends on the version
-number; see doc/readme.cvs for details.
+Two build steps changed shape in the move:
 
-To update your source tree to the latest version, run "cvs update -dP" from within the
-ircu2.10 directory. For more information, see http://coder-com.undernet.org.
-
+  - ircd/version.c is generated by cmake/GenerateVersion.cmake instead of
+    ircd/version.c.SH, and no longer needs umkpasswd to be linked first.
+  - Non-blocking sockets are now detected by compiling the call rather than by
+    running it, so this build correctly selects the POSIX flavour
+    (fcntl(O_NONBLOCK)) on systems that support it.  The obsolete autoconf
+    test had silently fallen back to the SysV flavour (ioctl(FIONBIO)).

@@ -598,9 +598,9 @@ static char check_file_access(const char *path, char which, int mode) {
 
   fprintf(stderr, 
 	  "Check on %cPATH (%s) failed: %s\n"
-	  "Please create this file and/or rerun `configure' "
-	  "using --with-%cpath and recompile to correct this.\n",
-	  toupper(which), path, strerror(errno), which);
+	  "Please create this file and/or reconfigure the build "
+	  "using -DIRCU_%cPATH and recompile to correct this.\n",
+	  toupper(which), path, strerror(errno), toupper(which));
 
   return 0;
 }

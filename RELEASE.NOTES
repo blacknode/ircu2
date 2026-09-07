@@ -128,9 +128,9 @@ Deleted feature since it no longer applies: HIS_STATS_h.
 Compile Time Options:
 
 A listing of supported compile-time options may be seen by running
-"./configure --help".  The defaults should be sane.  In particular,
-you should NOT compile with --enable-debug or with --disable-symbols
-on a production network.
+"cmake -B build -LH", and is documented in INSTALL.  The defaults
+should be sane.  In particular, you should NOT compile with
+-DIRCU_ENABLE_DEBUG=ON on a production network.
 
 Otherwise Undocumented Features:
 
@@ -138,8 +138,9 @@ Despite our preferences to keep these undocumented, they are
 occasionally useful, and are described here for users who may
 need them.
 
-To enable these, you need to add them to CFLAGS prior to running
-./configure, usually as in: CFLAGS="-O2 -D<option>" ./configure
+To enable these, you need to add them to the compiler flags when you
+configure the build, usually as in:
+cmake -B build -DCMAKE_C_FLAGS="-D<option>"
 
 -DNICKLEN=20
 

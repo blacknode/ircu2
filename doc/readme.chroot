@@ -32,23 +32,22 @@ chroot() code has been removed from the server.  It is still possible
 to cause the daemon to run in a chroot() jail, however, through the
 use of a wrapper script.  This requires making all paths compiled in
 to the server be relative to the new root directory; fortunately, this
-can be done by giving the configure script the --with-chroot=<dir>
-option.  The <dir> argument specifies to configure where the root
-directory will be, and the server restart path, data path,
-configuration file, and debug log files will all be modified to be
-relative to this root directory.  If the data path or configuration
-files cannot be made relative to the specified root directory,
-configure will issue an error message and exit; if the server restart
-path is not relative to the specified root directory, configure will
-issue a warning.
+can be done by configuring the build with -DIRCU_CHROOT=<dir>.  The
+<dir> argument specifies where the root directory will be, and the
+server restart path, data path, configuration file, and debug log
+files will all be modified to be relative to this root directory.  If
+the data path or configuration files cannot be made relative to the
+specified root directory, cmake will issue an error message and exit;
+if the server restart path is not relative to the specified root
+directory, cmake will issue a warning.
 
 The various paths are made relative to the root directory through the
 use of simple edits to their string representation.  As an example,
 assume that we will be using the root directory "/home/ircd"; if the
 data path is "/home/ircd/lib," the data path that will be compiled
 into the server will be simply "/lib"; if, on the other hand, the
-specified data path were "/usr/local/lib/ircd," configure would issue
-an error, since there is no way to make the data path relative to the
+specified data path were "/usr/local/lib/ircd," cmake would issue an
+error, since there is no way to make the data path relative to the
 specified root directory.
 
 Preparing the Root Directory

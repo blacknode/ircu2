@@ -7,7 +7,7 @@ unless stated otherwise in the documentation for that feature.
 
 DOMAINNAME
  * Type: string
- * Default: picked by ./configure from /etc/resolv.conf
+ * Default: picked by cmake from /etc/resolv.conf (-DIRCU_DOMAIN)
 
 This option allows you to specify what you consider to be "local."  It
 is only used for statistics.  When you issue the IRC command /STATS w,

@@ -18,23 +18,46 @@ on:
 
 jobs:
   build:
+    name: ${{ matrix.tls }} / ${{ matrix.build_type }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        tls: [openssl, gnutls, none]
+        build_type: [RelWithDebInfo]
+        include:
+          # One debug configuration to keep DEBUGMODE compiling.
+          - tls: openssl
+            build_type: Debug
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake bison flex
-
-      - name: Generate configure
-        run: ./autogen.sh
+          sudo apt-get install -y cmake ninja-build bison pkg-config
+          if [ "${{ matrix.tls }}" = "openssl" ]; then
+            sudo apt-get install -y libssl-dev
+          elif [ "${{ matrix.tls }}" = "gnutls" ]; then
+            sudo apt-get install -y libgnutls28-dev
+          fi
 
       - name: Configure
-        run: ./configure
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DIRCU_TLS=${{ matrix.tls }}
+          -DIRCU_DOMAIN=example.com
+          -DIRCU_ENABLE_WARNINGS=ON
+          ${{ matrix.build_type == 'Debug' && '-DIRCU_ENABLE_DEBUG=ON' || '' }}
 
       - name: Build
-        run: make -j$(nproc)
+        run: cmake --build build -j$(nproc)
 
       - name: Run unit tests
-        run: make check
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke-test the server binary
+        run: ./build/ircd/ircd -v

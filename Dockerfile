@@ -20,11 +20,8 @@ ARG SANITIZE=
 RUN apt-get update && apt-get install -y --no-install-recommends \
   gcc \
   make \
+  cmake \
   bison \
-  flex \
-  autoconf \
-  automake \
-  autoconf-archive \
   libc6-dev \
   pkg-config \
   $(if [ "$TLS_BACKEND" = "openssl" ]; then echo libssl-dev; \
@@ -36,16 +33,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build/ircu2
 COPY . .
 
-# Remove any host-compiled binaries (e.g., macOS Mach-O) so make rebuilds for Linux
-RUN find . -name '*.o' -delete && rm -f ircd/ircd
+# Drop any host-compiled leftovers (e.g. a macOS build tree) so the build here
+# starts from scratch for Linux.
+RUN rm -rf build && find . -name '*.o' -delete
 
-RUN ./autogen.sh \
-  && if [ -n "$SANITIZE" ]; then \
+RUN if [ -n "$SANITIZE" ]; then \
   export CFLAGS="-fsanitize=$SANITIZE -fno-omit-frame-pointer -g -O1"; \
   export LDFLAGS="-fsanitize=$SANITIZE"; \
   fi; \
-  ./configure --prefix=/opt/ircu --with-maxcon=256 --enable-debug --with-tls=${TLS_BACKEND} \
-  && make
+  cmake -B build \
+  -DCMAKE_INSTALL_PREFIX=/opt/ircu \
+  -DIRCU_MAXCON=256 \
+  -DIRCU_ENABLE_DEBUG=ON \
+  -DIRCU_TLS=${TLS_BACKEND} \
+  -DIRCU_DOMAIN=example.com \
+  && cmake --build build -j"$(nproc)"
 
 # ---------------------------------------------------------------------------
 # Stage: build the current Undernet production release from GitHub
@@ -134,5 +136,5 @@ RUN chown ircu:ircu /opt/ircu/bin/ircd
 # Final: working-tree binary (default target — must stay last)
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime-tree
-COPY --from=builder-tree /build/ircu2/ircd/ircd /opt/ircu/bin/ircd
+COPY --from=builder-tree /build/ircu2/build/ircd/ircd /opt/ircu/bin/ircd
 RUN chown ircu:ircu /opt/ircu/bin/ircd

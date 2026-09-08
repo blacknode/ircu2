@@ -31,6 +31,7 @@
 #include "channel.h"
 #include "client.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_features.h"
@@ -389,6 +390,12 @@ int exit_client(struct Client *cptr,
 
   char comment1[HOSTLEN + HOSTLEN + 2];
   assert(killer);
+
+  /* Fired before anything is torn down, so the hook still sees a whole
+   * client: its channels, account and modes are all still in place.
+   */
+  hook_notify(HOOK_CLIENT_EXITING, victim, killer, NULL, comment);
+
   if (MyConnect(victim))
   {
     SetFlag(victim, FLAG_CLOSING);

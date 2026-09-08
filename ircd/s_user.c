@@ -33,6 +33,7 @@
 #include "client.h"
 #include "hash.h"
 #include "ircd.h"
+#include "hooks.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
 #include "ircd_features.h"
@@ -482,6 +483,9 @@ int register_user(struct Client *cptr, struct Client *sptr)
     if ((cli_snomask(sptr) != SNO_DEFAULT) && HasFlag(sptr, FLAG_SERVNOTICE))
       send_reply(sptr, RPL_SNOMASK, cli_snomask(sptr), cli_snomask(sptr));
   }
+
+  hook_notify(HOOK_CLIENT_REGISTERED, sptr, cptr, NULL, NULL);
+
   return 0;
 }
 
@@ -527,6 +531,11 @@ static char umodeBuf[BUFSIZE];
 int set_nick_name(struct Client* cptr, struct Client* sptr,
                   const char* nick, int parc, char* parv[])
 {
+  char oldnick[NICKLEN + 1];
+
+  ircd_strncpy(oldnick, cli_name(sptr), NICKLEN);
+  oldnick[NICKLEN] = '\0';
+
   if (IsServer(sptr)) {
 
     /*
@@ -637,6 +646,13 @@ int set_nick_name(struct Client* cptr, struct Client* sptr,
       hRemClient(sptr);
     strcpy(cli_name(sptr), nick);
     hAddClient(sptr);
+
+    /* The hook gets the client already renamed, with the name it had in
+     * hc_arg.  Fires for remote clients too: a notification cannot
+     * desynchronise anything, and a module tracking network state wants
+     * every nick change this server sees, not just the local ones.
+     */
+    hook_notify(HOOK_CLIENT_NICK_CHANGED, sptr, cptr, NULL, oldnick);
   }
   else {
     /* Local client setting NICK the first time */

@@ -27,6 +27,7 @@
 #include "client.h"
 #include "destruct_event.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
@@ -581,6 +582,11 @@ void add_user_to_channel(struct Channel* chptr, struct Client* who,
 
     /* Check if the channel needs to be updated for TLS */
     CheckChannelTLS(chptr);
+
+    /* Fired once the member is fully linked, so a hook that walks the
+     * channel sees the new member in it.
+     */
+    hook_notify(HOOK_CHANNEL_JOINED, who, NULL, chptr, chptr->chname);
   }
 }
 
@@ -664,6 +670,9 @@ void remove_user_from_channel(struct Client* cptr, struct Channel* chptr)
   assert(0 != chptr);
 
   if ((member = find_member_link(chptr, cptr))) {
+    /* Before the removal, while the membership is still walkable. */
+    hook_notify(HOOK_CHANNEL_PARTED, cptr, NULL, chptr, chptr->chname);
+
     if (remove_member_from_channel(member)) {
       if (channel_all_zombies(chptr)) {
         /*

@@ -8,3 +8,4 @@
 include(IrcuModules)
 
 ircu_add_module(example_cmd example_cmd.c)
+ircu_add_module(trace_events trace_events.c)

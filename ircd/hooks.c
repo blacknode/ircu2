@@ -307,6 +307,35 @@ enum HookResult hook_run(enum HookType type, struct HookContext* ctx)
   return result;
 }
 
+/** Run a notification hook.
+ *
+ * The early return is what keeps these call sites free on a server with no
+ * modules loaded: one comparison, no context to build.
+ *
+ * @param[in] type Hook point to run.
+ * @param[in] client Client the event is about.
+ * @param[in] source Origin of the event, or NULL.
+ * @param[in] chan Channel involved, or NULL.
+ * @param[in] arg Extra detail, or NULL.
+ */
+void hook_notify(enum HookType type, struct Client* client,
+                 struct Client* source, struct Channel* chan,
+                 const char* arg)
+{
+  struct HookContext ctx;
+
+  if (!hook_is_active(type))
+    return;
+
+  hook_context_init(&ctx);
+  ctx.hc_client = client;
+  ctx.hc_source = source ? source : client;
+  ctx.hc_channel = chan;
+  ctx.hc_arg = arg;
+
+  hook_run(type, &ctx);
+}
+
 /** Initialise the hook subsystem, discarding anything already registered.
  *
  * Freeing first rather than just zeroing the table matters: an init that

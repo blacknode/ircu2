@@ -165,6 +165,22 @@ extern void hook_context_init(struct HookContext* ctx);
  */
 extern enum HookResult hook_run(enum HookType type, struct HookContext* ctx);
 
+/** Run a notification hook.
+ *
+ * Notifications have no veto and no rewrite, so their call sites do not
+ * need to build a context by hand.  Does nothing, cheaply, when no module
+ * is listening.
+ *
+ * @param[in] type Hook point to run.
+ * @param[in] client Client the event is about.
+ * @param[in] source Origin of the event, or NULL if the same as \a client.
+ * @param[in] chan Channel involved, or NULL.
+ * @param[in] arg Extra detail for the hook, or NULL.
+ */
+extern void hook_notify(enum HookType type, struct Client* client,
+                        struct Client* source, struct Channel* chan,
+                        const char* arg);
+
 /** Non-zero if any module has registered for this hook.
  *
  * Call sites use this to skip building a context when nothing is listening,

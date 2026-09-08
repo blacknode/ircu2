@@ -355,11 +355,16 @@ void hook_deny_reply(struct Client* to, const struct HookContext* ctx,
 
   num = ctx->hc_numeric ? ctx->hc_numeric : numeric;
 
-  if (ctx->hc_reason[0])
-    send_reply(to, SND_EXPLICIT | num, "%s :%s", arg ? arg : "*",
-               ctx->hc_reason);
-  else
-    send_reply(to, num, arg);
+  /* Always SND_EXPLICIT, never the numeric's own format.  Numerics do not
+   * share a parameter shape -- ERR_CANNOTSENDTOCHAN takes "%s", but
+   * ERR_UMODEUNKNOWNFLAG takes "%c" and ERR_NOPRIVILEGES takes nothing --
+   * and a helper that guesses would hand a string to a "%c" the first time
+   * someone reached for a numeric it had not been tested with.  Supplying
+   * the whole format here means the shape is right whatever numeric a
+   * module picks.
+   */
+  send_reply(to, SND_EXPLICIT | num, "%s :%s", arg ? arg : "*",
+             ctx->hc_reason[0] ? ctx->hc_reason : "Refused by a module");
 }
 
 /** Initialise the hook subsystem, discarding anything already registered.

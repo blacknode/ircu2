@@ -186,9 +186,9 @@ extern void hook_notify(enum HookType type, struct Client* client,
  * ircu numerics have fixed wording with a slot for a parameter, so a
  * module's own explanation cannot simply be passed as that parameter --
  * it would land where the nick or channel belongs and the wording would
- * be the numeric's, not the module's.  This sends the module's text
- * explicitly when it supplied one, and falls back to the plain numeric
- * otherwise.
+ * be the numeric's, not the module's.  Nor do numerics share a parameter
+ * shape, so the format is always supplied here rather than taken from the
+ * numeric.  A module that sets no reason gets a generic one.
  *
  * @param[in] to Client to answer.
  * @param[in] ctx Context the hook filled in.

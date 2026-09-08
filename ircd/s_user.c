@@ -354,6 +354,27 @@ int register_user(struct Client *cptr, struct Client *sptr)
   {
     assert(cptr == sptr);
 
+    /* Modules get the last word on whether this client is allowed in, at
+     * the point where the server has everything it knows about them --
+     * nick, user, host, account, TLS state -- and before any of it is
+     * committed.  Only for locally connecting clients: sptr == cptr here,
+     * and users arriving from other servers never reach this branch.
+     */
+    if (hook_is_active(HOOK_CLIENT_PRE_REGISTER)) {
+      struct HookContext hc;
+
+      hook_context_init(&hc);
+      hc.hc_client = sptr;
+      hc.hc_source = cptr;
+      hc.hc_arg = cli_name(sptr);
+
+      if (hook_run(HOOK_CLIENT_PRE_REGISTER, &hc) == HOOK_DENY) {
+        return exit_client(cptr, sptr, &me,
+                           hc.hc_reason[0] ? hc.hc_reason
+                                           : "Refused by a module");
+      }
+    }
+
     Count_unknownbecomesclient(sptr, UserStats);
 
     /*
@@ -1071,6 +1092,25 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         (unsigned int)(IsOper(sptr) ? SNO_OPERDEFAULT : SNO_DEFAULT))
       send_reply(sptr, RPL_SNOMASK, cli_snomask(sptr), cli_snomask(sptr));
     return 0;
+  }
+
+  /* Modules see the requested mode string before any of it is applied.
+   * Only for local clients: mode changes arriving from other servers have
+   * already been accepted network-wide, and refusing one here would leave
+   * this server's idea of a user's modes out of step with everyone else's.
+   */
+  if (MyConnect(sptr) && hook_is_active(HOOK_CLIENT_PRE_UMODE)) {
+    struct HookContext hc;
+
+    hook_context_init(&hc);
+    hc.hc_client = sptr;
+    hc.hc_source = cptr;
+    hc.hc_arg = parv[2];
+
+    if (hook_run(HOOK_CLIENT_PRE_UMODE, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_UMODEUNKNOWNFLAG, parv[2]);
+      return 0;
+    }
   }
 
   /*

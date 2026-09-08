@@ -59,3 +59,35 @@ add_ircu_test(msgq_excise_t
   "${IRCU_IRCD_DIR}/ircd_snprintf.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/msgq.c")
+
+# ---------------------------------------------------------------------------
+# Module loader
+#
+# module_t needs real shared objects to load, so the fixtures under modules/
+# are built as MODULE libraries and their directory is handed to the test as
+# argv[1].  The test binary exports its own symbols because one fixture
+# deliberately resolves a symbol out of it, the same way a real module
+# resolves the core's.
+# ---------------------------------------------------------------------------
+add_ircu_test(module_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/module.c")
+target_link_libraries(module_t PRIVATE ${CMAKE_DL_LIBS})
+set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
+
+set(IRCU_TEST_MODULE_DIR "${CMAKE_CURRENT_BINARY_DIR}/modules")
+
+foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym)
+  add_library(${_fixture} MODULE "modules/${_fixture}.c")
+  target_link_libraries(${_fixture} PRIVATE ircu_config)
+  set_target_properties(${_fixture} PROPERTIES
+    PREFIX ""
+    LIBRARY_OUTPUT_DIRECTORY "${IRCU_TEST_MODULE_DIR}")
+  add_dependencies(module_t ${_fixture})
+endforeach()
+
+# The fixture directory is baked in rather than passed as a test argument:
+# a compile definition cannot drift out of sync with the test registration.
+target_compile_definitions(module_t PRIVATE
+  IRCU_TEST_MODULE_DIR="${IRCU_TEST_MODULE_DIR}")

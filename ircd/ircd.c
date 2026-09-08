@@ -42,6 +42,7 @@
 #include "jupe.h"
 #include "list.h"
 #include "match.h"
+#include "module.h"
 #include "motd.h"
 #include "msg.h"
 #include "numeric.h"
@@ -737,6 +738,7 @@ int main(int argc, char **argv) {
   ircd_crypt_init();
 
   motd_init();
+  module_init();
 
   if (!init_conf()) {
     log_write(LS_SYSTEM, L_CRIT, 0, "Failed to read configuration file %s",
@@ -807,6 +809,8 @@ int main(int argc, char **argv) {
   log_write(LS_SYSTEM, L_NOTICE, 0, "Server Ready");
 
   event_loop();
+
+  module_shutdown();
 
   return 0;
 }

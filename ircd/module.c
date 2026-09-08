@@ -25,10 +25,13 @@
 #include "ircd_alloc.h"
 #include "ircd_log.h"
 #include "hooks.h"
+#include "ircd_reply.h"
 #include "ircd_string.h"
 #include "msg.h"
 #include "parse.h"
+#include "numeric.h"
 #include "s_debug.h"
+#include "send.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <dlfcn.h>
@@ -541,6 +544,46 @@ void module_rehash_notify(struct ModuleHandle* mod)
     module_callback_depth++;
     (*mod->mh_info->mi_rehash)(mod);
     module_callback_depth--;
+  }
+}
+
+/** Report loaded modules and hook activity for /STATS.
+ * @param[in] sptr Client asking for the statistics.
+ * @param[in] sd Stats descriptor (unused).
+ * @param[in] param Extra parameter (unused).
+ */
+void module_stats(struct Client* sptr, const struct StatDesc* sd, char* param)
+{
+  struct ModuleHandle* mod;
+  int type;
+
+  for (mod = module_list; mod; mod = mod->mh_next)
+    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+               ":Module %s %s: %u command%s, from %s",
+               mod->mh_info->mi_name, module_version(mod),
+               module_command_count(mod),
+               module_command_count(mod) == 1 ? "" : "s",
+               mod->mh_path);
+
+  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+             ":%u module%s loaded, ABI %u",
+             module_list_count, module_list_count == 1 ? "" : "s",
+             (unsigned int) IRCU_MODULE_ABI);
+
+  /* Only hook points that are in use or have fired: listing all eighteen
+   * every time would bury the two lines an operator actually wants.
+   */
+  for (type = 0; type < HOOK_LAST; type++) {
+    unsigned int registered = hook_count((enum HookType) type);
+    unsigned int calls = hook_calls((enum HookType) type);
+
+    if (!registered && !calls)
+      continue;
+
+    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+               ":Hook %s: %u registered, %u call%s",
+               hook_type_name((enum HookType) type), registered, calls,
+               calls == 1 ? "" : "s");
   }
 }
 

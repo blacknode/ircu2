@@ -1,0 +1,313 @@
+MODULE documentation, last updated on 08 Sep 2026
+
+A module is a shared object the server loads at run time.  It can add
+commands and attach to points in the life of a user or a channel, in some
+cases deciding whether the server carries on.
+
+
+READ THIS FIRST
+===============
+
+A module runs INSIDE the server process and shares its address space.
+
+  * A module that crashes takes the whole server with it.
+  * A module that corrupts memory corrupts the server's memory.
+  * A module can read anything the server can, including the TLS private
+    key and every client's IP address.
+  * A module that blocks stalls every connected client, because the server
+    is single-threaded.
+
+There is no sandbox and no way to add one without changing what a module
+is.  Load only modules you have read and trust, from people you trust.
+This is an operational decision, not a technical one, and the server
+cannot make it for you.
+
+
+WRITING A MODULE
+================
+
+A module exports exactly one symbol, a struct ModuleInfo named
+ircu_module.  Everything else the server needs, it reaches through that.
+
+  #include "config.h"
+  #include "module.h"
+
+  static int example_init(struct ModuleHandle *mod)
+  {
+    /* register commands and hooks here */
+    return 0;                 /* non-zero refuses to load */
+  }
+
+  static void example_fini(struct ModuleHandle *mod)
+  {
+    /* release your own resources; the server reverts its own */
+  }
+
+  struct ModuleInfo ircu_module = {
+    IRCU_MODULE_ABI,
+    "example",                /* name, as /MODULE UNLOAD takes it */
+    "1.0.0",                  /* version */
+    "you <you@example.org>",  /* author */
+    "One line about what it does",
+    example_init,
+    example_fini,             /* may be NULL */
+    NULL                      /* mi_rehash, may be NULL */
+  };
+
+mi_init runs once after the module loads.  Returning non-zero aborts the
+load, and the server unloads the module again -- use it when the module
+cannot do its job, for instance because a command name it needs is taken.
+
+mi_fini runs once before the module unloads.  Anything registered through
+the module API is reverted by the server whether or not mi_fini does it,
+so most modules can leave it NULL.
+
+mi_rehash runs on /REHASH when the module stays loaded.  If the module's
+file changed on disk, the server unloads and reloads it instead, and
+mi_rehash is not called.
+
+
+THE ABI
+=======
+
+IRCU_MODULE_ABI is compared exactly.  A module built against a different
+value is refused with an entry in the log.
+
+There is no backwards compatibility, on purpose.  When the ABI changes,
+modules are recompiled.  A mismatched pointer layout in a shared address
+space is not a class of failure worth being lenient about, and the
+alternative -- a module quietly reading the wrong field -- is far worse
+than one that will not load.
+
+Check the ABI a module was built against with /STATS M.
+
+
+BUILDING
+========
+
+Modules live under modules/ and are built by the same CMake run as the
+server:
+
+  # modules/CMakeLists.txt
+  include(IrcuModules)
+  ircu_add_module(mymodule mymodule.c)
+
+ircu_add_module() links nothing: the server's symbols are resolved against
+the ircd executable at load time, which works because the ircd is built
+with ENABLE_EXPORTS.  The result is modules/mymodule.so in the build tree,
+installed into <libdir>/ircu/modules.
+
+To check what a module needs from the core:
+
+  nm -u mymodule.so | grep -v GLIBC
+
+
+LOADING
+=======
+
+From the configuration file:
+
+  Module {
+   file = "/opt/ircu/lib/ircu/modules/mymodule.so";
+  };
+
+On /REHASH a module still listed stays loaded; one no longer listed is
+unloaded; one whose file changed on disk is unloaded and loaded again.
+
+Or at run time, with the module_admin privilege:
+
+  /MODULE LIST
+  /MODULE LOAD /path/to/mymodule.so
+  /MODULE UNLOAD mymodule
+  /MODULE RELOAD mymodule
+
+Everything except LIST also requires the CONFIG_OPERCMDS feature, since it
+changes what code the server is running.
+
+If a RELOAD unloads the module but cannot load it again, the server says
+so plainly: the module is then not loaded at all.
+
+
+COMMANDS
+========
+
+  MessageHandler handlers[LAST_HANDLER_TYPE];
+
+  handlers[UNREGISTERED_HANDLER] = NULL;      /* NULL becomes m_ignore */
+  handlers[CLIENT_HANDLER]       = m_mycmd;
+  handlers[SERVER_HANDLER]       = NULL;
+  handlers[OPER_HANDLER]         = m_mycmd;
+  handlers[SERVICE_HANDLER]      = NULL;
+
+  module_add_command(mod, "MYCMD", "MYCMD", MAXPARA, MFLG_SLOW, handlers);
+
+The handler signature is the same one every command in ircd/m_*.c uses:
+
+  int m_mycmd(struct Client *cptr, struct Client *sptr,
+              int parc, char *parv[]);
+
+Note what the parameters argument means.  It is the MAXIMUM number of
+parameters to split the line into, not a minimum: anything past that many
+arrives in the last one, as though it had been introduced with a colon.
+Pass MAXPARA unless your command takes free-form trailing text.  Check
+your own minimum in the handler with need_more_params().
+
+A module cannot replace a command the core already has.  Registering a
+name or token that is taken fails, and returning non-zero from mi_init is
+the usual response.
+
+
+HOOKS
+=====
+
+  module_add_hook(mod, HOOK_CLIENT_PRE_NICK, my_hook,
+                  HOOK_PRIORITY_DEFAULT, NULL);
+
+The callback:
+
+  static enum HookResult my_hook(struct HookContext *ctx, void *user);
+
+Return HOOK_CONTINUE to abstain, HOOK_ALLOW to permit and stop the chain,
+or HOOK_DENY to refuse.  HOOK_PENDING is reserved for a future
+asynchronous hook and currently behaves as HOOK_CONTINUE, with a line in
+the log.
+
+Hooks of the same type run in priority order, lowest first, with ties
+broken by load order.  The chain stops at the first hook that does not
+return HOOK_CONTINUE.
+
+A HOOK_DENY cannot be overturned by a hook further down the chain.  If it
+could, whether a veto held would depend on which module happened to load
+first.
+
+A hook may unregister itself from inside its own call.
+
+The hook points, and what each one gets:
+
+  Hook                    hc_client      hc_source   hc_channel  hc_arg
+  ----------------------  -------------  ----------  ----------  ------------
+  CLIENT_PRE_REGISTER *   the client     its link    -           nick
+  CLIENT_REGISTERED       the client     its link    -           -
+  CLIENT_PRE_NICK *       the client     its link    -           new nick
+  CLIENT_NICK_CHANGED     the client     its link    -           old nick
+  CLIENT_PRE_UMODE *      the client     its link    -           mode string
+  CLIENT_EXITING          the client     the killer  -           quit reason
+  CHANNEL_PRE_CREATE *    the client     its link    -           channel name
+  CHANNEL_PRE_JOIN *      the client     its link    the channel channel name
+                                                     (NULL if new)
+  CHANNEL_JOINED          the client     -           the channel channel name
+  CHANNEL_PARTED          the client     -           the channel channel name
+  MESSAGE_PRE_CHANNEL *+  the sender     the sender  the channel message text
+  MESSAGE_PRE_PRIVATE *+  the recipient  the sender  -           message text
+  SERVER_LINKED           the server     -           -           server name
+
+  * can veto        + can rewrite
+
+Hooks marked as vetoing run before the server acts, so refusing leaves
+nothing to undo.  The rest are notifications: their return value is
+ignored.
+
+Some hook points listed in enum HookType are declared but not yet wired
+into the core -- CHANNEL_PRE_PART, CHANNEL_PRE_MODE, CHANNEL_PRE_TOPIC,
+CHANNEL_DESTROYED and SERVER_SPLIT.  Registering for one of them succeeds
+and simply never fires.
+
+
+VETO HOOKS ONLY SEE LOCAL CLIENTS
+=================================
+
+This is the most important thing to understand about hooks, so it gets its
+own section.
+
+Every veto hook runs only on the path taken by clients connected to THIS
+server.  A nick change, join or message arriving from another server has
+already been accepted by the rest of the network; refusing it here would
+leave this server disagreeing with everyone else about what a user is
+called or which channel they are in, which is a desynchronisation that
+does not heal by itself.
+
+So:
+
+  * A veto binds the server that ran it, not the network.
+  * A user on another server can do what your module forbids, and your
+    server will see it happen.
+  * If you want a rule to apply network-wide, every server needs the
+    module, or the rule belongs somewhere else -- a G-line, a channel
+    mode, or a service.
+
+Notification hooks do not have this restriction; some fire for remote
+clients too, because a notification cannot desynchronise anything.
+
+
+REFUSING, AND SAYING WHY
+========================
+
+  ctx->hc_numeric = ERR_CANNOTSENDTOCHAN;    /* optional */
+  ircd_strncpy(ctx->hc_reason, "Because I said so",
+               sizeof(ctx->hc_reason) - 1);   /* optional */
+  return HOOK_DENY;
+
+Both fields are optional.  Leaving hc_numeric at zero lets the server pick
+one that suits the hook point, and leaving hc_reason empty produces a
+generic message.
+
+
+REWRITING A MESSAGE
+===================
+
+Only MESSAGE_PRE_CHANNEL and MESSAGE_PRE_PRIVATE can rewrite.
+
+  if (ctx->hc_rewrite && ctx->hc_rewrite_len > 0) {
+    /* write into the server's buffer, never assign your own pointer */
+    ircd_strncpy(ctx->hc_rewrite, new_text, ctx->hc_rewrite_len - 1);
+    ctx->hc_rewrite[ctx->hc_rewrite_len - 1] = '\0';
+    ctx->hc_rewritten = 1;
+  }
+
+The server owns the buffer and tells you how big it is.  Assigning your
+own pointer to hc_rewrite would leave the server reading memory your
+module may have freed, or that goes away entirely when the module unloads.
+
+Rewriting is not a veto: return HOOK_CONTINUE so the rest of the chain
+still runs.
+
+
+WHAT A MODULE MUST NOT DO
+=========================
+
+  * Block.  The server is single-threaded and hooks run in the middle of
+    handling a client's command.  A hook that waits on a network round
+    trip or a slow disk stalls every other client.  There is no
+    asynchronous hook yet; see HOOK_PENDING.
+
+  * Unload itself.  Unloading from inside a module callback would free the
+    code that is executing.  The server refuses and logs it.
+
+  * Keep a pointer into the core across an unload, or hand the core a
+    pointer into itself that outlives the module.
+
+  * Assume another module is loaded, or assume a load order beyond hook
+    priorities.
+
+
+THE EXAMPLES
+============
+
+  modules/example_cmd.c    adds a command; the minimal reference
+  modules/trace_events.c   logs every notification hook; noisy, for
+                           debugging a hook point
+  modules/nickpolicy.c     refuses nicknames; a worked veto
+  modules/nocaps.c         refuses shouted channel messages and lowercases
+                           shouted private ones; a veto and a rewrite
+
+
+DIAGNOSTICS
+===========
+
+  /MODULE LIST     name, version, ABI, path and description
+  /STATS M         loaded modules, how many commands each registered, and
+                   for each hook point in use how many hooks are attached
+                   and how many times it has fired
+
+The hook call counts are the quickest way to tell a hook that is not
+firing from one that is firing and abstaining.

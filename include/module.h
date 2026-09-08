@@ -39,6 +39,7 @@
 #include "hooks.h"
 #endif
 
+struct Client;
 struct ModuleHandle;
 
 /** ABI version of the module interface.
@@ -156,6 +157,10 @@ extern int module_del_hook(struct ModuleHandle* mod, enum HookType type,
 /*
  * Server-side interface.  Not for use by modules.
  */
+struct StatDesc;
+extern void module_stats(struct Client* sptr, const struct StatDesc* sd,
+                         char* param);
+
 extern void module_init(void);
 extern void module_shutdown(void);
 

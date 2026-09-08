@@ -32,6 +32,9 @@
 #include <sys/types.h>
 #define INCLUDED_sys_types_h
 #endif
+#ifndef INCLUDED_ircd_handler_h
+#include "ircd_handler.h"
+#endif
 
 struct ModuleHandle;
 
@@ -85,6 +88,41 @@ extern const char* module_name(const struct ModuleHandle* mod);
 extern const char* module_path(const struct ModuleHandle* mod);
 extern const char* module_version(const struct ModuleHandle* mod);
 extern const char* module_description(const struct ModuleHandle* mod);
+
+/*
+ * Registering commands.
+ *
+ * Everything a module registers is tracked against its handle and reverted
+ * when the module is unloaded, whether or not mi_fini remembers to do it.
+ */
+
+/** Register a command.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] cmd Command name, e.g. "SPAMFILTER".
+ * @param[in] tok P10 token, or NULL to use the command name.
+ * @param[in] parameters Maximum number of parameters to split the line
+ *   into, NOT a minimum: everything past this many arrives in the last
+ *   one.  Pass MAXPARA unless the command takes free-form trailing text.
+ *   Handlers check their own minimum with need_more_params().
+ * @param[in] flags Bitwise combination of MFLG_* values.
+ * @param[in] handlers One handler per HandlerType; NULL entries become
+ *   m_ignore.
+ * @return Non-zero on success, zero if the name or token is already taken.
+ */
+extern int module_add_command(struct ModuleHandle* mod, const char* cmd,
+                              const char* tok, unsigned int parameters,
+                              unsigned int flags,
+                              MessageHandler handlers[]);
+
+/** Remove a command this module registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] cmd Command name to remove.
+ * @return Non-zero if the command was found and removed.
+ */
+extern int module_del_command(struct ModuleHandle* mod, const char* cmd);
+
+/** Number of commands a module currently has registered. */
+extern unsigned int module_command_count(const struct ModuleHandle* mod);
 
 /*
  * Server-side interface.  Not for use by modules.

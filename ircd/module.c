@@ -25,6 +25,8 @@
 #include "ircd_alloc.h"
 #include "ircd_log.h"
 #include "ircd_string.h"
+#include "msg.h"
+#include "parse.h"
 #include "s_debug.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
@@ -33,14 +35,21 @@
 #include <string.h>
 #include <sys/stat.h>
 
+/** A command registered by a module. */
+struct ModuleCommand {
+  struct ModuleCommand* mc_next;    /**< Next command from the same module. */
+  struct Message*       mc_msg;     /**< Message installed in the tries. */
+};
+
 /** A module the server has loaded. */
 struct ModuleHandle {
-  struct ModuleHandle* mh_next;     /**< Next module in #module_list. */
-  void*                mh_dl;       /**< Handle returned by dlopen(). */
-  struct ModuleInfo*   mh_info;     /**< The module's exported description. */
-  char*                mh_path;     /**< Path the module was loaded from. */
-  time_t               mh_mtime;    /**< Modification time when loaded. */
-  int                  mh_marked;   /**< Seen in the running configuration. */
+  struct ModuleHandle*  mh_next;    /**< Next module in #module_list. */
+  void*                 mh_dl;      /**< Handle returned by dlopen(). */
+  struct ModuleInfo*    mh_info;    /**< The module's exported description. */
+  char*                 mh_path;    /**< Path the module was loaded from. */
+  time_t                mh_mtime;   /**< Modification time when loaded. */
+  int                   mh_marked;  /**< Seen in the running configuration. */
+  struct ModuleCommand* mh_cmds;    /**< Commands this module registered. */
 };
 
 /** List of loaded modules, most recently loaded first. */
@@ -173,6 +182,97 @@ int module_changed_on_disk(const struct ModuleHandle* mod)
 {
   assert(0 != mod);
   return module_mtime(mod->mh_path) != mod->mh_mtime;
+}
+
+/** Register a command on behalf of a module.
+ * @param[in] mod Module registering the command.
+ * @param[in] cmd Command name.
+ * @param[in] tok P10 token, or NULL to use the command name.
+ * @param[in] parameters Maximum number of parameters to split into.
+ * @param[in] flags Bitwise combination of MFLG_* values.
+ * @param[in] handlers One handler per HandlerType.
+ * @return Non-zero on success.
+ */
+int module_add_command(struct ModuleHandle* mod, const char* cmd,
+                       const char* tok, unsigned int parameters,
+                       unsigned int flags, MessageHandler handlers[])
+{
+  struct ModuleCommand* mc;
+  struct Message* msg;
+
+  assert(0 != mod);
+  assert(0 != cmd);
+
+  msg = parse_add_command(cmd, tok, parameters, flags, handlers);
+  if (!msg) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s could not register command %s: name already in use",
+              mod->mh_info->mi_name, cmd);
+    return 0;
+  }
+
+  mc = (struct ModuleCommand*) MyCalloc(1, sizeof(struct ModuleCommand));
+  mc->mc_msg = msg;
+  mc->mc_next = mod->mh_cmds;
+  mod->mh_cmds = mc;
+
+  return 1;
+}
+
+/** Remove a command a module registered.
+ * @param[in] mod Module that owns the command.
+ * @param[in] cmd Command name to remove.
+ * @return Non-zero if the command was found and removed.
+ */
+int module_del_command(struct ModuleHandle* mod, const char* cmd)
+{
+  struct ModuleCommand** mc_p;
+  struct ModuleCommand* mc;
+
+  assert(0 != mod);
+  assert(0 != cmd);
+
+  for (mc_p = &mod->mh_cmds; (mc = *mc_p); mc_p = &mc->mc_next) {
+    if (0 == ircd_strcmp(mc->mc_msg->cmd, cmd)) {
+      *mc_p = mc->mc_next;
+      parse_del_command(mc->mc_msg);
+      MyFree(mc);
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+/** Return how many commands a module currently has registered. */
+unsigned int module_command_count(const struct ModuleHandle* mod)
+{
+  struct ModuleCommand* mc;
+  unsigned int count = 0;
+
+  assert(0 != mod);
+
+  for (mc = mod->mh_cmds; mc; mc = mc->mc_next)
+    count++;
+
+  return count;
+}
+
+/** Remove every command a module registered.
+ * @param[in] mod Module being torn down.
+ */
+static void module_drop_commands(struct ModuleHandle* mod)
+{
+  struct ModuleCommand* mc;
+  struct ModuleCommand* next;
+
+  for (mc = mod->mh_cmds; mc; mc = next) {
+    next = mc->mc_next;
+    parse_del_command(mc->mc_msg);
+    MyFree(mc);
+  }
+
+  mod->mh_cmds = 0;
 }
 
 /** Load a module from a shared object.
@@ -333,8 +433,10 @@ static int module_unload_internal(struct ModuleHandle* mod, int quiet)
 
   /* Everything the module registered through the module API is reverted
    * here, after mi_fini has had its chance and before the code goes away.
-   * Later phases add command and hook cleanup at this point.
+   * A module that forgets to unregister its own commands still cannot
+   * leave the trie pointing into an unmapped shared object.
    */
+  module_drop_commands(mod);
 
   for (mod_p = &module_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {

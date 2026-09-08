@@ -22,6 +22,10 @@
  */
 int module_test_marker;
 
+/* Defined by module_stub.c. */
+extern int stub_commands_live;
+extern int stub_commands_added;
+
 #ifndef IRCU_TEST_MODULE_DIR
 #define IRCU_TEST_MODULE_DIR "."
 #endif
@@ -190,6 +194,77 @@ static void test_iteration(void)
   printf("Passed: iteration over loaded modules\n");
 }
 
+/** Commands a module registers are reverted when it is unloaded, even the
+ * ones the module itself never removes.
+ */
+static void test_command_registration(void)
+{
+  struct ModuleHandle* mod;
+
+  stub_commands_live = 0;
+  stub_commands_added = 0;
+
+  mod = module_load(modpath("mod_cmd"), 0);
+  assert(mod != 0);
+
+  /* mod_cmd registers two and removes neither. */
+  assert(stub_commands_added == 2);
+  assert(stub_commands_live == 2);
+  assert(module_command_count(mod) == 2);
+
+  assert(module_unload(mod) != 0);
+
+  /* The loader reverted both; module_stub asserts each is removed once. */
+  assert(stub_commands_live == 0);
+
+  printf("Passed: module commands are reverted on unload\n");
+}
+
+/** A module can remove its own command, and the loader does not then try to
+ * remove it a second time.
+ */
+static void test_command_explicit_removal(void)
+{
+  struct ModuleHandle* mod;
+
+  stub_commands_live = 0;
+
+  mod = module_load(modpath("mod_cmd"), 0);
+  assert(mod != 0);
+  assert(stub_commands_live == 2);
+
+  assert(module_del_command(mod, "TESTCMD") != 0);
+  assert(stub_commands_live == 1);
+  assert(module_command_count(mod) == 1);
+
+  /* Removing it again finds nothing. */
+  assert(module_del_command(mod, "TESTCMD") == 0);
+
+  assert(module_unload(mod) != 0);
+  assert(stub_commands_live == 0);
+
+  printf("Passed: explicit command removal\n");
+}
+
+/** Repeated load/unload of a command-registering module stays balanced. */
+static void test_command_cycles(void)
+{
+  struct ModuleHandle* mod;
+  int i;
+
+  stub_commands_live = 0;
+
+  for (i = 0; i < 50; i++) {
+    mod = module_load(modpath("mod_cmd"), 0);
+    assert(mod != 0);
+    assert(stub_commands_live == 2);
+    assert(module_unload(mod) != 0);
+    assert(stub_commands_live == 0);
+  }
+
+  printf("Passed: 50 cycles of a command-registering module\n");
+}
+
 int main(int argc, char* argv[])
 {
   if (argc > 1)
@@ -206,6 +281,9 @@ int main(int argc, char* argv[])
   test_load_unload_cycles();
   test_shutdown_unloads_all();
   test_iteration();
+  test_command_registration();
+  test_command_explicit_removal();
+  test_command_cycles();
 
   printf("Done.\n");
   return 0;

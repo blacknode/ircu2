@@ -117,6 +117,7 @@ enable_testing()
 
 add_subdirectory(ircd)
 add_subdirectory(ircd/test)
+add_subdirectory(modules)
 
 # ---------------------------------------------------------------------------
 # Configuration summary

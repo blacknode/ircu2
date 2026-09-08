@@ -419,7 +419,11 @@ struct Message {
   char *cmd;                  /**< command string */
   char *tok;                  /**< token (shorter command string) */
   unsigned int count;         /**< number of times message used */
-  unsigned int parameters;    /**< minimum number of parameters */
+  unsigned int parameters;    /**< maximum number of parameters to split
+                               * the line into; everything past this many
+                               * ends up in the last one, as if it had been
+                               * introduced with ':'.  Handlers check their
+                               * own minimum with need_more_params(). */
   unsigned int flags;         /**< MFLG_* flags for command */
   unsigned int bytes;         /**< bytes received for this message */
   void *extra;                /**< extra pointer to be passed in parv[1] */

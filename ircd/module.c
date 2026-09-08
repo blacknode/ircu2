@@ -24,6 +24,7 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_log.h"
+#include "hooks.h"
 #include "ircd_string.h"
 #include "msg.h"
 #include "parse.h"
@@ -275,6 +276,33 @@ static void module_drop_commands(struct ModuleHandle* mod)
   mod->mh_cmds = 0;
 }
 
+/** Attach a hook on behalf of a module.
+ * @param[in] mod Module registering the hook.
+ * @param[in] type Hook point.
+ * @param[in] fn Callback.
+ * @param[in] priority Lower runs earlier.
+ * @param[in] user Opaque pointer for the callback.
+ * @return Non-zero on success.
+ */
+int module_add_hook(struct ModuleHandle* mod, enum HookType type,
+                    HookFn fn, int priority, void* user)
+{
+  assert(0 != mod);
+  return hook_add(mod, mod->mh_info->mi_name, type, fn, priority, user);
+}
+
+/** Detach a hook a module attached.
+ * @param[in] mod Module that owns the hook.
+ * @param[in] type Hook point.
+ * @param[in] fn Callback to detach.
+ * @return Non-zero if it was found.
+ */
+int module_del_hook(struct ModuleHandle* mod, enum HookType type, HookFn fn)
+{
+  assert(0 != mod);
+  return hook_del(mod, type, fn);
+}
+
 /** Load a module from a shared object.
  *
  * On failure nothing is left behind: the shared object is closed again and
@@ -437,6 +465,7 @@ static int module_unload_internal(struct ModuleHandle* mod, int quiet)
    * leave the trie pointing into an unmapped shared object.
    */
   module_drop_commands(mod);
+  hook_del_module(mod);
 
   for (mod_p = &module_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {

@@ -42,6 +42,7 @@
 #include "jupe.h"
 #include "list.h"
 #include "match.h"
+#include "hooks.h"
 #include "module.h"
 #include "motd.h"
 #include "msg.h"
@@ -738,6 +739,7 @@ int main(int argc, char **argv) {
   ircd_crypt_init();
 
   motd_init();
+  hooks_init();
   module_init();
 
   if (!init_conf()) {

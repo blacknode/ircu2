@@ -100,6 +100,7 @@ set(IRCU_SOURCES
   fileio.c
   gline.c
   hash.c
+  hooks.c
   ircd.c
   ircd_alloc.c
   ircd_crypt.c

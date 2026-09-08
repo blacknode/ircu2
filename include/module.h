@@ -35,6 +35,9 @@
 #ifndef INCLUDED_ircd_handler_h
 #include "ircd_handler.h"
 #endif
+#ifndef INCLUDED_hooks_h
+#include "hooks.h"
+#endif
 
 struct ModuleHandle;
 
@@ -123,6 +126,32 @@ extern int module_del_command(struct ModuleHandle* mod, const char* cmd);
 
 /** Number of commands a module currently has registered. */
 extern unsigned int module_command_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering hooks.  See hooks.h for the hook points and what each one
+ * may do.  Like commands, hooks are reverted when the module unloads.
+ */
+
+/** Attach a callback to a lifecycle hook.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type Hook point, from enum HookType.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier; HOOK_PRIORITY_DEFAULT if
+ *   the module does not care.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @return Non-zero on success.
+ */
+extern int module_add_hook(struct ModuleHandle* mod, enum HookType type,
+                           HookFn fn, int priority, void* user);
+
+/** Detach a callback this module attached.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type Hook point it was attached to.
+ * @param[in] fn The callback to detach.
+ * @return Non-zero if it was found and detached.
+ */
+extern int module_del_hook(struct ModuleHandle* mod, enum HookType type,
+                           HookFn fn);
 
 /*
  * Server-side interface.  Not for use by modules.

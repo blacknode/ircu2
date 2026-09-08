@@ -60,6 +60,11 @@ add_ircu_test(msgq_excise_t
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/msgq.c")
 
+add_ircu_test(hooks_t
+  "${IRCU_IRCD_DIR}/hooks.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
 # ---------------------------------------------------------------------------
 # Module loader
 #
@@ -71,6 +76,7 @@ add_ircu_test(msgq_excise_t
 # ---------------------------------------------------------------------------
 add_ircu_test(module_t
   module_stub.c
+  "${IRCU_IRCD_DIR}/hooks.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/module.c")

@@ -24,6 +24,7 @@
 #   --with-dpath=dir              -> -DIRCU_DPATH=dir
 #   --with-cpath=file             -> -DIRCU_CPATH=ircd.conf
 #   --with-lpath=file             -> -DIRCU_LPATH=ircd.log
+#   (spath)                       -> -DIRCU_SPATH=/path/to/ircd
 #   --with-maxcon=n               -> -DIRCU_MAXCON=16384
 #   --with-tls=library            -> -DIRCU_TLS=auto|none|openssl|gnutls|libtls
 #

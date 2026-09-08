@@ -30,10 +30,18 @@ set(IRCU_LPATH "ircd.log"  CACHE STRING "Default debugging log file")
 # Path the server re-executes on /restart
 # ---------------------------------------------------------------------------
 if(IRCU_SYMLINK STREQUAL "no")
-  set(_ircu_spath "${CMAKE_INSTALL_FULL_BINDIR}/ircd")
+  set(_ircu_spath_default "${CMAKE_INSTALL_FULL_BINDIR}/ircd")
 else()
-  set(_ircu_spath "${CMAKE_INSTALL_FULL_BINDIR}/${IRCU_SYMLINK}")
+  set(_ircu_spath_default "${CMAKE_INSTALL_FULL_BINDIR}/${IRCU_SYMLINK}")
 endif()
+
+set(IRCU_SPATH "${_ircu_spath_default}" CACHE STRING
+  "Path to the server binary, re-executed on /restart")
+string(REGEX REPLACE "/+$" "" IRCU_SPATH "${IRCU_SPATH}")
+if(NOT IRCU_SPATH)
+  set(IRCU_SPATH "${_ircu_spath_default}")
+endif()
+set(_ircu_spath "${IRCU_SPATH}")
 
 # ---------------------------------------------------------------------------
 # Rebase the absolute paths onto the chroot

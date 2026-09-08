@@ -134,6 +134,8 @@ static const struct lexer_token tokens[] = {
   { "megabytes", MBYTES },
   { "minutes", MINUTES },
   { "mode_lchan", TPRIV_MODE_LCHAN },
+  { "module", MODULE },
+  { "module_admin", TPRIV_MODULE },
   { "months", MONTHS },
   { "motd", MOTD },
   { "name", NAME },

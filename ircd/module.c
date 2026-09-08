@@ -74,6 +74,26 @@ const char* module_path(const struct ModuleHandle* mod)
   return mod->mh_path;
 }
 
+/** Get the version string a module declares.
+ * @param[in] mod Module to query.
+ * @return Version string, or "?" if the module declares none.
+ */
+const char* module_version(const struct ModuleHandle* mod)
+{
+  assert(0 != mod);
+  return mod->mh_info->mi_version ? mod->mh_info->mi_version : "?";
+}
+
+/** Get the description a module declares.
+ * @param[in] mod Module to query.
+ * @return Description, or "" if the module declares none.
+ */
+const char* module_description(const struct ModuleHandle* mod)
+{
+  assert(0 != mod);
+  return mod->mh_info->mi_description ? mod->mh_info->mi_description : "";
+}
+
 /** Return the number of currently loaded modules. */
 unsigned int module_count(void)
 {

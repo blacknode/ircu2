@@ -83,6 +83,8 @@ struct ModuleInfo {
  */
 extern const char* module_name(const struct ModuleHandle* mod);
 extern const char* module_path(const struct ModuleHandle* mod);
+extern const char* module_version(const struct ModuleHandle* mod);
+extern const char* module_description(const struct ModuleHandle* mod);
 
 /*
  * Server-side interface.  Not for use by modules.

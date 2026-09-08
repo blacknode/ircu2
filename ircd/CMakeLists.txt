@@ -156,6 +156,7 @@ set(IRCU_SOURCES
   m_lusers.c
   m_map.c
   m_mode.c
+  m_module.c
   m_motd.c
   m_names.c
   m_nick.c

@@ -181,6 +181,23 @@ extern void hook_notify(enum HookType type, struct Client* client,
                         struct Client* source, struct Channel* chan,
                         const char* arg);
 
+/** Tell a client why a hook refused an operation.
+ *
+ * ircu numerics have fixed wording with a slot for a parameter, so a
+ * module's own explanation cannot simply be passed as that parameter --
+ * it would land where the nick or channel belongs and the wording would
+ * be the numeric's, not the module's.  This sends the module's text
+ * explicitly when it supplied one, and falls back to the plain numeric
+ * otherwise.
+ *
+ * @param[in] to Client to answer.
+ * @param[in] ctx Context the hook filled in.
+ * @param[in] numeric Numeric to use when the hook did not choose one.
+ * @param[in] arg Parameter for the numeric, e.g. the nick or channel.
+ */
+extern void hook_deny_reply(struct Client* to, const struct HookContext* ctx,
+                            int numeric, const char* arg);
+
 /** Non-zero if any module has registered for this hook.
  *
  * Call sites use this to skip building a context when nothing is listening,

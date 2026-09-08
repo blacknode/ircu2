@@ -23,6 +23,9 @@
 #include "hooks.h"
 #include "ircd_alloc.h"
 #include "ircd_log.h"
+#include "ircd_reply.h"
+#include "numeric.h"
+#include "send.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <string.h>
@@ -334,6 +337,29 @@ void hook_notify(enum HookType type, struct Client* client,
   ctx.hc_arg = arg;
 
   hook_run(type, &ctx);
+}
+
+/** Tell a client why a hook refused an operation.
+ * @param[in] to Client to answer.
+ * @param[in] ctx Context the hook filled in.
+ * @param[in] numeric Numeric to use when the hook did not choose one.
+ * @param[in] arg Parameter for the numeric.
+ */
+void hook_deny_reply(struct Client* to, const struct HookContext* ctx,
+                     int numeric, const char* arg)
+{
+  int num;
+
+  assert(0 != to);
+  assert(0 != ctx);
+
+  num = ctx->hc_numeric ? ctx->hc_numeric : numeric;
+
+  if (ctx->hc_reason[0])
+    send_reply(to, SND_EXPLICIT | num, "%s :%s", arg ? arg : "*",
+               ctx->hc_reason);
+  else
+    send_reply(to, num, arg);
 }
 
 /** Initialise the hook subsystem, discarding anything already registered.

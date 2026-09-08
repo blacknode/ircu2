@@ -13,6 +13,17 @@
 #include <stdio.h>
 #include <string.h>
 
+/** Stub for hook_deny_reply(), the only part of hooks.c that reaches into
+ * the send layer.  Answering a client is not what this test is about, and
+ * linking send.c would drag in most of the server.
+ */
+int send_reply(struct Client* to, int reply, ...)
+{
+  (void) to;
+  (void) reply;
+  return 0;
+}
+
 /** Order in which hooks were called this run. */
 static char call_log[64];
 

@@ -11,6 +11,8 @@
  * real trie is exercised against a running server.
  */
 
+struct Client;
+
 #include "msg.h"
 #include "parse.h"
 
@@ -90,4 +92,15 @@ void parse_del_command(struct Message *msg)
   free(msg->cmd);
   free(msg->tok);
   free(msg);
+}
+
+/** Stub for hook_deny_reply(), the only part of hooks.c that reaches into
+ * the send layer.  Answering a client is not what these tests are about,
+ * and linking send.c would drag in most of the server.
+ */
+int send_reply(struct Client *to, int reply, ...)
+{
+  (void) to;
+  (void) reply;
+  return 0;
 }

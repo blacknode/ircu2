@@ -86,16 +86,26 @@ BUILDING
 ========
 
 Modules live under modules/ and are built by the same CMake run as the
-server:
+server.  Dropping mymodule.c into modules/ is all it takes: modules/
+CMakeLists.txt calls ircu_add_modules(), which builds every .c file in the
+directory as a module named after the file.  The glob is re-run by the
+build, so a new file is picked up by `cmake --build build` without
+configuring again.
+
+A module built from several source files is the exception, and gets an
+explicit call:
 
   # modules/CMakeLists.txt
-  include(IrcuModules)
-  ircu_add_module(mymodule mymodule.c)
+  ircu_add_modules(EXCLUDE mymodule)
+  ircu_add_module(mymodule mymodule.c mymodule_policy.c)
 
-ircu_add_module() links nothing: the server's symbols are resolved against
+Either way the module links nothing: the server's symbols are resolved against
 the ircd executable at load time, which works because the ircd is built
 with ENABLE_EXPORTS.  The result is modules/mymodule.so in the build tree,
-installed into <libdir>/ircu/modules.
+installed into the module directory -- the IRCU_MPATH build setting, which
+defaults to a "modules" subdirectory of the data directory (DPATH), so it
+follows DPATH into a chroot.  That is the same directory the server loads
+from, so an installed module needs no further configuration to be found.
 
 To check what a module needs from the core:
 
@@ -105,11 +115,20 @@ To check what a module needs from the core:
 LOADING
 =======
 
+A module is always named, never pathed.  The name is the file name of the
+shared object without its directory and without the ".so" suffix; the
+server resolves it against the module directory it was built with (MOD_PATH
+in config.h, from IRCU_MPATH).  A name containing a "/" is refused, so a
+configuration file cannot reach a shared object outside that directory.
+
 From the configuration file:
 
   Module {
-   file = "/opt/ircu/lib/ircu/modules/mymodule.so";
+   name = "mymodule";
   };
+
+("file" is accepted as a spelling of "name"; it takes the same bare module
+name.)
 
 On /REHASH a module still listed stays loaded; one no longer listed is
 unloaded; one whose file changed on disk is unloaded and loaded again.
@@ -117,9 +136,18 @@ unloaded; one whose file changed on disk is unloaded and loaded again.
 Or at run time, with the module_admin privilege:
 
   /MODULE LIST
-  /MODULE LOAD /path/to/mymodule.so
+  /MODULE LOAD mymodule
   /MODULE UNLOAD mymodule
   /MODULE RELOAD mymodule
+
+The nick of the operator that loads a module is recorded and shown by both
+listings.  It is a copy taken at load time, so it survives that client
+disconnecting, and it does not follow a later nick change.
+
+All four take the module's name, the same one the configuration file uses.
+That is the file name, which need not be the name the module declares in
+its ModuleInfo; /MODULE LIST prints the file name first, then the declared
+name in parentheses.
 
 Everything except LIST also requires the CONFIG_OPERCMDS feature, since it
 changes what code the server is running.
@@ -304,8 +332,11 @@ THE EXAMPLES
 DIAGNOSTICS
 ===========
 
-  /MODULE LIST     name, version, ABI, path and description
-  /STATS M         loaded modules, how many commands each registered, and
+  /MODULE LIST     module name, declared name, version, ABI, path,
+                   description and who loaded it (the operator's nick, or
+                   the configuration file)
+  /STATS M         loaded modules, how many commands each registered, who
+                   loaded each one, and
                    for each hook point in use how many hooks are attached
                    and how many times it has fired
 

@@ -812,7 +812,10 @@ int main(int argc, char **argv) {
 
   event_loop();
 
-  module_shutdown();
+  /* The event loop has returned, so nothing else is running: unload every
+   * module and release the module system itself.
+   */
+  module_close();
 
   return 0;
 }

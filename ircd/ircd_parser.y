@@ -1404,8 +1404,17 @@ moduleblock: MODULE {
 };
 
 moduleitems: moduleitem moduleitems | moduleitem;
-moduleitem: modulepath;
-modulepath: TFILE '=' QSTRING ';'
+moduleitem: modulename | modulefile;
+/* A module is named, not pathed: the server resolves the name against the
+ * module directory it was built with (MOD_PATH).  "file" is accepted as a
+ * spelling of the same thing.
+ */
+modulename: NAME '=' QSTRING ';'
+{
+  MyFree(pass);
+  pass = $3;
+};
+modulefile: TFILE '=' QSTRING ';'
 {
   MyFree(pass);
   pass = $3;

@@ -90,6 +90,9 @@ struct ModuleInfo {
  */
 extern const char* module_name(const struct ModuleHandle* mod);
 extern const char* module_path(const struct ModuleHandle* mod);
+extern const char* module_file(const struct ModuleHandle* mod);
+/** Nick that loaded the module, or NULL if the configuration file did. */
+extern const char* module_loaded_by(const struct ModuleHandle* mod);
 extern const char* module_version(const struct ModuleHandle* mod);
 extern const char* module_description(const struct ModuleHandle* mod);
 
@@ -162,12 +165,22 @@ extern void module_stats(struct Client* sptr, const struct StatDesc* sd,
                          char* param);
 
 extern void module_init(void);
+/** Unload every module, leaving the module system up. */
 extern void module_shutdown(void);
+/** Shut down and release the module system; main() only, once, at exit. */
+extern void module_close(void);
 
-extern struct ModuleHandle* module_load(const char* path, const char** errstr);
+/** Load MOD_PATH/<name>.so; \a name carries no directory and no suffix.
+ * \a loaded_by is the loading operator's nick, or NULL for the config file.
+ */
+extern struct ModuleHandle* module_load(const char* name,
+                                        const char* loaded_by,
+                                        const char** errstr);
 extern int module_unload(struct ModuleHandle* mod);
+/** Find a module by the name it declares in its #ModuleInfo. */
 extern struct ModuleHandle* module_find(const char* name);
-extern struct ModuleHandle* module_find_path(const char* path);
+/** Find a module by the name it was loaded by. */
+extern struct ModuleHandle* module_find_file(const char* name);
 
 /** Iterate over loaded modules; pass NULL to start. */
 extern struct ModuleHandle* module_next(struct ModuleHandle* mod);

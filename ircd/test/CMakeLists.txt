@@ -96,5 +96,7 @@ endforeach()
 
 # The fixture directory is baked in rather than passed as a test argument:
 # a compile definition cannot drift out of sync with the test registration.
+# IRCU_MODULE_DIR is what module.c resolves module names against, so the
+# loader looks the fixtures up by name exactly as the server does.
 target_compile_definitions(module_t PRIVATE
-  IRCU_TEST_MODULE_DIR="${IRCU_TEST_MODULE_DIR}")
+  IRCU_MODULE_DIR="${IRCU_TEST_MODULE_DIR}")

@@ -1088,16 +1088,17 @@ static void close_mappings(void)
  * that is already loaded stays loaded unless its file changed on disk, in
  * which case it is unloaded and loaded again so the new code takes effect.
  *
- * @param[in] path Path to the module's shared object.
+ * @param[in] name Name of the module, resolved against the server's module
+ *   directory (MOD_PATH) by module_load().
  */
-void conf_add_module(const char *path)
+void conf_add_module(const char *name)
 {
   struct ModuleHandle *mod;
   const char *err = 0;
 
-  assert(0 != path);
+  assert(0 != name);
 
-  mod = module_find_path(path);
+  mod = module_find_file(name);
   if (mod) {
     if (!module_changed_on_disk(mod)) {
       /* Unchanged: keep it, and let it know a rehash happened. */
@@ -1109,15 +1110,15 @@ void conf_add_module(const char *path)
     /* The file changed underneath us; take the old code out first. */
     if (!module_unload(mod)) {
       sendto_opmask_butone(0, SNO_OLDSNO,
-                           "Could not unload changed module %s", path);
+                           "Could not unload changed module %s", name);
       log_write(LS_SYSTEM, L_ERROR, 0,
-                "Could not unload changed module %s", path);
+                "Could not unload changed module %s", name);
       module_mark(mod);
       return;
     }
   }
 
-  if (!module_load(path, &err)) {
+  if (!module_load(name, NULL, &err)) {
     if (!err)
       err = "unknown error";
 
@@ -1127,11 +1128,11 @@ void conf_add_module(const char *path)
      * from coming up, or make a rehash fail.
      */
     sendto_opmask_butone(0, SNO_OLDSNO, "Could not load module %s: %s",
-                         path, err);
+                         name, err);
     log_write(LS_SYSTEM, L_ERROR, 0, "Could not load module %s: %s",
-              path, err);
+              name, err);
     if (!conf_already_read)
-      fprintf(stderr, "Could not load module %s: %s\n", path, err);
+      fprintf(stderr, "Could not load module %s: %s\n", name, err);
   }
 }
 

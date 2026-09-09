@@ -45,11 +45,16 @@ static void module_send_list(struct Client* sptr)
   struct ModuleHandle* mod;
 
   for (mod = module_next(0); mod; mod = module_next(mod))
+    /* The file name comes first: that is what LOAD, UNLOAD and RELOAD
+     * take, and it need not match the name the module declares.
+     */
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Module %s %s (ABI %u): %s -- %s",
-               module_name(mod), module_version(mod),
+               ":Module %s (%s %s, ABI %u): %s -- %s [loaded by %s]",
+               module_file(mod), module_name(mod), module_version(mod),
                (unsigned int) IRCU_MODULE_ABI, module_path(mod),
-               module_description(mod));
+               module_description(mod),
+               module_loaded_by(mod) ? module_loaded_by(mod)
+                                     : "the configuration file");
 
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%u module%s loaded",
              module_count(), module_count() == 1 ? "" : "s");
@@ -58,7 +63,8 @@ static void module_send_list(struct Client* sptr)
 /** Handle a MODULE command from an operator.
  *
  * parv[1] = subcommand: LIST, LOAD, UNLOAD or RELOAD
- * parv[2] = path (LOAD) or module name (UNLOAD, RELOAD)
+ * parv[2] = module name; LOAD resolves it against the server's module
+ *   directory, UNLOAD and RELOAD look it up among the loaded modules
  *
  * @param[in] cptr Client that sent us the message.
  * @param[in] sptr Original source of message.
@@ -71,7 +77,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   struct ModuleHandle* mod;
   const char* err = 0;
   char* subcmd;
-  char path[512];
+  char name[256];
 
   if (!HasPriv(sptr, PRIV_MODULE))
     return send_reply(sptr, ERR_NOPRIVILEGES);
@@ -97,7 +103,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     return send_reply(sptr, ERR_NEEDMOREPARAMS, "MODULE");
 
   if (0 == ircd_strcmp(subcmd, "LOAD")) {
-    if (!module_load(parv[2], &err)) {
+    if (!module_load(parv[2], cli_name(sptr), &err)) {
       sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Could not load %s: %s",
                     sptr, parv[2], err ? err : "unknown error");
       return 0;
@@ -110,7 +116,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   }
 
   if (0 == ircd_strcmp(subcmd, "UNLOAD")) {
-    if (!(mod = module_find(parv[2]))) {
+    if (!(mod = module_find_file(parv[2]))) {
       sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :No module named %s is loaded",
                     sptr, parv[2]);
       return 0;
@@ -129,15 +135,15 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   }
 
   if (0 == ircd_strcmp(subcmd, "RELOAD")) {
-    if (!(mod = module_find(parv[2]))) {
+    if (!(mod = module_find_file(parv[2]))) {
       sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :No module named %s is loaded",
                     sptr, parv[2]);
       return 0;
     }
 
-    /* module_unload() frees the handle, so keep the path before it goes. */
-    ircd_strncpy(path, module_path(mod), sizeof(path) - 1);
-    path[sizeof(path) - 1] = '\0';
+    /* module_unload() frees the handle, so keep the name before it goes. */
+    ircd_strncpy(name, module_file(mod), sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
 
     if (!module_unload(mod)) {
       sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Could not unload %s",
@@ -145,7 +151,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       return 0;
     }
 
-    if (!module_load(path, &err)) {
+    if (!module_load(name, cli_name(sptr), &err)) {
       /* The old code is already gone; say so plainly rather than leaving
        * the operator to guess whether the module is still running.
        */

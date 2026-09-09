@@ -20,59 +20,75 @@
  */
 #include "config.h"
 
-#include "module.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_log.h"
-#include "hooks.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
+#include "module.h"
 #include "msg.h"
-#include "parse.h"
 #include "numeric.h"
+#include "parse.h"
 #include "s_debug.h"
 #include "send.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <dlfcn.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
+/** Directory the loader resolves module names against.
+ *
+ * MOD_PATH comes from config.h, i.e. from the IRCU_MPATH build setting.  The
+ * indirection exists so the unit test can point the loader at its fixtures
+ * without a second copy of the resolution logic.
+ */
+#ifndef IRCU_MODULE_DIR
+#define IRCU_MODULE_DIR MOD_PATH
+#endif
+
 /** A command registered by a module. */
 struct ModuleCommand {
-  struct ModuleCommand* mc_next;    /**< Next command from the same module. */
-  struct Message*       mc_msg;     /**< Message installed in the tries. */
+  struct ModuleCommand *mc_next; /**< Next command from the same module. */
+  struct Message *mc_msg;        /**< Message installed in the tries. */
 };
 
 /** A module the server has loaded. */
 struct ModuleHandle {
-  struct ModuleHandle*  mh_next;    /**< Next module in #module_list. */
-  void*                 mh_dl;      /**< Handle returned by dlopen(). */
-  struct ModuleInfo*    mh_info;    /**< The module's exported description. */
-  char*                 mh_path;    /**< Path the module was loaded from. */
-  time_t                mh_mtime;   /**< Modification time when loaded. */
-  int                   mh_marked;  /**< Seen in the running configuration. */
-  struct ModuleCommand* mh_cmds;    /**< Commands this module registered. */
+  struct ModuleHandle *mh_next;  /**< Next module in #ModuleManager->mod_list. */
+  void *mh_dl;                   /**< Handle returned by dlopen(). */
+  struct ModuleInfo *mh_info;    /**< The module's exported description. */
+  char *mh_file;                 /**< Name the module was loaded by. */
+  char *mh_path;                 /**< Path the module was loaded from. */
+  time_t mh_mtime;               /**< Modification time when loaded. */
+  int mh_marked;                 /**< Seen in the running configuration. */
+  struct ModuleCommand *mh_cmds; /**< Commands this module registered. */
+  char *mh_loaded_by;            /**< Nick that loaded it, or NULL for the
+                                      configuration file.  A copy: the client
+                                      may be long gone by the time anyone
+                                      asks. */
 };
 
-/** List of loaded modules, most recently loaded first. */
-static struct ModuleHandle* module_list;
+/* A module manager */
+struct ModuleManager {
+  unsigned int mod_count;
+  unsigned int mod_cb_depth;
+  struct ModuleHandle *mod_list;
+};
 
-/** Number of loaded modules. */
-static unsigned int module_list_count;
+/** Manager (stats & more) */
+struct ModuleManager *manager;
 
-/** Depth of module callbacks currently on the stack. */
-static int module_callback_depth;
-
-static int module_unload_internal(struct ModuleHandle* mod, int quiet);
+static int module_unload_internal(struct ModuleHandle *mod, int quiet);
 
 /** Get the name of a module.
  * @param[in] mod Module to query.
  * @return The module's short name.
  */
-const char* module_name(const struct ModuleHandle* mod)
-{
+const char *module_name(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return mod->mh_info->mi_name;
 }
@@ -81,18 +97,44 @@ const char* module_name(const struct ModuleHandle* mod)
  * @param[in] mod Module to query.
  * @return Filesystem path of the shared object.
  */
-const char* module_path(const struct ModuleHandle* mod)
-{
+const char *module_path(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return mod->mh_path;
+}
+
+/** Get the name a module was loaded by.
+ *
+ * This is the name that appears in a Module{} block or in /MODULE LOAD, and
+ * the name to hand back to module_load() to load it again.  It names the
+ * file under #MOD_PATH, and need not match the name the module declares in
+ * its #ModuleInfo.
+ *
+ * @param[in] mod Module to query.
+ * @return File name, without the directory or the ".so" suffix.
+ */
+const char *module_file(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return mod->mh_file;
+}
+
+/** Get the nick of the operator that loaded a module.
+ *
+ * The nick is copied at load time, so it survives the client disconnecting
+ * (and does not follow a later nick change).
+ *
+ * @param[in] mod Module to query.
+ * @return Nick, or NULL when the module came from the configuration file.
+ */
+const char *module_loaded_by(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return mod->mh_loaded_by;
 }
 
 /** Get the version string a module declares.
  * @param[in] mod Module to query.
  * @return Version string, or "?" if the module declares none.
  */
-const char* module_version(const struct ModuleHandle* mod)
-{
+const char *module_version(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return mod->mh_info->mi_version ? mod->mh_info->mi_version : "?";
 }
@@ -101,64 +143,69 @@ const char* module_version(const struct ModuleHandle* mod)
  * @param[in] mod Module to query.
  * @return Description, or "" if the module declares none.
  */
-const char* module_description(const struct ModuleHandle* mod)
-{
+const char *module_description(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return mod->mh_info->mi_description ? mod->mh_info->mi_description : "";
 }
 
 /** Return the number of currently loaded modules. */
-unsigned int module_count(void)
-{
-  return module_list_count;
+unsigned int module_count(void) {
+  if (!manager)
+    return 0;
+  return manager->mod_count;
 }
 
 /** Report whether a module callback is currently executing. */
-int module_in_callback(void)
-{
-  return module_callback_depth > 0;
+int module_in_callback(void) {
+  if (!manager)
+    return 0;
+  return manager->mod_cb_depth > 0;
 }
 
 /** Iterate over the loaded modules.
  * @param[in] mod Previously returned module, or NULL to start.
  * @return Next module, or NULL when the list is exhausted.
  */
-struct ModuleHandle* module_next(struct ModuleHandle* mod)
-{
-  return mod ? mod->mh_next : module_list;
+struct ModuleHandle *module_next(struct ModuleHandle *mod) {
+  if (mod)
+    return mod->mh_next;
+
+  return manager ? manager->mod_list : 0;
 }
 
 /** Find a loaded module by name.
  * @param[in] name Module name to look for; compared case-insensitively.
  * @return Matching module, or NULL.
  */
-struct ModuleHandle* module_find(const char* name)
-{
-  struct ModuleHandle* mod;
+struct ModuleHandle *module_find(const char *name) {
+  struct ModuleHandle *mod;
 
-  if (!name)
+  if (!manager || !name)
     return 0;
 
-  for (mod = module_list; mod; mod = mod->mh_next)
+  for (mod = manager->mod_list; mod; mod = mod->mh_next)
     if (0 == ircd_strcmp(mod->mh_info->mi_name, name))
       return mod;
 
   return 0;
 }
 
-/** Find a loaded module by the path it was loaded from.
- * @param[in] path Path to look for; compared exactly.
+/** Find a loaded module by the name it was loaded by.
+ *
+ * The name is a file name under #MOD_PATH, so it is compared exactly: the
+ * filesystem this resolves against is case-sensitive.
+ *
+ * @param[in] name Name to look for.
  * @return Matching module, or NULL.
  */
-struct ModuleHandle* module_find_path(const char* path)
-{
-  struct ModuleHandle* mod;
+struct ModuleHandle *module_find_file(const char *name) {
+  struct ModuleHandle *mod;
 
-  if (!path)
+  if (!manager || !name)
     return 0;
 
-  for (mod = module_list; mod; mod = mod->mh_next)
-    if (0 == strcmp(mod->mh_path, path))
+  for (mod = manager->mod_list; mod; mod = mod->mh_next)
+    if (0 == strcmp(mod->mh_file, name))
       return mod;
 
   return 0;
@@ -168,8 +215,7 @@ struct ModuleHandle* module_find_path(const char* path)
  * @param[in] path File to stat.
  * @return Modification time, or zero if the file cannot be stat()ed.
  */
-static time_t module_mtime(const char* path)
-{
+static time_t module_mtime(const char *path) {
   struct stat sb;
 
   if (stat(path, &sb) < 0)
@@ -182,8 +228,7 @@ static time_t module_mtime(const char* path)
  * @param[in] mod Module to check.
  * @return Non-zero if the file on disk is newer or has gone missing.
  */
-int module_changed_on_disk(const struct ModuleHandle* mod)
-{
+int module_changed_on_disk(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return module_mtime(mod->mh_path) != mod->mh_mtime;
 }
@@ -197,12 +242,11 @@ int module_changed_on_disk(const struct ModuleHandle* mod)
  * @param[in] handlers One handler per HandlerType.
  * @return Non-zero on success.
  */
-int module_add_command(struct ModuleHandle* mod, const char* cmd,
-                       const char* tok, unsigned int parameters,
-                       unsigned int flags, MessageHandler handlers[])
-{
-  struct ModuleCommand* mc;
-  struct Message* msg;
+int module_add_command(struct ModuleHandle *mod, const char *cmd,
+                       const char *tok, unsigned int parameters,
+                       unsigned int flags, MessageHandler handlers[]) {
+  struct ModuleCommand *mc;
+  struct Message *msg;
 
   assert(0 != mod);
   assert(0 != cmd);
@@ -215,7 +259,7 @@ int module_add_command(struct ModuleHandle* mod, const char* cmd,
     return 0;
   }
 
-  mc = (struct ModuleCommand*) MyCalloc(1, sizeof(struct ModuleCommand));
+  mc = (struct ModuleCommand *)MyCalloc(1, sizeof(struct ModuleCommand));
   mc->mc_msg = msg;
   mc->mc_next = mod->mh_cmds;
   mod->mh_cmds = mc;
@@ -228,10 +272,9 @@ int module_add_command(struct ModuleHandle* mod, const char* cmd,
  * @param[in] cmd Command name to remove.
  * @return Non-zero if the command was found and removed.
  */
-int module_del_command(struct ModuleHandle* mod, const char* cmd)
-{
-  struct ModuleCommand** mc_p;
-  struct ModuleCommand* mc;
+int module_del_command(struct ModuleHandle *mod, const char *cmd) {
+  struct ModuleCommand **mc_p;
+  struct ModuleCommand *mc;
 
   assert(0 != mod);
   assert(0 != cmd);
@@ -249,9 +292,8 @@ int module_del_command(struct ModuleHandle* mod, const char* cmd)
 }
 
 /** Return how many commands a module currently has registered. */
-unsigned int module_command_count(const struct ModuleHandle* mod)
-{
-  struct ModuleCommand* mc;
+unsigned int module_command_count(const struct ModuleHandle *mod) {
+  struct ModuleCommand *mc;
   unsigned int count = 0;
 
   assert(0 != mod);
@@ -265,10 +307,9 @@ unsigned int module_command_count(const struct ModuleHandle* mod)
 /** Remove every command a module registered.
  * @param[in] mod Module being torn down.
  */
-static void module_drop_commands(struct ModuleHandle* mod)
-{
-  struct ModuleCommand* mc;
-  struct ModuleCommand* next;
+static void module_drop_commands(struct ModuleHandle *mod) {
+  struct ModuleCommand *mc;
+  struct ModuleCommand *next;
 
   for (mc = mod->mh_cmds; mc; mc = next) {
     next = mc->mc_next;
@@ -287,9 +328,8 @@ static void module_drop_commands(struct ModuleHandle* mod)
  * @param[in] user Opaque pointer for the callback.
  * @return Non-zero on success.
  */
-int module_add_hook(struct ModuleHandle* mod, enum HookType type,
-                    HookFn fn, int priority, void* user)
-{
+int module_add_hook(struct ModuleHandle *mod, enum HookType type, HookFn fn,
+                    int priority, void *user) {
   assert(0 != mod);
   return hook_add(mod, mod->mh_info->mi_name, type, fn, priority, user);
 }
@@ -300,35 +340,87 @@ int module_add_hook(struct ModuleHandle* mod, enum HookType type,
  * @param[in] fn Callback to detach.
  * @return Non-zero if it was found.
  */
-int module_del_hook(struct ModuleHandle* mod, enum HookType type, HookFn fn)
-{
+int module_del_hook(struct ModuleHandle *mod, enum HookType type, HookFn fn) {
   assert(0 != mod);
   return hook_del(mod, type, fn);
 }
 
-/** Load a module from a shared object.
+/** Turn a module name into the path of its shared object.
  *
- * On failure nothing is left behind: the shared object is closed again and
- * no handle is added to the module list.
+ * The name is a plain file name under #MOD_PATH: it may not contain a
+ * directory separator and may not be a relative directory reference, so a
+ * Module{} block or a /MODULE LOAD cannot reach outside the module
+ * directory the server was built with.
  *
- * @param[in] path Filesystem path of the shared object.
+ * @param[in] name Module name, without directory or ".so" suffix.
+ * @param[out] buf Receives the resolved path.
+ * @param[in] len Size of \a buf.
+ * @param[out] errstr If non-NULL, receives the reason the name was refused.
+ * @return Non-zero on success.
+ */
+static int module_resolve(const char *name, char *buf, size_t len,
+                          const char **errstr) {
+  int written;
+
+  if (!name || !*name) {
+    if (errstr)
+      *errstr = "no module name given";
+    return 0;
+  }
+
+  if (strchr(name, '/') || 0 == strcmp(name, ".") || 0 == strcmp(name, "..")) {
+    if (errstr)
+      *errstr = "a module is named by name, not by path";
+    return 0;
+  }
+
+  written = snprintf(buf, len, "%s/%s.so", IRCU_MODULE_DIR, name);
+  if (written < 0 || (size_t)written >= len) {
+    if (errstr)
+      *errstr = "module name is too long";
+    return 0;
+  }
+
+  return 1;
+}
+
+/** Load a module by name from the module directory.
+ *
+ * The shared object is #MOD_PATH/<name>.so; see module_resolve().  On
+ * failure nothing is left behind: the shared object is closed again and no
+ * handle is added to the module list.
+ *
+ * @param[in] name Module name, as a Module{} block or /MODULE LOAD gives it.
+ * @param[in] loaded_by Nick of the operator loading it, or NULL when the
+ *   configuration file is doing the loading.  It is copied, so the client
+ *   it names may leave at any time afterwards.
  * @param[out] errstr If non-NULL, receives a human-readable reason on
  *   failure.  The string is owned by the caller only until the next call.
  * @return Handle for the loaded module, or NULL on failure.
  */
-struct ModuleHandle* module_load(const char* path, const char** errstr)
-{
+struct ModuleHandle *module_load(const char *name, const char *loaded_by,
+                                 const char **errstr) {
   static char errbuf[512];
-  struct ModuleHandle* mod;
-  struct ModuleInfo* info;
-  void* dl;
+  struct ModuleHandle *mod;
+  struct ModuleInfo *info;
+  char path[1024];
+  void *dl;
 
-  assert(0 != path);
+  assert(0 != name);
 
   if (errstr)
     *errstr = 0;
 
-  if (module_find_path(path)) {
+  if (!manager) {
+    if (errstr)
+      *errstr = "the module system is not initialised";
+    return 0;
+  }
+
+  if (!module_resolve(name, path, sizeof(path), errstr))
+    return 0;
+
+  if (module_find_file(name)) {
     if (errstr)
       *errstr = "module is already loaded";
     return 0;
@@ -349,7 +441,7 @@ struct ModuleHandle* module_load(const char* path, const char** errstr)
     return 0;
   }
 
-  info = (struct ModuleInfo*) dlsym(dl, "ircu_module");
+  info = (struct ModuleInfo *)dlsym(dl, "ircu_module");
   if (!info) {
     dlclose(dl);
     if (errstr)
@@ -360,7 +452,7 @@ struct ModuleHandle* module_load(const char* path, const char** errstr)
   if (info->mi_abi != IRCU_MODULE_ABI) {
     snprintf(errbuf, sizeof(errbuf),
              "ABI mismatch: module was built for %u, server speaks %u",
-             info->mi_abi, (unsigned int) IRCU_MODULE_ABI);
+             info->mi_abi, (unsigned int)IRCU_MODULE_ABI);
     dlclose(dl);
     if (errstr)
       *errstr = errbuf;
@@ -375,17 +467,20 @@ struct ModuleHandle* module_load(const char* path, const char** errstr)
   }
 
   if (module_find(info->mi_name)) {
-    snprintf(errbuf, sizeof(errbuf),
-             "a module named %s is already loaded", info->mi_name);
+    snprintf(errbuf, sizeof(errbuf), "a module named %s is already loaded",
+             info->mi_name);
     dlclose(dl);
     if (errstr)
       *errstr = errbuf;
     return 0;
   }
 
-  mod = (struct ModuleHandle*) MyCalloc(1, sizeof(struct ModuleHandle));
+  mod = (struct ModuleHandle *)MyCalloc(1, sizeof(struct ModuleHandle));
   mod->mh_dl = dl;
   mod->mh_info = info;
+  DupString(mod->mh_file, name);
+  if (loaded_by)
+    DupString(mod->mh_loaded_by, loaded_by);
   DupString(mod->mh_path, path);
   mod->mh_mtime = module_mtime(path);
   mod->mh_marked = 1;
@@ -393,21 +488,21 @@ struct ModuleHandle* module_load(const char* path, const char** errstr)
   /* Link before mi_init so that anything the module registers can find its
    * own handle in the list.
    */
-  mod->mh_next = module_list;
-  module_list = mod;
-  module_list_count++;
+  mod->mh_next = manager->mod_list;
+  manager->mod_list = mod;
+  manager->mod_count++;
 
   if (info->mi_init) {
     int res;
 
-    module_callback_depth++;
+    manager->mod_cb_depth++;
     res = (*info->mi_init)(mod);
-    module_callback_depth--;
+    manager->mod_cb_depth--;
 
     if (res) {
       snprintf(errbuf, sizeof(errbuf),
-               "module %s refused to initialise (returned %d)",
-               info->mi_name, res);
+               "module %s refused to initialise (returned %d)", info->mi_name,
+               res);
 
       /* Unlink and tear down; mi_init is responsible for having left
        * nothing behind on its failure path, but the unload path below
@@ -421,8 +516,8 @@ struct ModuleHandle* module_load(const char* path, const char** errstr)
     }
   }
 
-  log_write(LS_SYSTEM, L_INFO, 0, "Loaded module %s %s from %s",
-            info->mi_name, info->mi_version ? info->mi_version : "?", path);
+  log_write(LS_SYSTEM, L_INFO, 0, "Loaded module %s %s from %s", info->mi_name,
+            info->mi_version ? info->mi_version : "?", path);
 
   return mod;
 }
@@ -433,11 +528,10 @@ struct ModuleHandle* module_load(const char* path, const char** errstr)
  *   unwinding a load that never completed.
  * @return Non-zero on success, zero if the module cannot be unloaded now.
  */
-static int module_unload_internal(struct ModuleHandle* mod, int quiet)
-{
-  struct ModuleHandle** mod_p;
+static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
+  struct ModuleHandle **mod_p;
   char name[64];
-  void* dl;
+  void *dl;
 
   assert(0 != mod);
 
@@ -457,9 +551,9 @@ static int module_unload_internal(struct ModuleHandle* mod, int quiet)
   name[sizeof(name) - 1] = '\0';
 
   if (mod->mh_info->mi_fini) {
-    module_callback_depth++;
+    manager->mod_cb_depth++;
     (*mod->mh_info->mi_fini)(mod);
-    module_callback_depth--;
+    manager->mod_cb_depth--;
   }
 
   /* Everything the module registered through the module API is reverted
@@ -470,15 +564,17 @@ static int module_unload_internal(struct ModuleHandle* mod, int quiet)
   module_drop_commands(mod);
   hook_del_module(mod);
 
-  for (mod_p = &module_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
+  for (mod_p = &manager->mod_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {
       *mod_p = mod->mh_next;
-      module_list_count--;
+      manager->mod_count--;
       break;
     }
   }
 
   dl = mod->mh_dl;
+  MyFree(mod->mh_file);
+  MyFree(mod->mh_loaded_by);
   MyFree(mod->mh_path);
   MyFree(mod);
 
@@ -497,14 +593,12 @@ static int module_unload_internal(struct ModuleHandle* mod, int quiet)
  * @param[in] mod Module to unload.
  * @return Non-zero on success, zero if the module cannot be unloaded now.
  */
-int module_unload(struct ModuleHandle* mod)
-{
+int module_unload(struct ModuleHandle *mod) {
   return module_unload_internal(mod, 0);
 }
 
 /** Mark a module as present in the running configuration. */
-void module_mark(struct ModuleHandle* mod)
-{
+void module_mark(struct ModuleHandle *mod) {
   assert(0 != mod);
   mod->mh_marked = 1;
 }
@@ -514,21 +608,25 @@ void module_mark(struct ModuleHandle* mod)
  * Called before re-reading the configuration; module_sweep() then unloads
  * whatever the new configuration did not mention.
  */
-void module_unmark_all(void)
-{
-  struct ModuleHandle* mod;
+void module_unmark_all(void) {
+  struct ModuleHandle *mod;
 
-  for (mod = module_list; mod; mod = mod->mh_next)
+  if (!manager)
+    return;
+
+  for (mod = manager->mod_list; mod; mod = mod->mh_next)
     mod->mh_marked = 0;
 }
 
 /** Unload every module the running configuration no longer mentions. */
-void module_sweep(void)
-{
-  struct ModuleHandle* mod;
-  struct ModuleHandle* next;
+void module_sweep(void) {
+  struct ModuleHandle *mod;
+  struct ModuleHandle *next;
 
-  for (mod = module_list; mod; mod = next) {
+  if (!manager)
+    return;
+
+  for (mod = manager->mod_list; mod; mod = next) {
     next = mod->mh_next;
     if (!mod->mh_marked)
       module_unload(mod);
@@ -536,14 +634,13 @@ void module_sweep(void)
 }
 
 /** Tell a module that the server rehashed, if it wants to know. */
-void module_rehash_notify(struct ModuleHandle* mod)
-{
+void module_rehash_notify(struct ModuleHandle *mod) {
   assert(0 != mod);
 
   if (mod->mh_info->mi_rehash) {
-    module_callback_depth++;
+    manager->mod_cb_depth++;
     (*mod->mh_info->mi_rehash)(mod);
-    module_callback_depth--;
+    manager->mod_cb_depth--;
   }
 }
 
@@ -552,52 +649,79 @@ void module_rehash_notify(struct ModuleHandle* mod)
  * @param[in] sd Stats descriptor (unused).
  * @param[in] param Extra parameter (unused).
  */
-void module_stats(struct Client* sptr, const struct StatDesc* sd, char* param)
-{
-  struct ModuleHandle* mod;
+void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
+  struct ModuleHandle *mod;
   int type;
 
-  for (mod = module_list; mod; mod = mod->mh_next)
+  if (!manager)
+    return;
+
+  for (mod = manager->mod_list; mod; mod = mod->mh_next)
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Module %s %s: %u command%s, from %s",
+               ":Module %s %s: %u command%s, from %s, loaded by %s",
                mod->mh_info->mi_name, module_version(mod),
                module_command_count(mod),
-               module_command_count(mod) == 1 ? "" : "s",
-               mod->mh_path);
+               module_command_count(mod) == 1 ? "" : "s", mod->mh_path,
+               mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
 
-  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":%u module%s loaded, ABI %u",
-             module_list_count, module_list_count == 1 ? "" : "s",
-             (unsigned int) IRCU_MODULE_ABI);
+  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%u module%s loaded, ABI %u",
+             manager->mod_count, manager->mod_count == 1 ? "" : "s",
+             (unsigned int)IRCU_MODULE_ABI);
 
   /* Only hook points that are in use or have fired: listing all eighteen
    * every time would bury the two lines an operator actually wants.
    */
   for (type = 0; type < HOOK_LAST; type++) {
-    unsigned int registered = hook_count((enum HookType) type);
-    unsigned int calls = hook_calls((enum HookType) type);
+    unsigned int registered = hook_count((enum HookType)type);
+    unsigned int calls = hook_calls((enum HookType)type);
 
     if (!registered && !calls)
       continue;
 
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
                ":Hook %s: %u registered, %u call%s",
-               hook_type_name((enum HookType) type), registered, calls,
+               hook_type_name((enum HookType)type), registered, calls,
                calls == 1 ? "" : "s");
   }
 }
 
 /** Initialise the module subsystem. */
-void module_init(void)
-{
-  module_list = 0;
-  module_list_count = 0;
-  module_callback_depth = 0;
+void module_init(void) {
+  manager = (struct ModuleManager *)MyMalloc(sizeof(struct ModuleManager));
+  if (!manager) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Failed to allocate struct ModuleManager*");
+    exit(1);
+  }
+  manager->mod_count = 0;
+  manager->mod_cb_depth = 0;
+  manager->mod_list = 0;
 }
 
 /** Unload every module, in reverse order of loading. */
-void module_shutdown(void)
-{
-  while (module_list)
-    module_unload(module_list);
+void module_shutdown(void) {
+  if (!manager)
+    return;
+
+  while (manager->mod_list)
+    module_unload(manager->mod_list);
+}
+
+/** Release the module manager itself.
+ *
+ * Separate from module_shutdown() because it ends the module system rather
+ * than just emptying it: only the main thread calls this, once, after the
+ * event loop has returned and nothing can ask about modules again.  Every
+ * accessor treats a NULL manager as "the module system is not up", so a
+ * stray later call is refused instead of reaching freed memory, and
+ * module_init() would bring it back.
+ */
+void module_close(void) {
+  if (!manager)
+    return;
+
+  module_shutdown();
+
+  MyFree(manager);
+  manager = 0;
 }

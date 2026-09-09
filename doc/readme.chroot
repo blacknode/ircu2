@@ -34,8 +34,25 @@ use of a wrapper script.  This requires making all paths compiled in
 to the server be relative to the new root directory; fortunately, this
 can be done by configuring the build with -DIRCU_CHROOT=<dir>.  The
 <dir> argument specifies where the root directory will be, and the
-server restart path, data path, configuration file, and debug log
-files will all be modified to be relative to this root directory.  If
+server restart path, data path, module directory, configuration file,
+and debug log files will all be modified to be relative to this root
+directory.  Because those paths are derived from the install prefix,
+the prefix itself defaults to <dir> when a root directory is
+configured, so the whole install tree lands inside the jail; pass
+-DCMAKE_INSTALL_PREFIX explicitly only if you want it elsewhere, and
+note that a prefix already cached in an existing build directory is
+left alone (configure a fresh build directory, or set the prefix
+yourself, and cmake will warn if it points outside the jail).
+
+A build that says nothing about IRCU_CHROOT gets no root directory, and
+the paths are compiled in as the absolute paths they are.  What does
+default to the source tree in that case is the install prefix, so a
+build stays self-contained -- the binary in bin/, the data directory in
+lib/, the modules in lib/modules -- and the server can be run straight
+from there, no wrapper involved.  Set IRCU_CHROOT only for a server that
+really will run inside the jail: its paths stop resolving outside one,
+and a path such as DPATH "/lib" may well hit the host's own /lib rather
+than failing outright.  If
 the data path or configuration files cannot be made relative to the
 specified root directory, cmake will issue an error message and exit;
 if the server restart path is not relative to the specified root

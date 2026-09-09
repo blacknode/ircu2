@@ -62,12 +62,46 @@ foreach(_cfg RELEASE RELWITHDEBINFO MINSIZEREL)
   string(STRIP "${CMAKE_C_FLAGS_${_cfg}}" CMAKE_C_FLAGS_${_cfg})
 endforeach()
 
-# ircu historically installs under $HOME, not /usr/local.  Honour that when
-# the user has not asked for a prefix of their own.
+# The chroot directory has to be settled before the install prefix, because
+# it decides where that prefix goes.  IrcuPaths.cmake does the rest of the
+# work with it.  It is empty by default: a root directory rewrites every path
+# compiled into the server to be relative to it, which is only correct for a
+# server that will actually run inside that jail.
+set(IRCU_CHROOT "" CACHE STRING
+  "Directory the server will be chrooted into (empty for none)")
+string(REGEX REPLACE "/+$" "" IRCU_CHROOT "${IRCU_CHROOT}")
+
+# Where the install tree goes.
+#
+# ircu historically installed under $HOME; it defaults to the source tree
+# instead, which keeps a build self-contained -- the binary, its data
+# directory and its modules all land next to the sources, and the paths
+# compiled into the server are real absolute paths that work without a
+# wrapper.  With a chroot the whole tree belongs inside it, since nothing
+# above the new root is reachable from within.
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-  if(DEFINED ENV{HOME} AND NOT "$ENV{HOME}" STREQUAL "")
-    set(CMAKE_INSTALL_PREFIX "$ENV{HOME}" CACHE PATH
+  if(IRCU_CHROOT)
+    set(CMAKE_INSTALL_PREFIX "${IRCU_CHROOT}" CACHE PATH
       "Installation prefix" FORCE)
+  else()
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}" CACHE PATH
+      "Installation prefix" FORCE)
+  endif()
+  message(STATUS "Install prefix defaulted to ${CMAKE_INSTALL_PREFIX}")
+endif()
+
+# A chroot added to an existing build directory cannot move a prefix that is
+# already cached, so say what to do rather than failing later on a path that
+# the user never set.
+if(IRCU_CHROOT)
+  string(FIND "${CMAKE_INSTALL_PREFIX}" "${IRCU_CHROOT}" _ircu_prefix_pos)
+  if(NOT _ircu_prefix_pos EQUAL 0)
+    message(WARNING
+      "The install prefix ${CMAKE_INSTALL_PREFIX} is outside the root "
+      "directory ${IRCU_CHROOT}.  Paths derived from it cannot be made "
+      "relative to the root directory; pass "
+      "-DCMAKE_INSTALL_PREFIX=${IRCU_CHROOT} (or configure a fresh build "
+      "directory) if that is not deliberate.")
   endif()
 endif()
 
@@ -139,6 +173,7 @@ message(STATUS "  Domain:              ${IRCU_DOMAIN}")
 message(STATUS "  DPath:               ${IRCU_DPATH}")
 message(STATUS "  CPath:               ${IRCU_CPATH}")
 message(STATUS "  LPath:               ${IRCU_LPATH}")
+message(STATUS "  MPath:               ${IRCU_MPATH}")
 message(STATUS "  Maximum connections: ${IRCU_MAXCON}")
 message(STATUS "  TLS implementation:  ${IRCU_TLS}")
 message(STATUS "  IPv6:                ${IRCU_ENABLE_IPV6}")

@@ -1,16 +1,15 @@
 #
-# Runtime paths compiled into the server: DPATH, CPATH, LPATH and SPATH.
+# Runtime paths compiled into the server: DPATH, CPATH, LPATH, SPATH and the
+# module directory (MOD_PATH).
 #
 # When --with-chroot (IRCU_CHROOT) is in play the server sees the filesystem
 # from inside the chroot, so every absolute path baked into the binary has the
 # chroot prefix stripped, while the install rules keep using the full path.
 #
 
-set(IRCU_CHROOT "" CACHE STRING
-  "Directory the server will be chrooted into (empty for none)")
-
-# Strip trailing slashes so the prefix comparisons below behave.
-string(REGEX REPLACE "/+$" "" IRCU_CHROOT "${IRCU_CHROOT}")
+# IRCU_CHROOT is declared in the top-level CMakeLists.txt, with its trailing
+# slashes already stripped so the prefix comparisons below behave: the install
+# prefix defaults to it, so it has to be known before GNUInstallDirs runs.
 
 # ---------------------------------------------------------------------------
 # Data directory
@@ -44,6 +43,31 @@ endif()
 set(_ircu_spath "${IRCU_SPATH}")
 
 # ---------------------------------------------------------------------------
+# Module directory
+#
+# Both ends of a module's life come from here: `ircu_add_module()` installs
+# into this directory, and the server appends "<name>.so" to it when a
+# Module{} block or /MODULE LOAD names a module.  That is why a module is
+# configured by name and never by path.
+#
+# It defaults to a "modules" subdirectory of the data directory, so it
+# follows DPATH wherever that goes -- including inside a chroot, where the
+# server can only reach what is below the new root.
+#
+# The cache variable is IRCU_MPATH; the macro compiled into the server is
+# MOD_PATH, because MPATH is already taken by the runtime feature that names
+# the MOTD file (FEAT_MPATH).
+# ---------------------------------------------------------------------------
+set(_ircu_mpath_default "${IRCU_DPATH}/modules")
+
+set(IRCU_MPATH "${_ircu_mpath_default}" CACHE STRING
+  "Directory modules are installed into and loaded from")
+string(REGEX REPLACE "/+$" "" IRCU_MPATH "${IRCU_MPATH}")
+if(NOT IRCU_MPATH)
+  set(IRCU_MPATH "${_ircu_mpath_default}")
+endif()
+
+# ---------------------------------------------------------------------------
 # Rebase the absolute paths onto the chroot
 # ---------------------------------------------------------------------------
 function(_ircu_strip_chroot out path what fatal)
@@ -58,7 +82,11 @@ function(_ircu_strip_chroot out path what fatal)
     set(${out} "${_stripped}" PARENT_SCOPE)
   elseif(fatal)
     message(FATAL_ERROR
-      "${what} ${path} is not below the root directory ${IRCU_CHROOT}")
+      "${what} ${path} is not below the root directory ${IRCU_CHROOT}.  "
+      "Every path compiled into the server has to be reachable from the new "
+      "root: either move it inside (the install prefix, which most of these "
+      "paths derive from, is ${CMAKE_INSTALL_PREFIX}) or set it explicitly "
+      "with the matching IRCU_* variable.")
   else()
     message(WARNING
       "${what} ${path} is not below the root directory ${IRCU_CHROOT}; "
@@ -69,6 +97,7 @@ endfunction()
 
 _ircu_strip_chroot(SPATH "${_ircu_spath}" "Binary" FALSE)
 _ircu_strip_chroot(DPATH "${IRCU_DPATH}"  "Data directory" TRUE)
+_ircu_strip_chroot(MOD_PATH "${IRCU_MPATH}" "Module directory" TRUE)
 
 if(IRCU_CPATH MATCHES "^/")
   _ircu_strip_chroot(CPATH "${IRCU_CPATH}" "Configuration file" TRUE)

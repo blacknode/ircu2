@@ -58,8 +58,11 @@ Then install:
 
     cmake --install build
 
-The default installation prefix is your home directory, as it has always been
-for ircu; pass -DCMAKE_INSTALL_PREFIX=/some/where to change it.
+The default installation prefix is the source tree, so a build is
+self-contained: the binary lands in bin/, the data directory in lib/ and the
+modules in lib/modules, and the server can be run straight from there.  Pass
+-DCMAKE_INSTALL_PREFIX=/some/where for a real installation (ircu historically
+used your home directory, which is still just -DCMAKE_INSTALL_PREFIX=$HOME).
 
 
 CONFIGURATION OPTIONS
@@ -68,17 +71,28 @@ Pass these to the first `cmake -B build` invocation as -DNAME=VALUE.  They are
 remembered in the build directory, so later builds do not need to repeat them.
 
   Paths and identity
-    CMAKE_INSTALL_PREFIX    Installation prefix (default: $HOME)
+    CMAKE_INSTALL_PREFIX    Installation prefix (default: the source tree, so
+                            a build is self-contained; the root directory when
+                            IRCU_CHROOT is set)
     IRCU_DOMAIN             Domain name used in local statistics gathering.
-                            Guessed from /etc/resolv.conf; required if that
-                            fails.
+                            Guessed from /etc/resolv.conf; when that fails the
+                            build warns and falls back to localhost.domain.
     IRCU_DPATH              Directory for all server data files
                             (default: <prefix>/lib)
     IRCU_CPATH              Default configuration file (default: ircd.conf)
     IRCU_LPATH              Default debugging log file (default: ircd.log)
+    IRCU_MPATH              Directory modules are installed into and loaded
+                            from; a Module{} block or /MODULE LOAD names a
+                            module and the server appends "<name>.so" to this
+                            directory (default: IRCU_DPATH/modules, so it
+                            follows the data directory)
     IRCU_CHROOT             Directory the server will be chrooted into; every
-                            compiled-in path is rewritten relative to it.
-                            See doc/readme.chroot.
+                            compiled-in path is rewritten relative to it, and
+                            the install prefix defaults to it so the paths
+                            above land inside the jail.  Empty by default: set
+                            it only for a server that will really run inside
+                            that jail, since the rewritten paths do not
+                            resolve outside it.  See doc/readme.chroot.
 
   Installed binary
     IRCU_SYMLINK            Name of the symlink placed next to the timestamped
@@ -152,6 +166,7 @@ COMING FROM AUTOTOOLS
   ./configure --with-dpath=dir            -DIRCU_DPATH=dir
   ./configure --with-cpath=ircd.conf      -DIRCU_CPATH=ircd.conf
   ./configure --with-lpath=ircd.log       -DIRCU_LPATH=ircd.log
+  (no equivalent)                        -DIRCU_MPATH=dir
   ./configure --with-maxcon=16384         -DIRCU_MAXCON=16384
   ./configure --with-tls=openssl          -DIRCU_TLS=openssl
   ./configure --prefix=/some/where        -DCMAKE_INSTALL_PREFIX=/some/where

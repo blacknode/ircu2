@@ -12,6 +12,7 @@
  */
 
 #include "module.h"
+#include "channel.h"
 #include "client.h"
 #include "ircd_log.h"
 
@@ -30,6 +31,12 @@ int module_test_marker;
  */
 flag_t mod_umode_flag_one;
 flag_t mod_umode_flag_two;
+
+/** Written by mod_cmode with the bits its letters map to, so the test can
+ * check they are the letters' own bits and not something handed out.
+ */
+chanmode_t mod_cmode_flag_one;
+chanmode_t mod_cmode_flag_two;
 
 /* Defined by module_stub.c. */
 extern int stub_commands_live;
@@ -455,8 +462,140 @@ static void test_user_mode_advertised(void)
   printf("Passed: module user modes are advertised in RPL_MYINFO\n");
 }
 
+/** Number of channel modes currently registered. */
+static unsigned int core_chan_mode_count(void)
+{
+  const struct ChanMode* cm;
+  unsigned int n = 0;
+
+  for (cm = channel_chan_modes(); cm; cm = cm->next)
+    n++;
+
+  return n;
+}
+
+/** A module's channel modes reach the register and are reverted on
+ * unload, whether or not the module removed them itself.
+ */
+static void test_chan_mode_registration(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = core_chan_mode_count();
+
+  mod = module_load("mod_cmode", 0, 0);
+  assert(mod != 0);
+
+  assert(module_chan_mode_count(mod) == 2);
+  assert(core_chan_mode_count() == before + 2);
+
+  /* The bit follows from the letter and from nothing else, so the module
+   * gets the same bit on every server that loads it.
+   */
+  assert(mod_cmode_flag_one == channel_chan_mode_flag('W'));
+  assert(mod_cmode_flag_two == channel_chan_mode_flag('X'));
+  assert((mod_cmode_flag_one & mod_cmode_flag_two) == 0);
+  assert((mod_cmode_flag_one & MODE_CHANOP) == 0 && "a core bit was reused");
+  assert((mod_cmode_flag_one & CHANMODE_RESERVED) == 0);
+
+  assert(channel_find_chan_mode('W') != 0);
+  assert(channel_find_chan_mode('W')->flag == mod_cmode_flag_one);
+  assert(channel_find_chan_mode('X')->flag == mod_cmode_flag_two);
+
+  assert(module_unload(mod) != 0);
+
+  assert(core_chan_mode_count() == before);
+  assert(channel_find_chan_mode('W') == 0);
+  assert(channel_find_chan_mode('X') == 0);
+
+  printf("Passed: module channel modes are reverted on unload\n");
+}
+
+/** A module can remove its own mode, and cannot remove anyone else's. */
+static void test_chan_mode_explicit_removal(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = core_chan_mode_count();
+
+  mod = module_load("mod_cmode", 0, 0);
+  assert(mod != 0);
+  assert(module_chan_mode_count(mod) == 2);
+
+  assert(module_del_chan_mode(mod, 'W') != 0);
+  assert(module_chan_mode_count(mod) == 1);
+  assert(channel_find_chan_mode('W') == 0);
+
+  /* Removing it again finds nothing, and neither does reaching for a mode
+   * the core owns.
+   */
+  assert(module_del_chan_mode(mod, 'W') == 0);
+  assert(module_del_chan_mode(mod, 'o') == 0);
+  assert(channel_find_chan_mode('o') != 0 && "a core mode survived the attempt");
+
+  assert(module_unload(mod) != 0);
+  assert(core_chan_mode_count() == before);
+
+  printf("Passed: explicit channel mode removal\n");
+}
+
+/** Repeated load/unload neither leaks slots nor changes the bit. */
+static void test_chan_mode_cycles(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = core_chan_mode_count();
+  chanmode_t first_run;
+  int i;
+
+  mod = module_load("mod_cmode", 0, 0);
+  assert(mod != 0);
+  first_run = mod_cmode_flag_one;
+  assert(module_unload(mod) != 0);
+
+  for (i = 0; i < 50; i++) {
+    mod = module_load("mod_cmode", 0, 0);
+    assert(mod != 0);
+    assert(core_chan_mode_count() == before + 2);
+    assert(module_unload(mod) != 0);
+    assert(core_chan_mode_count() == before);
+  }
+
+  /* The letter still maps to the same bit; nothing is a pool that drains. */
+  mod = module_load("mod_cmode", 0, 0);
+  assert(mod != 0);
+  assert(mod_cmode_flag_one == first_run);
+  assert(module_unload(mod) != 0);
+
+  printf("Passed: 50 cycles of a channel-mode-registering module\n");
+}
+
+/** What the server advertises follows the register, module modes included. */
+static void test_chan_mode_advertised(void)
+{
+  struct ModuleHandle* mod;
+
+  assert(strchr(channel_chan_mode_chars(), 'W') == 0);
+
+  mod = module_load("mod_cmode", 0, 0);
+  assert(mod != 0);
+
+  assert(strchr(channel_chan_mode_chars(), 'W') != 0);
+  assert(strchr(channel_chan_mode_chars(), 'X') != 0);
+  assert(strchr(channel_chan_mode_chars(), 'o') != 0 && "core modes are still there");
+
+  /* A module's mode takes no argument, so it is advertised in the last
+   * CHANMODES group and not among the ones that do.
+   */
+  assert(strchr(channel_chan_mode_param_chars(), 'W') == 0);
+  assert(strchr(strrchr(channel_chanmodes_supported(), ','), 'W') != 0);
+
+  assert(module_unload(mod) != 0);
+  assert(strchr(channel_chan_mode_chars(), 'W') == 0);
+
+  printf("Passed: module channel modes are advertised\n");
+}
+
 int main(void)
 {
+  channel_init_chan_modes();
   module_init();
   client_init_user_modes();
 
@@ -478,6 +617,10 @@ int main(void)
   test_user_mode_explicit_removal();
   test_user_mode_cycles();
   test_user_mode_advertised();
+  test_chan_mode_registration();
+  test_chan_mode_explicit_removal();
+  test_chan_mode_cycles();
+  test_chan_mode_advertised();
 
   printf("Done.\n");
   return 0;

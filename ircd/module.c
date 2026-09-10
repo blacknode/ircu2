@@ -20,6 +20,7 @@
  */
 #include "config.h"
 
+#include "channel.h"
 #include "client.h"
 #include "hooks.h"
 #include "ircd.h"
@@ -64,6 +65,13 @@ struct ModuleUserMode {
   flag_t mu_flag;                 /**< Bit the server assigned to it. */
 };
 
+/** A channel mode registered by a module. */
+struct ModuleChanMode {
+  struct ModuleChanMode *mc_next; /**< Next mode from the same module. */
+  char mc_char;                   /**< Mode letter. */
+  chanmode_t mc_flag;             /**< Bit the letter maps to. */
+};
+
 /** A module the server has loaded. */
 struct ModuleHandle {
   struct ModuleHandle *mh_next;  /**< Next module in #ModuleManager->mod_list. */
@@ -75,6 +83,7 @@ struct ModuleHandle {
   int mh_marked;                 /**< Seen in the running configuration. */
   struct ModuleCommand *mh_cmds; /**< Commands this module registered. */
   struct ModuleUserMode *mh_umodes; /**< User modes this module registered. */
+  struct ModuleChanMode *mh_cmodes; /**< Channel modes it registered. */
   char *mh_loaded_by;            /**< Nick that loaded it, or NULL for the
                                       configuration file.  A copy: the client
                                       may be long gone by the time anyone
@@ -460,6 +469,135 @@ static void module_drop_user_modes(struct ModuleHandle *mod) {
   mod->mh_umodes = 0;
 }
 
+/** Register a channel mode on behalf of a module.
+ * @param[in] mod Module registering the mode.
+ * @param[in] mode Mode letter.
+ * @param[out] flag Receives the bit the letter maps to, or zero on
+ *   failure.
+ * @return Non-zero on success.
+ */
+int module_add_chan_mode(struct ModuleHandle *mod, char mode,
+                         chanmode_t *flag) {
+  struct ModuleChanMode *mc;
+  chanmode_t bit;
+  int res;
+
+  assert(0 != mod);
+
+  if (flag)
+    *flag = 0;
+
+  /* The bit is not handed out, it follows from the letter; asking for it
+   * consumes nothing, and a letter that has no bit is not a letter.
+   */
+  bit = channel_chan_mode_flag(mode);
+
+  res = channel_append_chan_mode(mode, bit);
+  if (CMODE_APPEND_OK != res) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s could not register channel mode %c: %s",
+              mod->mh_info->mi_name, mode,
+              CMODE_INVALID_MODE == res ? "not a mode letter"
+                                        : "already in use");
+    return 0;
+  }
+
+  mc = (struct ModuleChanMode *)MyCalloc(1, sizeof(struct ModuleChanMode));
+  mc->mc_char = mode;
+  mc->mc_flag = bit;
+  mc->mc_next = mod->mh_cmodes;
+  mod->mh_cmodes = mc;
+
+  if (flag)
+    *flag = bit;
+
+  return 1;
+}
+
+/** Remove a channel mode a module registered.
+ * @param[in] mod Module that owns the mode.
+ * @param[in] mode Mode letter to remove.
+ * @return Non-zero if the mode was found and removed.
+ */
+int module_del_chan_mode(struct ModuleHandle *mod, char mode) {
+  struct ModuleChanMode **mc_p;
+  struct ModuleChanMode *mc;
+
+  assert(0 != mod);
+
+  /* Only this module's own list is searched: a module may not take a mode
+   * away from the core or from another module.
+   */
+  for (mc_p = &mod->mh_cmodes; (mc = *mc_p); mc_p = &mc->mc_next) {
+    if (mc->mc_char == mode) {
+      *mc_p = mc->mc_next;
+      channel_remove_chan_mode(mc->mc_char);
+      MyFree(mc);
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+/** Return how many channel modes a module currently has registered. */
+unsigned int module_chan_mode_count(const struct ModuleHandle *mod) {
+  struct ModuleChanMode *mc;
+  unsigned int count = 0;
+
+  assert(0 != mod);
+
+  for (mc = mod->mh_cmodes; mc; mc = mc->mc_next)
+    count++;
+
+  return count;
+}
+
+/** Render a module's channel mode letters as "(+xy)" for /STATS M.
+ * @param[in] mod Module to describe.
+ * @return Pointer to a static buffer, empty if the module has no modes.
+ */
+static const char *module_chan_mode_chars(const struct ModuleHandle *mod) {
+  static char buf[CHANMODE_CHARS_LEN + 4];
+  struct ModuleChanMode *mc;
+  size_t len = 0;
+
+  if (!mod->mh_cmodes)
+    return "";
+
+  buf[len++] = '(';
+  buf[len++] = '+';
+  for (mc = mod->mh_cmodes; mc && len + 2 < sizeof(buf); mc = mc->mc_next)
+    buf[len++] = mc->mc_char;
+  buf[len++] = ')';
+  buf[len] = '\0';
+
+  return buf;
+}
+
+/** Remove every channel mode a module registered.
+ *
+ * channel_remove_chan_mode() strips the mode from every channel that
+ * still has it and announces the change, to the members and to the rest
+ * of the network: a channel is the network's, and leaving a policy
+ * standing that nothing implements any more would be worse than losing
+ * it everywhere.
+ *
+ * @param[in] mod Module being torn down.
+ */
+static void module_drop_chan_modes(struct ModuleHandle *mod) {
+  struct ModuleChanMode *mc;
+  struct ModuleChanMode *next;
+
+  for (mc = mod->mh_cmodes; mc; mc = next) {
+    next = mc->mc_next;
+    channel_remove_chan_mode(mc->mc_char);
+    MyFree(mc);
+  }
+
+  mod->mh_cmodes = 0;
+}
+
 /** Attach a hook on behalf of a module.
  * @param[in] mod Module registering the hook.
  * @param[in] type Hook point.
@@ -703,11 +841,12 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    */
   module_drop_commands(mod);
   hook_del_module(mod);
-  /* User modes last: taking a mode off a user announces a MODE change, and
-   * the module's own hooks are already detached by then, so none of its
-   * code runs on the way out.
+  /* Modes last: taking a mode off a user or a channel announces a MODE
+   * change, and the module's own hooks are already detached by then, so
+   * none of its code runs on the way out.
    */
   module_drop_user_modes(mod);
+  module_drop_chan_modes(mod);
 
   for (mod_p = &manager->mod_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {
@@ -803,15 +942,19 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
 
   for (mod = manager->mod_list; mod; mod = mod->mh_next)
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Module %s %s: %u command%s, %u user mode%s%s%s, from %s, "
-               "loaded by %s",
+               ":Module %s %s: %u command%s, %u user mode%s%s%s, "
+               "%u channel mode%s%s%s, from %s, loaded by %s",
                mod->mh_info->mi_name, module_version(mod),
                module_command_count(mod),
                module_command_count(mod) == 1 ? "" : "s",
                module_user_mode_count(mod),
                module_user_mode_count(mod) == 1 ? "" : "s",
                module_user_mode_count(mod) ? " " : "",
-               module_user_mode_chars(mod), mod->mh_path,
+               module_user_mode_chars(mod),
+               module_chan_mode_count(mod),
+               module_chan_mode_count(mod) == 1 ? "" : "s",
+               module_chan_mode_count(mod) ? " " : "",
+               module_chan_mode_chars(mod), mod->mh_path,
                mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
 
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%u module%s loaded, ABI %u",

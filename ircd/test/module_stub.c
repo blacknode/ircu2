@@ -104,3 +104,49 @@ int send_reply(struct Client *to, int reply, ...)
   (void) reply;
   return 0;
 }
+
+/* --- The channel side -------------------------------------------------
+ *
+ * module.c registers channel modes against chan_modes.c, which announces
+ * a mode change on every channel that carries a mode being taken away.
+ * These tests never build a channel, so the list is empty and the ModeBuf
+ * calls are here only to satisfy the link.
+ */
+
+#include "channel.h"
+#include "ircd_features.h"
+
+/** Head of the channel list walked by channel_remove_chan_mode(). */
+struct Channel* GlobalChannelList;
+
+void modebuf_init(struct ModeBuf *mbuf, struct Client *source,
+                  struct Client *connect, struct Channel *chan,
+                  unsigned int dest)
+{
+  (void) source;
+  (void) connect;
+
+  mbuf->mb_add = 0;
+  mbuf->mb_rem = 0;
+  mbuf->mb_count = 0;
+  mbuf->mb_channel = chan;
+  mbuf->mb_dest = dest;
+}
+
+void modebuf_mode(struct ModeBuf *mbuf, chanmode_t mode)
+{
+  (void) mbuf;
+  (void) mode;
+}
+
+int modebuf_flush(struct ModeBuf *mbuf)
+{
+  (void) mbuf;
+  return 0;
+}
+
+int feature_bool(enum Feature feat)
+{
+  /* Oplevels on, so +A and +U are registered like on a stock server. */
+  return feat == FEAT_OPLEVELS;
+}

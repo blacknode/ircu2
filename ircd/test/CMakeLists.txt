@@ -87,6 +87,7 @@ add_ircu_test(chan_modes_t
 add_ircu_test(module_t
   module_stub.c
   user_modes_stub.c
+  "${IRCU_IRCD_DIR}/chan_modes.c"
   "${IRCU_IRCD_DIR}/client.c"
   "${IRCU_IRCD_DIR}/hooks.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
@@ -97,7 +98,8 @@ set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
 
 set(IRCU_TEST_MODULE_DIR "${CMAKE_CURRENT_BINARY_DIR}/modules")
 
-foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_cmd mod_umode)
+foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_cmd mod_umode
+                 mod_cmode)
   add_library(${_fixture} MODULE "modules/${_fixture}.c")
   target_link_libraries(${_fixture} PRIVATE ircu_config)
   set_target_properties(${_fixture} PROPERTIES

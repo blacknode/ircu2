@@ -41,6 +41,9 @@
 #ifndef INCLUDED_client_h
 #include "client.h"     /* flag_t, HasUFlag() */
 #endif
+#ifndef INCLUDED_channel_h
+#include "channel.h"    /* chanmode_t, HasCFlag() */
+#endif
 
 struct Client;
 struct ModuleHandle;
@@ -52,7 +55,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 2
+#define IRCU_MODULE_ABI 3
 
 /** Description of a module, exported by the shared object.
  *
@@ -174,6 +177,54 @@ extern int module_del_user_mode(struct ModuleHandle* mod, char mode);
 
 /** Number of user modes a module currently has registered. */
 extern unsigned int module_user_mode_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering channel modes.
+ *
+ * The same shape as the user modes, with one difference that matters: the
+ * bit is not handed out, it follows from the letter ('A'-'Z' take bits
+ * 0-25, 'a'-'z' bits 26-51).  So the mode a module registers is the same
+ * bit on every server that loads the module, and two servers built from
+ * the same sources never have to agree on anything at run time.  Test the
+ * bit on a channel with HasCFlag(), set it with SetCFlag(), clear it with
+ * ClrCFlag().
+ *
+ * The list of registered modes is readable through channel_chan_modes(),
+ * as a pointer to const: it is the server's list, and a module reads it
+ * rather than reaching into it.
+ *
+ * Like commands and hooks, a mode is reverted when the module unloads:
+ * every channel still carrying it is stripped of it, and the change is
+ * announced as an ordinary "-<mode>" to the members and to the network,
+ * so that no channel is left believing it enforces a policy that nothing
+ * implements any more.
+ */
+
+/** Register a channel mode.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter, A-Z or a-z.
+ * @param[out] flag Receives the bit the letter maps to, or zero on
+ *   failure.  May be NULL, though a module that never tests its own mode
+ *   has little use for it.
+ * @return Non-zero on success; zero if the letter is not a letter, or if
+ *   it is already taken by the core or by another module.
+ */
+extern int module_add_chan_mode(struct ModuleHandle* mod, char mode,
+                                chanmode_t* flag);
+
+/** Remove a channel mode this module registered.
+ *
+ * Every channel that has the mode set loses it, the same way an unload
+ * would do it.  A module cannot remove a core mode, nor one another
+ * module registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter to remove.
+ * @return Non-zero if the mode was found and removed.
+ */
+extern int module_del_chan_mode(struct ModuleHandle* mod, char mode);
+
+/** Number of channel modes a module currently has registered. */
+extern unsigned int module_chan_mode_count(const struct ModuleHandle* mod);
 
 /*
  * Registering hooks.  See hooks.h for the hook points and what each one

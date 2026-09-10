@@ -85,6 +85,16 @@ registered in a run-time list in `ircd/client.c` (`client_user_modes()` and frie
 so modules can add their own; test them with the named `Is*`/`Send*` macros in
 `include/client.h`, and a saved pre-change snapshot with the matching `Was*` ones.
 
+**Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
+(`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`
+(`channel_chan_modes()` and friends) so modules can add their own; test them with
+`HasCFlag()`. The bit is not handed out — it follows from the letter (`A`-`Z` are
+bits 0-25, `a`-`z` bits 26-51), the same convention `user_flags.h` follows, so
+every server agrees on it without negotiating. The twelve bits above the alphabet
+are `CHANMODE_RESERVED`: `MODE_ADD`, `MODE_DEL` and the `ModeBuf` bookkeeping.
+Everything that renders or parses a mode walks the register; there is no table of
+letters anywhere else.
+
 **Core state.** `include/client.h` (`struct Client`, with `Connection`/`User`/`Server`
 sub-structs), `ircd/channel.c` (the largest file: channels, modes, bans, ops),
 `ircd/hash.c`, `ircd/whowas.c`, `ircd/numnicks.c` (P10 numeric nick encoding).
@@ -102,8 +112,9 @@ behind `include/ircd_tls.h`.
 is a `.so` exporting exactly one symbol, `struct ModuleInfo ircu_module`, whose
 first field is `IRCU_MODULE_ABI` — compared exactly, with no backward compatibility;
 the ABI changes mean recompiling modules.  A module registers commands
-(`module_add_command()`), hooks (`module_add_hook()`) and user modes
-(`module_add_user_mode()`, which returns a server-assigned bit); everything it
+(`module_add_command()`), hooks (`module_add_hook()`), user modes
+(`module_add_user_mode()`, which returns a server-assigned bit) and channel modes
+(`module_add_chan_mode()`, whose bit follows from the letter); everything it
 registers is reverted on unload. Modules run in-process with no sandbox.
 They are built by the same CMake run via `ircu_add_module()` (`cmake/IrcuModules.cmake`)
 and link against nothing: symbols resolve against the ircd executable, which is
@@ -120,8 +131,9 @@ veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact
 notifications whose return value is ignored. All hooks run inline on the main thread.
 
 **Design docs.** `doc/proposals/` holds the accepted designs for the module API
-(001) and the multithreading direction (002, in Spanish); read the relevant one
-before changing either subsystem. Other useful docs: `doc/p10.html` (protocol),
+(001), the multithreading direction (002, in Spanish) and the channel modes by
+module (003, in Spanish); read the relevant one before changing either
+subsystem. Other useful docs: `doc/p10.html` (protocol),
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root generates reference docs).
 
 ## Conventions

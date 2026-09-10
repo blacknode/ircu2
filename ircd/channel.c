@@ -3446,6 +3446,27 @@ mode_parse(struct ModeBuf *mbuf, struct Client *cptr, struct Client *sptr,
     state.cli_change[i].client = 0;
   }
 
+  /* Modules see the requested mode string before any of it is applied.
+   * Only for local clients: mode changes arriving from another server
+   * have already been accepted network-wide, and refusing one here would
+   * leave this server's idea of the channel out of step with everyone
+   * else's.
+   */
+  if (MyUser(sptr) && hook_is_active(HOOK_CHANNEL_PRE_MODE)) {
+    struct HookContext hc;
+
+    hook_context_init(&hc);
+    hc.hc_client = sptr;
+    hc.hc_source = cptr;
+    hc.hc_channel = chptr;
+    hc.hc_arg = parv[0];
+
+    if (hook_run(HOOK_CHANNEL_PRE_MODE, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_CHANOPRIVSNEEDED, chptr->chname);
+      return state.args_used;
+    }
+  }
+
   modestr = state.parv[state.args_used++];
   state.parc--;
 

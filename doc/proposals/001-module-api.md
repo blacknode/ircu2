@@ -112,7 +112,8 @@ superficie de ABI pequeña y auditable.
 ```c
 /* include/module.h */
 
-#define IRCU_MODULE_ABI 2   /* 1 en la propuesta original; 2 desde 3.3.1 */
+#define IRCU_MODULE_ABI 3   /* 1 en la propuesta original; 2 desde 3.3.1,
+                               3 desde 3.3.2 */
 
 struct ModuleInfo {
   unsigned int  mi_abi;        /* IRCU_MODULE_ABI con el que se compiló */
@@ -212,6 +213,45 @@ sólo se aplican a los modos del core; un módulo que quiera restringir el suyo 
 `RPL_MYINFO` deja de anunciar una constante y pasa a construirse desde el
 registro (`client_user_mode_chars()`), para que un modo de módulo aparezca ahí
 también.
+
+### 3.3.2 Registro de modos de canal — extensión (ABI 3)
+
+La mitad simétrica de 3.3.1, con la misma forma y una diferencia que importa.
+
+```c
+int module_add_chan_mode(struct ModuleHandle *mod, char mode, chanmode_t *flag);
+int module_del_chan_mode(struct ModuleHandle *mod, char mode);
+unsigned int module_chan_mode_count(const struct ModuleHandle *mod);
+```
+
+**El bit no se reparte: sale de la letra.** `'A'`-`'Z'` son los bits 0-25 y
+`'a'`-`'z'` los 26-51, que es la convención que ya seguían los `FLAG_*` de los
+modos de usuario. Así el modo de un módulo cae en el mismo bit en todos los
+servidores que lo carguen, sin acordar nada en tiempo de ejecución y sin depender
+del orden de carga. Como sólo hay 52 letras, los doce bits de arriba no puede
+reclamarlos ningún modo: ahí viven `MODE_ADD`, `MODE_DEL` y la contabilidad de
+`ModeBuf`.
+
+Esto obligó al mismo refactor previo que los umodes, un paso más atrás: los modos
+de canal pasaron de `unsigned int` a `chanmode_t` de 64 bits, y de cinco tablas
+letra/bit copiadas a un registro en tiempo de ejecución (`ircd/chan_modes.c`),
+ordenado por bit para que la cadena de modos renderizada no dependa del orden de
+registro. Los módulos leen ese registro por `channel_chan_modes()`, como puntero
+a const.
+
+**Reversión.** Al descargar, el core desregistra la letra y la quita de todos los
+canales, anunciando un `-<letra>` normal a los miembros **y a la red**. Un usuario
+pertenece a un servidor, pero un canal es de la red: dejar el modo en pie en los
+demás nodos daría un canal que aplica su política a medias.
+
+**Alcance.** Dos servidores de una red corren la misma versión de las fuentes y,
+por convención, los mismos módulos. Un servidor sin el módulo responde
+`ERR_UNKNOWNMODE`. La sincronización automática llegará con la propagación de
+carga y descarga de módulos, que exige ajustar P10, publicar los módulos en el
+BURST y subir el protocolo a P11 sin retrocompatibilidad; queda fuera de esta
+propuesta.
+
+Ver `doc/proposals/003-channel-modes-modules.md` para el diseño completo.
 
 ### 3.4 Hooks: el catálogo
 

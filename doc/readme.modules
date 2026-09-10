@@ -1,8 +1,9 @@
 MODULE documentation, last updated on 09 Sep 2026
 
 A module is a shared object the server loads at run time.  It can add
-commands and user modes, and attach to points in the life of a user or a
-channel, in some cases deciding whether the server carries on.
+commands, user modes and channel modes, and attach to points in the life
+of a user or a channel, in some cases deciding whether the server carries
+on.
 
 
 READ THIS FIRST
@@ -34,7 +35,7 @@ ircu_module.  Everything else the server needs, it reaches through that.
 
   static int example_init(struct ModuleHandle *mod)
   {
-    /* register commands, user modes and hooks here */
+    /* register commands, modes and hooks here */
     return 0;                 /* non-zero refuses to load */
   }
 
@@ -249,6 +250,83 @@ Two things to keep in mind:
 Modes are counted and listed by /STATS M alongside commands.
 
 
+CHANNEL MODES
+=============
+
+A module can add a channel mode too -- a letter chanops set on the channel
+with /MODE, that the server carries in the channel's modes and propagates
+across the network like any core mode.
+
+  static chanmode_t my_flag;
+
+  if (!module_add_chan_mode(mod, 'G', &my_flag))
+    return -1;               /* the letter is taken, or is not a letter */
+
+Unlike a user mode, the bit is not handed out: it follows from the letter.
+'A' to 'Z' are bits 0 to 25 and 'a' to 'z' are bits 26 to 51, which is the
+same rule the core's own modes follow.  So the mode a module registers is
+the same bit on every server that loads the module, and two servers built
+from the same sources agree on it without exchanging a word.  Keep what
+you are given anyway: reading the bit from the letter yourself is writing
+the rule down twice.
+
+Read and write it on a channel with the same macros the core uses:
+
+  if (HasCFlag(chptr, my_flag))   /* is the mode set? */
+  SetCFlag(chptr, my_flag);       /* set it   */
+  ClrCFlag(chptr, my_flag);       /* clear it */
+
+The registered modes are readable as a list:
+
+  const struct ChanMode *cm;
+
+  for (cm = channel_chan_modes(); cm; cm = cm->next)
+    ...                           /* cm->c, cm->flag, cm->attr */
+
+It is a pointer to const, and it is the server's list: a module reads it,
+and changes it only through module_add_chan_mode() and
+module_del_chan_mode().
+
+Registering the letter is half of a mode.  The server will accept /MODE
+#channel +G from a chanop, show it in /MODE and in RPL_MYINFO, advertise
+it in the CHANMODES token of RPL_ISUPPORT and send it to the other
+servers, but it means nothing until a hook reads the flag and acts on it
+-- see modules/cmode_nocaps.c, which registers +G and then refuses shouted
+messages to a channel that has it.
+
+A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
+already owns the letter, if another module took it first, or if the module
+asks twice.
+
+The mode goes away with the module.  On unload the server unregisters the
+letter and takes the mode off every channel that still has it, announcing
+an ordinary "-G" to the members and to the rest of the network, so that no
+channel is left believing it enforces a policy nothing implements any
+more.  A module can also give a mode back while it stays loaded:
+
+  module_del_chan_mode(mod, 'G');
+
+which does the same stripping.  A module can only remove its own modes.
+
+Two things to keep in mind:
+
+  * A module's channel mode is global, and unloading the module on one
+    server clears the mode everywhere.  A channel belongs to the network,
+    not to one server: leaving the letter set on servers that still have
+    the module, while this one no longer honours it, would be a channel
+    that half-enforces a rule.  Two servers are expected to run the same
+    sources, and by the same convention to load the same modules.
+
+  * A module's mode is a plain flag on the channel: it takes no argument,
+    it is set and cleared by chanops like +m or +n, and the core does not
+    ask anything else about it.  A module that wants a say in who may set
+    it takes HOOK_CHANNEL_PRE_MODE, which sees the whole requested mode
+    string before any of it is applied, and can refuse it.
+
+Channel modes are counted and listed by /STATS M alongside commands and
+user modes.
+
+
 HOOKS
 =====
 
@@ -392,7 +470,11 @@ THE EXAMPLES
   modules/nocaps.c         refuses shouted channel messages and lowercases
                            shouted private ones; a veto and a rewrite
   modules/umode_nopm.c     adds user mode +P and gives it a meaning; the
-                           reference for registering a mode
+                           reference for registering a user mode
+  modules/cmode_nocaps.c   adds channel mode +G and gives it a meaning; the
+                           reference for registering a channel mode, and
+                           nocaps.c's rule made asked-for instead of
+                           always-on
 
 
 DIAGNOSTICS
@@ -401,8 +483,9 @@ DIAGNOSTICS
   /MODULE LIST     module name, declared name, version, ABI, path,
                    description and who loaded it (the operator's nick, or
                    the configuration file)
-  /STATS M         loaded modules, how many commands and user modes each
-                   registered (with the mode letters), who loaded each one,
+  /STATS M         loaded modules, how many commands, user modes and
+                   channel modes each registered (with the mode letters
+                   for both), who loaded each one,
                    and for each hook point in use how many hooks are
                    attached and how many times it has fired
 

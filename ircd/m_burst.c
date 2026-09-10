@@ -106,13 +106,23 @@
 #include <string.h>
 #include <ctype.h>
 
+/** Collect the modes of a BURST that a local member may be riding on.
+ * @param[in] parc Number of arguments left in \a parv.
+ * @param[in] parv Mode string and its arguments.
+ * @param[in] curr_key Key this server currently has for the channel.
+ * @param[out] modes_out Modes found; a mask, which is why it cannot come
+ *   back as the return value any more.
+ * @return Zero, or -1 if the mode string is not a valid burst one.
+ */
 static int
-netride_modes(int parc, char **parv, const char *curr_key)
+netride_modes(int parc, char **parv, const char *curr_key,
+              chanmode_t *modes_out)
 {
   char *modes = parv[0];
-  int result = 0;
+  chanmode_t result = 0;
 
   assert(modes && modes[0] == '+');
+  *modes_out = 0;
   while (*modes) {
     switch (*modes++) {
     case '-':
@@ -135,7 +145,8 @@ netride_modes(int parc, char **parv, const char *curr_key)
       break;
     }
   }
-  return result;
+  *modes_out = result;
+  return 0;
 }
 
 /*
@@ -286,11 +297,11 @@ int ms_burst(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
      */
     for (param = 3; param < parc; param++)
     {
-      int check_modes;
+      chanmode_t check_modes;
       if (parv[param][0] != '+')
         continue;
-      check_modes = netride_modes(parc - param, parv + param, chptr->mode.key);
-      if (check_modes < 0)
+      if (netride_modes(parc - param, parv + param, chptr->mode.key,
+                        &check_modes) < 0)
       {
         if (chptr->users == 0)
           sub1_from_channel(chptr);

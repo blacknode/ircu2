@@ -90,6 +90,7 @@ add_custom_command(
 # ---------------------------------------------------------------------------
 set(IRCU_SOURCES
   IPcheck.c
+  chan_modes.c
   channel.c
   cidr_lookups.c
   class.c

@@ -25,6 +25,7 @@
 
 #include "ircd.h"
 #include "IPcheck.h"
+#include "channel.h"
 #include "class.h"
 #include "client.h"
 #include "crule.h"
@@ -730,6 +731,7 @@ int main(int argc, char **argv) {
   init_hash();
   init_class();
   client_init_user_modes(); /* before module_init(): modules register modes */
+  channel_init_chan_modes(); /* likewise, for the channel modes */
   initwhowas();
   initmsgtree();
   initstats();

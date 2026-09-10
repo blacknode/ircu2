@@ -38,6 +38,14 @@
 
 #define FLAG_LAST_UFLAG FLAG_TLS /**< last user flag  */
 
+/** Direction of a user mode change, as set_user_mode() walks the string.
+ * These used to be MODE_ADD and MODE_DEL from channel.h; those are bits of
+ * a channel mode mask now and no longer fit in an int.
+ */
+#define UMODE_NULL 0
+#define UMODE_ADD  1
+#define UMODE_DEL  2
+
 #define UMODE_ALREADY_EXISTS 0x01
 #define UMODE_INVALID_MODE 0x02
 #define UMODE_APPEND_OK 0x04

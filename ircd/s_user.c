@@ -1042,7 +1042,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
   char* account = NULL;
   char* tls_fingerprint = NULL;
 
-  what = MODE_ADD;
+  what = UMODE_ADD;
 
   if (parc < 3)
   {
@@ -1097,10 +1097,10 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
     for (m = *p; *m; m++) {
       switch (*m) {
       case '+':
-        what = MODE_ADD;
+        what = UMODE_ADD;
         break;
       case '-':
-        what = MODE_DEL;
+        what = UMODE_DEL;
         break;
       case 's':
         if (*(p + 1) && is_snomask(*(p + 1))) {
@@ -1109,7 +1109,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
           tmpmask &= (IsAnOper(sptr) ? SNO_ALL : SNO_USER);
         }
         else
-          tmpmask = (what == MODE_ADD) ?
+          tmpmask = (what == UMODE_ADD) ?
               (IsAnOper(sptr) ? SNO_OPERDEFAULT : SNO_DEFAULT) : 0;
         if (tmpmask)
 	  SetServNotice(sptr);
@@ -1117,13 +1117,13 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
 	  ClearServNotice(sptr);
         break;
       case 'w':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetWallops(sptr);
         else
           ClearWallops(sptr);
         break;
       case 'o':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetOper(sptr);
         else {
           ClearOper(sptr);
@@ -1133,7 +1133,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         }
         break;
       case 'O':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetLocOp(sptr);
         else
         {
@@ -1144,48 +1144,48 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         }
         break;
       case 'i':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetInvisible(sptr);
         else
           ClearInvisible(sptr);
         break;
       case 'd':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetDeaf(sptr);
         else
           ClearDeaf(sptr);
         break;
       case 'R':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetBlockUnauthUsers(sptr);
         else
           ClearBlockUnauthUsers(sptr);
         break;
       case 'k':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetChannelService(sptr);
         else
           ClearChannelService(sptr);
         break;
       case 'g':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetDebug(sptr);
         else
           ClearDebug(sptr);
         break;
       case 'x':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
 	  do_host_hiding = 1;
 	break;
       case 'r':
-	if (*(p + 1) && (what == MODE_ADD)) {
+	if (*(p + 1) && (what == UMODE_ADD)) {
 	  account = *(++p);
 	  SetAccount(sptr);
 	}
 	/* There is no -r */
 	break;
       case 'z':
-        if (what == MODE_ADD) {
+        if (what == UMODE_ADD) {
           SetTLS(sptr);
           if (feature_bool(FEAT_NETWORK_FEATURES) && *(p + 1))
             tls_fingerprint = *(++p);
@@ -1193,13 +1193,13 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         /* There is no -z */
         break;
       case 'I':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetHideIdle(sptr);
         else
           ClearHideIdle(sptr);
         break;
       case 'c':
-        if (what == MODE_ADD)
+        if (what == UMODE_ADD)
           SetCommonChans(sptr);
         else
           ClearCommonChans(sptr);
@@ -1215,7 +1215,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
 
           if (!mode)
             send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
-          else if (what == MODE_ADD)
+          else if (what == UMODE_ADD)
             SetUFlag(sptr, mode->flag);
           else
             ClrUFlag(sptr, mode->flag);
@@ -1443,7 +1443,7 @@ void send_umode(struct Client *cptr, struct Client *sptr, flag_t old,
   const struct UserMode *um;
   flag_t flag;
   char *m;
-  int what = MODE_NULL;
+  int what = UMODE_NULL;
 
   /*
    * Build a string in umodeBuf to represent the change in the user's
@@ -1476,22 +1476,22 @@ void send_umode(struct Client *cptr, struct Client *sptr, flag_t old,
     }
     if (had)
     {
-      if (what == MODE_DEL)
+      if (what == UMODE_DEL)
         *m++ = um->c;
       else
       {
-        what = MODE_DEL;
+        what = UMODE_DEL;
         *m++ = '-';
         *m++ = um->c;
       }
     }
     else /* the mode was just set */
     {
-      if (what == MODE_ADD)
+      if (what == UMODE_ADD)
         *m++ = um->c;
       else
       {
-        what = MODE_ADD;
+        what = UMODE_ADD;
         *m++ = '+';
         *m++ = um->c;
       }
@@ -1525,7 +1525,7 @@ int is_snomask(char *word)
 /** Update snomask \a oldmask according to \a arg and \a what.
  * @param[in] oldmask Original user mask.
  * @param[in] arg Update string (either a number or '+'/'-' followed by a number).
- * @param[in] what MODE_ADD if adding the mask.
+ * @param[in] what UMODE_ADD if adding the mask.
  * @return New value of service notice mask.
  */
 unsigned int umode_make_snomask(unsigned int oldmask, char *arg, int what)
@@ -1535,7 +1535,7 @@ unsigned int umode_make_snomask(unsigned int oldmask, char *arg, int what)
   if (*arg == '+')
   {
     arg++;
-    if (what == MODE_ADD)
+    if (what == UMODE_ADD)
       sno_what = SNO_ADD;
     else
       sno_what = SNO_DEL;
@@ -1543,13 +1543,13 @@ unsigned int umode_make_snomask(unsigned int oldmask, char *arg, int what)
   else if (*arg == '-')
   {
     arg++;
-    if (what == MODE_ADD)
+    if (what == UMODE_ADD)
       sno_what = SNO_DEL;
     else
       sno_what = SNO_ADD;
   }
   else
-    sno_what = (what == MODE_ADD) ? SNO_SET : SNO_DEL;
+    sno_what = (what == UMODE_ADD) ? SNO_SET : SNO_DEL;
   /* pity we don't have strtoul everywhere */
   newmask = (unsigned int)atoi(arg);
   if (sno_what == SNO_DEL)

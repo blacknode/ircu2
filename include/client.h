@@ -49,6 +49,9 @@
 #define INCLUDED_sys_types_h
 #endif
 
+#include "capab.h"
+#include "user_flags.h"
+
 struct ConfItem;
 struct Listener;
 struct ListingArgs;
@@ -67,6 +70,26 @@ struct AuthRequest;
  * source files. Other structures go in the header file of there corresponding
  * source file, or in the source file itself (when only used in that file).
  */
+
+typedef unsigned long long flag_t;
+
+/** A user mode, as held in the global #UserModeList.
+ * The definition is public because dynamically loaded modules register
+ * their own modes against this list; changing it changes the module ABI.
+ */
+struct UserMode {
+  flag_t flag;           /**< User mode constant. */
+  char c;                /**< Character corresponding to the mode. */
+  unsigned int count;    /**< Number of registered modes (head node only). */
+  struct UserMode *next; /**< Next mode in the list. */
+};
+
+/** Read-only view of the registered user modes.
+ * Modules walk the list through this accessor; the list itself is
+ * private to client.c so that it can only be changed through
+ * client_append_user_mode() and client_remove_user_mode().
+ */
+extern const struct UserMode *client_user_modes(void);
 
 /** Value to hold a set of capability bits (from capab.h). */
 typedef unsigned short capset_t;
@@ -164,36 +187,17 @@ enum Flag
     FLAG_IAUTH_STATS,               /**< Wanted IAuth statistics */
     FLAG_NEGOTIATING_TLS,           /**< TLS negotation ongoing */
     FLAG_EXEMPT_THROTTLE,           /**< exempt from input throttling (raised-maxflood class) */
-
-    FLAG_LOCOP,                     /**< Local operator -- SRB */
-    FLAG_SERVNOTICE,                /**< server notices such as kill */
-    FLAG_OPER,                      /**< Operator */
     FLAG_SASL,                      /**< Authenticated using SASL */
-    FLAG_INVISIBLE,                 /**< makes user invisible */
-    FLAG_WALLOP,                    /**< send wallops to them */
-    FLAG_DEAF,                      /**< Makes user deaf */
-    FLAG_BLOCK_UNAUTH_USERS,        /**< Block msgs from unauthenticated users */
-    FLAG_CHSERV,                    /**< Disallow KICK or MODE -o on the user;
-                                       don't display channels in /whois */
-    FLAG_DEBUG,                     /**< send global debug/anti-hack info */
-    FLAG_ACCOUNT,                   /**< account name has been set */
-    FLAG_HIDDENHOST,                /**< user's host is hidden */
     FLAG_CAP302,                    /**< client supports IRCv3.2 */
-    FLAG_TLS,                       /**< user is using TLS */
     FLAG_SPAMHOLD,                  /**< user is the sender or recipient of a message on hold */
-    FLAG_HIDEIDLE,                  /**< Hide idle time from non-opers */
-    FLAG_COMMONCHANS,               /**< only accepts messages from users in common channels */
     FLAG_LAST_FLAG,                 /**< number of flags */
-    FLAG_LOCAL_UMODES = FLAG_LOCOP, /**< First local mode flag */
-    FLAG_GLOBAL_UMODES = FLAG_OPER, /**< First global mode flag */
   };
+
 
 /** Declare flagset type for operator privileges. */
 DECLARE_FLAGSET(Privs, PRIV_LAST_PRIV);
 /** Declare flagset type for user flags. */
 DECLARE_FLAGSET(Flags, FLAG_LAST_FLAG);
-
-#include "capab.h" /* client capabilities */
 
 /** Represents a local connection.
  * This contains a lot of stuff irrelevant to server connections, but
@@ -212,7 +216,7 @@ struct Connection
   unsigned int        con_snomask;   /**< mask for server messages */
   enum ws_mode_t {
     WS_NONE = 0,
-    WS_TEXT = 1, 
+    WS_TEXT = 1,
     WS_BINARY = 2
   }                   ws_mode;       /**< WebSocket mode */
   HandlerType         con_handler;   /**< Message index into command table
@@ -289,6 +293,7 @@ struct Client {
   time_t         cli_lastnick;    /**< TimeStamp on nick */
   int            cli_marker;      /**< /who processing marker */
   struct Flags   cli_flags;       /**< client flags */
+  flag_t         cli_uflags;      /**< client user modes (see user_flags.h) */
   unsigned int   cli_hopcount;    /**< number of servers to this 0 = local */
   struct irc_in_addr cli_ip;      /**< Real IP of client */
   short          cli_status;      /**< Client type */
@@ -335,6 +340,8 @@ struct Client {
 #define cli_marker(cli)		((cli)->cli_marker)
 /** Get flags flagset for client. */
 #define cli_flags(cli)		((cli)->cli_flags)
+/** Get the user flags (user modes) of a client. */
+#define cli_uflags(cli)		((cli)->cli_uflags)
 /** Get hop count to client. */
 #define cli_hopcount(cli)	((cli)->cli_hopcount)
 /** Get client IP address. */
@@ -599,6 +606,20 @@ struct Client {
 /** Return non-zero if a flag is set in a client's flags. */
 #define HasFlag(cli, flag)  FlagHas(&cli_flags(cli), flag)
 
+/*
+ * user flags macros
+ *
+ * User flags are the user modes, kept as a bit mask in cli_uflags() so
+ * that modules can register new modes at run time.  Prefer the named
+ * Is*() / Set*() / Clear*() macros below to these.
+ */
+/** Set a user flag in a client's user flags. */
+#define SetUFlag(cli, flag)  (cli_uflags(cli) |= (flag))
+/** Clear a user flag from a client's user flags. */
+#define ClrUFlag(cli, flag)  (cli_uflags(cli) &= ~(flag))
+/** Return non-zero if a user flag is set in a client's user flags. */
+#define HasUFlag(cli, flag)  ((cli_uflags(cli) & (flag)) != 0)
+
 /** Return non-zero if the client is an IRC operator (global or local). */
 #define IsAnOper(x)             (IsOper(x) || IsLocOp(x))
 /** Return non-zero if the client's connection is blocked. */
@@ -611,25 +632,25 @@ struct Client {
 /** Return non-zero if we are still bursting to the client. */
 #define IsBurstOrBurstAck(x)    (HasFlag(x, FLAG_BURST) || HasFlag(x, FLAG_BURST_ACK))
 /** Return non-zero if the client has set mode +k (channel service). */
-#define IsChannelService(x)     HasFlag(x, FLAG_CHSERV)
+#define IsChannelService(x)     HasUFlag(x, FLAG_CHSERV)
 /** Return non-zero if the client's socket is disconnected. */
 #define IsDead(x)               HasFlag(x, FLAG_DEADSOCKET)
 /** Return non-zero if the client has set mode +d (deaf). */
-#define IsDeaf(x)               HasFlag(x, FLAG_DEAF)
+#define IsDeaf(x)               HasUFlag(x, FLAG_DEAF)
 /** Return non-zero if the client has mode +R (block unauthed users). */
-#define IsBlockUnauthUsers(x)   HasFlag(x, FLAG_BLOCK_UNAUTH_USERS)
+#define IsBlockUnauthUsers(x)   HasUFlag(x, FLAG_BLOCK_UNAUTH_USERS)
 /** Return non-zero if the client has been IP-checked for clones. */
 #define IsIPChecked(x)          HasFlag(x, FLAG_IPCHECK)
 /** Return non-zero if we have received an ident response for the client. */
 #define IsGotId(x)              HasFlag(x, FLAG_GOTID)
 /** Return non-zero if the client has set mode +i (invisible). */
-#define IsInvisible(x)          HasFlag(x, FLAG_INVISIBLE)
+#define IsInvisible(x)          HasUFlag(x, FLAG_INVISIBLE)
 /** Return non-zero if the client caused a net.burst. */
 #define IsJunction(x)           HasFlag(x, FLAG_JUNCTION)
 /** Return non-zero if the client has set mode +O (local operator) locally. */
-#define IsLocOp(x)              (MyConnect(x) && HasFlag(x, FLAG_LOCOP))
+#define IsLocOp(x)              (MyConnect(x) && HasUFlag(x, FLAG_LOCOP))
 /** Return non-zero if the client has set mode +o (global operator). */
-#define IsOper(x)               HasFlag(x, FLAG_OPER)
+#define IsOper(x)               HasUFlag(x, FLAG_OPER)
 /** Return non-zero if the client has an active UDP ping request. */
 #define IsUPing(x)              HasFlag(x, FLAG_UPING)
 /** Return non-zero if the client has no '\n' in its buffer. */
@@ -637,11 +658,11 @@ struct Client {
 /** Return non-zero if the client has requested IAuth statistics. */
 #define IsIAuthStats(x)         HasFlag(x, FLAG_IAUTH_STATS)
 /** Return non-zero if the client has set mode +g (debugging). */
-#define SendDebug(x)            HasFlag(x, FLAG_DEBUG)
+#define SendDebug(x)            HasUFlag(x, FLAG_DEBUG)
 /** Return non-zero if the client has set mode +s (server notices). */
-#define SendServNotice(x)       HasFlag(x, FLAG_SERVNOTICE)
+#define SendServNotice(x)       HasUFlag(x, FLAG_SERVNOTICE)
 /** Return non-zero if the client has set mode +w (wallops). */
-#define SendWallops(x)          HasFlag(x, FLAG_WALLOP)
+#define SendWallops(x)          HasUFlag(x, FLAG_WALLOP)
 /** Return non-zero if the client claims to be a hub. */
 #define IsHub(x)                HasFlag(x, FLAG_HUB)
 /** Return non-zero if the client understands IPv6 addresses in P10. */
@@ -649,21 +670,21 @@ struct Client {
 /** Return non-zero if the client claims to be a services server. */
 #define IsService(x)            HasFlag(x, FLAG_SERVICE)
 /** Return non-zero if the client has an account stamp. */
-#define IsAccount(x)            HasFlag(x, FLAG_ACCOUNT)
+#define IsAccount(x)            HasUFlag(x, FLAG_ACCOUNT)
 /** Return non-zero if the client has set mode +x (hidden host). */
-#define IsHiddenHost(x)         HasFlag(x, FLAG_HIDDENHOST)
+#define IsHiddenHost(x)         HasUFlag(x, FLAG_HIDDENHOST)
 /** Return non-zero if the client has set mode +I (hide idle time). */
-#define IsHideIdle(x)           HasFlag(x, FLAG_HIDEIDLE)
+#define IsHideIdle(x)           HasUFlag(x, FLAG_HIDEIDLE)
 /** Return non-zero if the client has an active PING request. */
 #define IsPingSent(x)           HasFlag(x, FLAG_PINGSENT)
 /** Return non-zero if the client is using TLS. */
-#define IsTLS(x)                HasFlag(x, FLAG_TLS)
+#define IsTLS(x)                HasUFlag(x, FLAG_TLS)
 /** Return non-zero if the client is (re-)negotiating TLS. */
 #define IsNegotiatingTLS(x)     HasFlag(x, FLAG_NEGOTIATING_TLS)
 /** Return non-zero if the client is the sender or recipient of a message on hold (spamfilter) */
 #define IsSpamHold(x)           HasFlag(x, FLAG_SPAMHOLD)
 /** Return non-zero if the client has mode +c (only messages from common channels). */
-#define IsCommonChans(x)        HasFlag(x, FLAG_COMMONCHANS)
+#define IsCommonChans(x)        HasUFlag(x, FLAG_COMMONCHANS)
 /** Return non-zero if the client is exempt from input throttling. */
 #define IsExemptThrottle(x)     HasFlag(x, FLAG_EXEMPT_THROTTLE)
 
@@ -679,31 +700,31 @@ struct Client {
 /** Mark a client as being between EOB and EOB ACK. */
 #define SetBurstAck(x)          SetFlag(x, FLAG_BURST_ACK)
 /** Mark a client as having mode +k (channel service). */
-#define SetChannelService(x)    SetFlag(x, FLAG_CHSERV)
+#define SetChannelService(x)    SetUFlag(x, FLAG_CHSERV)
 /** Mark a client as having mode +d (deaf). */
-#define SetDeaf(x)              SetFlag(x, FLAG_DEAF)
+#define SetDeaf(x)              SetUFlag(x, FLAG_DEAF)
 /** Mark a client as having mode +R (block unauthed users). */
-#define SetBlockUnauthUsers(x)  SetFlag(x, FLAG_BLOCK_UNAUTH_USERS)
+#define SetBlockUnauthUsers(x)  SetUFlag(x, FLAG_BLOCK_UNAUTH_USERS)
 /** Mark a client as having mode +g (debugging). */
-#define SetDebug(x)             SetFlag(x, FLAG_DEBUG)
+#define SetDebug(x)             SetUFlag(x, FLAG_DEBUG)
 /** Mark a client as having ident looked up. */
 #define SetGotId(x)             SetFlag(x, FLAG_GOTID)
 /** Mark a client as being IP-checked. */
 #define SetIPChecked(x)         SetFlag(x, FLAG_IPCHECK)
 /** Mark a client as having mode +i (invisible). */
-#define SetInvisible(x)         SetFlag(x, FLAG_INVISIBLE)
+#define SetInvisible(x)         SetUFlag(x, FLAG_INVISIBLE)
 /** Mark a client as causing a net.join. */
 #define SetJunction(x)          SetFlag(x, FLAG_JUNCTION)
 /** Mark a client as having mode +O (local operator). */
-#define SetLocOp(x)             SetFlag(x, FLAG_LOCOP)
+#define SetLocOp(x)             SetUFlag(x, FLAG_LOCOP)
 /** Mark a client as having mode +o (global operator). */
-#define SetOper(x)              SetFlag(x, FLAG_OPER)
+#define SetOper(x)              SetUFlag(x, FLAG_OPER)
 /** Mark a client as having a pending UDP ping. */
 #define SetUPing(x)             SetFlag(x, FLAG_UPING)
 /** Mark a client as having mode +w (wallops). */
-#define SetWallops(x)           SetFlag(x, FLAG_WALLOP)
+#define SetWallops(x)           SetUFlag(x, FLAG_WALLOP)
 /** Mark a client as having mode +s (server notices). */
-#define SetServNotice(x)        SetFlag(x, FLAG_SERVNOTICE)
+#define SetServNotice(x)        SetUFlag(x, FLAG_SERVNOTICE)
 /** Mark a client as being a hub server. */
 #define SetHub(x)               SetFlag(x, FLAG_HUB)
 /** Mark a client as being an IPv6-grokking server. */
@@ -711,21 +732,21 @@ struct Client {
 /** Mark a client as being a services server. */
 #define SetService(x)           SetFlag(x, FLAG_SERVICE)
 /** Mark a client as having an account stamp. */
-#define SetAccount(x)           SetFlag(x, FLAG_ACCOUNT)
+#define SetAccount(x)           SetUFlag(x, FLAG_ACCOUNT)
 /** Mark a client as having mode +x (hidden host). */
-#define SetHiddenHost(x)        SetFlag(x, FLAG_HIDDENHOST)
+#define SetHiddenHost(x)        SetUFlag(x, FLAG_HIDDENHOST)
 /** Mark a client as having mode +I (hide idle time). */
-#define SetHideIdle(x)          SetFlag(x, FLAG_HIDEIDLE)
+#define SetHideIdle(x)          SetUFlag(x, FLAG_HIDEIDLE)
 /** Mark a client as having a pending PING. */
 #define SetPingSent(x)          SetFlag(x, FLAG_PINGSENT)
 /** Mark a client as using TLS. */
-#define SetTLS(x)               SetFlag(x, FLAG_TLS)
+#define SetTLS(x)               SetUFlag(x, FLAG_TLS)
 /** Mark a client as (re-)negotiating TLS. */
 #define SetNegotiatingTLS(x)    SetFlag(x, FLAG_NEGOTIATING_TLS)
 /** Mark a client as being the sender or recipient of a message on hold (spamfilter). */
 #define SetSpamHold(x)          SetFlag(x, FLAG_SPAMHOLD)
 /** Mark a client as having mode +c (only messages from those in common channels). */
-#define SetCommonChans(x)       SetFlag(x, FLAG_COMMONCHANS)
+#define SetCommonChans(x)       SetUFlag(x, FLAG_COMMONCHANS)
 /** Mark a client as being exempt from input throttling. */
 #define SetExemptThrottle(x)    SetFlag(x, FLAG_EXEMPT_THROTTLE)
 
@@ -738,31 +759,35 @@ struct Client {
 /** Clear the client's between EOB and EOB ACK flag. */
 #define ClearBurstAck(x)         ClrFlag(x, FLAG_BURST_ACK)
 /** Remove mode +k (channel service) from the client. */
-#define ClearChannelService(x)   ClrFlag(x, FLAG_CHSERV)
+#define ClearChannelService(x)   ClrUFlag(x, FLAG_CHSERV)
 /** Remove mode +d (deaf) from the client. */
-#define ClearDeaf(x)             ClrFlag(x, FLAG_DEAF)
+#define ClearDeaf(x)             ClrUFlag(x, FLAG_DEAF)
 /** Remove mode +R (block unauthenticated users) from the client. */
-#define ClearBlockUnauthUsers(x) ClrFlag(x, FLAG_BLOCK_UNAUTH_USERS)
+#define ClearBlockUnauthUsers(x) ClrUFlag(x, FLAG_BLOCK_UNAUTH_USERS)
 /** Remove mode +g (debugging) from the client. */
-#define ClearDebug(x)            ClrFlag(x, FLAG_DEBUG)
+#define ClearDebug(x)            ClrUFlag(x, FLAG_DEBUG)
 /** Remove the client's IP-checked flag. */
 #define ClearIPChecked(x)        ClrFlag(x, FLAG_IPCHECK)
 /** Remove mode +i (invisible) from the client. */
-#define ClearInvisible(x)        ClrFlag(x, FLAG_INVISIBLE)
+#define ClearInvisible(x)        ClrUFlag(x, FLAG_INVISIBLE)
 /** Remove mode +O (local operator) from the client. */
-#define ClearLocOp(x)            ClrFlag(x, FLAG_LOCOP)
+#define ClearLocOp(x)            ClrUFlag(x, FLAG_LOCOP)
 /** Remove mode +o (global operator) from the client. */
-#define ClearOper(x)             ClrFlag(x, FLAG_OPER)
+#define ClearOper(x)             ClrUFlag(x, FLAG_OPER)
 /** Clear the client's pending UDP ping flag. */
 #define ClearUPing(x)            ClrFlag(x, FLAG_UPING)
 /** Remove mode +w (wallops) from the client. */
-#define ClearWallops(x)          ClrFlag(x, FLAG_WALLOP)
+#define ClearWallops(x)          ClrUFlag(x, FLAG_WALLOP)
 /** Remove mode +s (server notices) from the client. */
-#define ClearServNotice(x)       ClrFlag(x, FLAG_SERVNOTICE)
+#define ClearServNotice(x)       ClrUFlag(x, FLAG_SERVNOTICE)
+/** Remove mode +r (account stamp) from the client. */
+#define ClearAccount(x)          ClrUFlag(x, FLAG_ACCOUNT)
 /** Remove mode +x (hidden host) from the client. */
-#define ClearHiddenHost(x)       ClrFlag(x, FLAG_HIDDENHOST)
+#define ClearHiddenHost(x)       ClrUFlag(x, FLAG_HIDDENHOST)
+/** Remove mode +z (using TLS) from the client. */
+#define ClearTLS(x)              ClrUFlag(x, FLAG_TLS)
 /** Remove mode +I (hide idle time) from the client. */
-#define ClearHideIdle(x)         ClrFlag(x, FLAG_HIDEIDLE)
+#define ClearHideIdle(x)         ClrUFlag(x, FLAG_HIDEIDLE)
 /** Clear the client's pending PING flag. */
 #define ClearPingSent(x)         ClrFlag(x, FLAG_PINGSENT)
 /** Clear the client's HUB flag. */
@@ -772,9 +797,51 @@ struct Client {
 /** Clear the client's spam hold flag. */
 #define ClearSpamHold(x)         ClrFlag(x, FLAG_SPAMHOLD)
 /** Remove mode +c (only accepts messages from common channels) from the client. */
-#define ClearCommonChans(x)      ClrFlag(x, FLAG_COMMONCHANS)
+#define ClearCommonChans(x)      ClrUFlag(x, FLAG_COMMONCHANS)
 /** Mark a client as no longer exempt from input throttling. */
 #define ClearExemptThrottle(x)   ClrFlag(x, FLAG_EXEMPT_THROTTLE)
+
+/*
+ * Tests against a saved set of user flags.
+ *
+ * set_user_mode() and the OPER/OPMODE paths snapshot cli_uflags() before
+ * touching it and compare afterwards to work out what changed, so every
+ * Is*()/Send*() test above has a "was it set beforehand" counterpart
+ * here.  They take the snapshot itself, not a client.
+ */
+/** Return non-zero if \a old had mode +o (global operator). */
+#define WasOper(old)             (((old) & FLAG_OPER) != 0)
+/** Return non-zero if \a old had mode +O (local operator).  Unlike
+ * IsLocOp(), this cannot check MyConnect(): a flag set carries no
+ * connection.
+ */
+#define WasLocOp(old)            (((old) & FLAG_LOCOP) != 0)
+/** Return non-zero if \a old had mode +o or +O. */
+#define WasAnOper(old)           (WasOper(old) || WasLocOp(old))
+/** Return non-zero if \a old had mode +i (invisible). */
+#define WasInvisible(old)        (((old) & FLAG_INVISIBLE) != 0)
+/** Return non-zero if \a old had mode +w (wallops). */
+#define WasWallops(old)          (((old) & FLAG_WALLOP) != 0)
+/** Return non-zero if \a old had mode +s (server notices). */
+#define WasServNotice(old)       (((old) & FLAG_SERVNOTICE) != 0)
+/** Return non-zero if \a old had mode +d (deaf). */
+#define WasDeaf(old)             (((old) & FLAG_DEAF) != 0)
+/** Return non-zero if \a old had mode +k (channel service). */
+#define WasChannelService(old)   (((old) & FLAG_CHSERV) != 0)
+/** Return non-zero if \a old had mode +g (debugging). */
+#define WasDebug(old)            (((old) & FLAG_DEBUG) != 0)
+/** Return non-zero if \a old had mode +r (account stamp). */
+#define WasAccount(old)          (((old) & FLAG_ACCOUNT) != 0)
+/** Return non-zero if \a old had mode +R (block unauthenticated users). */
+#define WasBlockUnauthUsers(old) (((old) & FLAG_BLOCK_UNAUTH_USERS) != 0)
+/** Return non-zero if \a old had mode +x (hidden host). */
+#define WasHiddenHost(old)       (((old) & FLAG_HIDDENHOST) != 0)
+/** Return non-zero if \a old had mode +z (using TLS). */
+#define WasTLS(old)              (((old) & FLAG_TLS) != 0)
+/** Return non-zero if \a old had mode +I (hide idle time). */
+#define WasHideIdle(old)         (((old) & FLAG_HIDEIDLE) != 0)
+/** Return non-zero if \a old had mode +c (only messages from common channels). */
+#define WasCommonChans(old)      (((old) & FLAG_COMMONCHANS) != 0)
 
 /* free flags */
 #define FREEFLAG_SOCKET	0x0001	/**< socket needs to be freed */
@@ -852,5 +919,18 @@ extern void client_add_sendq(struct Connection* con,
 extern void client_set_privs(struct Client *client, struct ConfItem *oper,
 			     int forceOper);
 extern int client_report_privs(struct Client* to, struct Client* client);
+extern void client_init_user_modes(void);
+extern int client_check_user_mode(char c, flag_t flag);
+extern int client_append_user_mode(char c, flag_t flag);
+extern int client_remove_user_mode(char c);
+
+/** Test whether \a c is usable as a user mode character.
+ * Only plain A-Z and a-z are valid: IsAlpha() would also accept the
+ * scandinavian alphabet ("[\\]^{|}~"), which is valid in nicks but not
+ * in mode strings.
+ */
+#define UmodeCharInRange(c) ((('A' <= (c)) && ((c) <= 'Z')) || \
+                             (('a' <= (c)) && ((c) <= 'z')))
+
 
 #endif /* INCLUDED_client_h */

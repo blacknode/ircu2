@@ -729,6 +729,7 @@ int main(int argc, char **argv) {
   init_list();
   init_hash();
   init_class();
+  client_init_user_modes(); /* before module_init(): modules register modes */
   initwhowas();
   initmsgtree();
   initstats();

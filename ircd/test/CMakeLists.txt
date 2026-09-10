@@ -65,6 +65,11 @@ add_ircu_test(hooks_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
+add_ircu_test(user_modes_t
+  user_modes_stub.c
+  "${IRCU_IRCD_DIR}/client.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c")
+
 # ---------------------------------------------------------------------------
 # Module loader
 #

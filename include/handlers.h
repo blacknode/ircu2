@@ -163,6 +163,8 @@ extern int mo_opmode(struct Client*, struct Client*, int, char*[]);
 extern int mo_ping(struct Client*, struct Client*, int, char*[]);
 extern int mo_privmsg(struct Client*, struct Client*, int, char*[]);
 extern int mo_privs(struct Client*, struct Client*, int, char*[]);
+extern int m_module(struct Client*, struct Client*, int, char*[]);
+extern int mo_module(struct Client*, struct Client*, int, char*[]);
 extern int mo_rehash(struct Client*, struct Client*, int, char*[]);
 extern int mo_reset(struct Client*, struct Client*, int, char*[]);
 extern int mo_restart(struct Client*, struct Client*, int, char*[]);

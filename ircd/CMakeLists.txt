@@ -90,6 +90,7 @@ add_custom_command(
 # ---------------------------------------------------------------------------
 set(IRCU_SOURCES
   IPcheck.c
+  chan_modes.c
   channel.c
   cidr_lookups.c
   class.c
@@ -100,6 +101,7 @@ set(IRCU_SOURCES
   fileio.c
   gline.c
   hash.c
+  hooks.c
   ircd.c
   ircd_alloc.c
   ircd_crypt.c
@@ -156,6 +158,7 @@ set(IRCU_SOURCES
   m_lusers.c
   m_map.c
   m_mode.c
+  m_module.c
   m_motd.c
   m_names.c
   m_nick.c
@@ -205,6 +208,7 @@ set(IRCU_SOURCES
   m_xreply.c
   match.c
   memdebug.c
+  module.c
   motd.c
   msg_tag.c
   msgq.c
@@ -249,7 +253,13 @@ target_include_directories(ircd PRIVATE
   "${CMAKE_CURRENT_BINARY_DIR}"          # ircd_parser.h, chattr.tab.c
   "${PROJECT_SOURCE_DIR}/include"        # a patchlist.h written by ircd-patch
   "${IRCU_PATCHLIST_DIR}")               # ... otherwise an empty one
-target_link_libraries(ircd PRIVATE ircu_config ircu::tls ${IRCU_SYSTEM_LIBRARIES})
+target_link_libraries(ircd PRIVATE
+  ircu_config ircu::tls ${IRCU_SYSTEM_LIBRARIES} ${CMAKE_DL_LIBS})
+
+# Modules resolve the core's symbols against the executable itself, so the
+# ircd has to carry a dynamic symbol table (-rdynamic).  See doc/readme.modules.
+set_target_properties(ircd PROPERTIES ENABLE_EXPORTS ON)
+
 add_dependencies(ircd ircu_chattr)
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@
 #include "list.h"
 #include "match.h"
 #include "motd.h"
+#include "module.h"
 #include "msg.h"
 #include "msgq.h"
 #include "numeric.h"
@@ -636,6 +637,9 @@ struct StatDesc statsinfo[] = {
     FEAT_HIS_STATS_L,
     stats_modules, 0,
     "Dynamically loaded modules." },
+  { 'M', "modules", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_M,
+    module_stats, 0,
+    "Loaded modules and hook activity." },
   { 'm', "commands", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_m,
     stats_commands, 0,
     "Message usage information." },

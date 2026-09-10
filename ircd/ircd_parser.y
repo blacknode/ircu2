@@ -43,6 +43,7 @@
 #include "list.h"
 #include "listener.h"
 #include "match.h"
+#include "module.h"
 #include "motd.h"
 #include "numeric.h"
 #include "numnicks.h"
@@ -104,6 +105,7 @@ enum ConfigBlock
   BLOCK_INCLUDE,
   BLOCK_JUPE,
   BLOCK_KILL,
+  BLOCK_MODULE,
   BLOCK_MOTD,
   BLOCK_OPER,
   BLOCK_PORT,
@@ -127,10 +129,11 @@ static void parse_error(char *pattern,...) {
 static int
 permitted(enum ConfigBlock type)
 {
+  /* Indexed by enum ConfigBlock; keep in the same order as that enum. */
   static const char *block_names[BLOCK_LAST_BLOCK+1] = {
     "Admin", "Class", "Client", "Connect", "CRule", "Features",
-    "General", "IAuth", "Include", "Jupe", "Kill", "Motd", "Oper",
-    "Port", "Pseudo", "Quarantine", "UWorld", "IAuth", "IPCheck",
+    "General", "IAuth", "Include", "Jupe", "Kill", "Module", "Motd",
+    "Oper", "Port", "Pseudo", "Quarantine", "UWorld", "WebIRC", "IPCheck",
     NULL
   };
 
@@ -216,6 +219,7 @@ static void free_slist(struct SLink **link) {
 %token PREPEND
 %token USERMODE
 %token IAUTH
+%token MODULE
 %token FAST
 %token AUTOCONNECT
 %token PROGRAM
@@ -247,6 +251,7 @@ static void free_slist(struct SLink **link) {
 %token TPRIV_SEE_CHAN TPRIV_SHOW_INVIS TPRIV_SHOW_ALL_INVIS TPRIV_PROPAGATE
 %token TPRIV_UNLIMIT_QUERY TPRIV_DISPLAY TPRIV_SEE_OPERS TPRIV_WIDE_GLINE
 %token TPRIV_FORCE_OPMODE TPRIV_FORCE_LOCAL_OPMODE TPRIV_APASS_OPMODE
+%token TPRIV_MODULE
 %token TPRIV_LIST_CHAN
 /* and some types... */
 %type <num> sizespec
@@ -269,7 +274,7 @@ block: adminblock | generalblock | classblock | connectblock |
        uworldblock | operblock | portblock | jupeblock | clientblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
-       includeblock | error '}' ';' { yyerrok; };
+       moduleblock | includeblock | error '}' ';' { yyerrok; };
 
 /* The timespec, sizespec and expr was ripped straight from
  * ircd-hybrid-7. */
@@ -816,6 +821,7 @@ privtype: TPRIV_CHAN_LIMIT { $$ = PRIV_CHAN_LIMIT; } |
           TPRIV_SET { $$ = PRIV_SET; } |
           TPRIV_WHOX { $$ = PRIV_WHOX; } |
           TPRIV_BADCHAN { $$ = PRIV_BADCHAN; } |
+          TPRIV_MODULE { $$ = PRIV_MODULE; } |
           TPRIV_LOCAL_BADCHAN { $$ = PRIV_LOCAL_BADCHAN; } |
           TPRIV_SEE_CHAN { $$ = PRIV_SEE_CHAN; } |
           TPRIV_SHOW_INVIS { $$ = PRIV_SHOW_INVIS; } |
@@ -1388,6 +1394,32 @@ pseudoflags: FAST ';'
   smap->flags |= SMAP_FAST;
 };
 
+moduleblock: MODULE {
+  if (!permitted(BLOCK_MODULE)) YYERROR;
+} '{' moduleitems '}' ';' {
+  if (pass != NULL)
+    conf_add_module(pass);
+  MyFree(pass);
+  pass = NULL;
+};
+
+moduleitems: moduleitem moduleitems | moduleitem;
+moduleitem: modulename | modulefile;
+/* A module is named, not pathed: the server resolves the name against the
+ * module directory it was built with (MOD_PATH).  "file" is accepted as a
+ * spelling of the same thing.
+ */
+modulename: NAME '=' QSTRING ';'
+{
+  MyFree(pass);
+  pass = $3;
+};
+modulefile: TFILE '=' QSTRING ';'
+{
+  MyFree(pass);
+  pass = $3;
+};
+
 iauthblock: IAUTH {
   if (!permitted(BLOCK_IAUTH)) YYERROR;
 } '{' iauthitems '}' ';' {
@@ -1507,6 +1539,7 @@ blocktype: ALL { $$ = ~0; }
   | FEATURES { $$ = 1 << BLOCK_FEATURES; }
   | GENERAL { $$ = 1 << BLOCK_GENERAL; }
   | IAUTH { $$ = 1 << BLOCK_IAUTH; }
+  | MODULE { $$ = 1 << BLOCK_MODULE; }
   | INCLUDE { $$ = 1 << BLOCK_INCLUDE; }
   | JUPE { $$ = 1 << BLOCK_JUPE; }
   | KILL { $$ = 1 << BLOCK_KILL; }

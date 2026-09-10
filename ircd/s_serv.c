@@ -33,6 +33,7 @@
 #include "gline.h"
 #include "sline.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_log.h"
@@ -202,6 +203,8 @@ int server_estab(struct Client *cptr, struct ConfItem *aconf)
    * be removed from the network while the remote server is still chewing
    * our burst.
    */
+  hook_notify(HOOK_SERVER_LINKED, cptr, NULL, NULL, cli_name(cptr));
+
   gline_burst(cptr);
   jupe_burst(cptr);
   sline_burst(cptr);

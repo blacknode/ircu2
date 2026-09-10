@@ -59,3 +59,58 @@ add_ircu_test(msgq_excise_t
   "${IRCU_IRCD_DIR}/ircd_snprintf.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/msgq.c")
+
+add_ircu_test(hooks_t
+  "${IRCU_IRCD_DIR}/hooks.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(user_modes_t
+  user_modes_stub.c
+  "${IRCU_IRCD_DIR}/client.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c")
+
+add_ircu_test(chan_modes_t
+  chan_modes_stub.c
+  "${IRCU_IRCD_DIR}/chan_modes.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c")
+
+# ---------------------------------------------------------------------------
+# Module loader
+#
+# module_t needs real shared objects to load, so the fixtures under modules/
+# are built as MODULE libraries and their directory is handed to the test as
+# argv[1].  The test binary exports its own symbols because one fixture
+# deliberately resolves a symbol out of it, the same way a real module
+# resolves the core's.
+# ---------------------------------------------------------------------------
+add_ircu_test(module_t
+  module_stub.c
+  user_modes_stub.c
+  "${IRCU_IRCD_DIR}/chan_modes.c"
+  "${IRCU_IRCD_DIR}/client.c"
+  "${IRCU_IRCD_DIR}/hooks.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/module.c")
+target_link_libraries(module_t PRIVATE ${CMAKE_DL_LIBS})
+set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
+
+set(IRCU_TEST_MODULE_DIR "${CMAKE_CURRENT_BINARY_DIR}/modules")
+
+foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_cmd mod_umode
+                 mod_cmode)
+  add_library(${_fixture} MODULE "modules/${_fixture}.c")
+  target_link_libraries(${_fixture} PRIVATE ircu_config)
+  set_target_properties(${_fixture} PROPERTIES
+    PREFIX ""
+    LIBRARY_OUTPUT_DIRECTORY "${IRCU_TEST_MODULE_DIR}")
+  add_dependencies(module_t ${_fixture})
+endforeach()
+
+# The fixture directory is baked in rather than passed as a test argument:
+# a compile definition cannot drift out of sync with the test registration.
+# IRCU_MODULE_DIR is what module.c resolves module names against, so the
+# loader looks the fixtures up by name exactly as the server does.
+target_compile_definitions(module_t PRIVATE
+  IRCU_MODULE_DIR="${IRCU_TEST_MODULE_DIR}")

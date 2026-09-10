@@ -25,6 +25,7 @@
 
 #include "ircd.h"
 #include "IPcheck.h"
+#include "channel.h"
 #include "class.h"
 #include "client.h"
 #include "crule.h"
@@ -42,6 +43,8 @@
 #include "jupe.h"
 #include "list.h"
 #include "match.h"
+#include "hooks.h"
+#include "module.h"
 #include "motd.h"
 #include "msg.h"
 #include "numeric.h"
@@ -727,6 +730,8 @@ int main(int argc, char **argv) {
   init_list();
   init_hash();
   init_class();
+  client_init_user_modes(); /* before module_init(): modules register modes */
+  channel_init_chan_modes(); /* likewise, for the channel modes */
   initwhowas();
   initmsgtree();
   initstats();
@@ -737,6 +742,8 @@ int main(int argc, char **argv) {
   ircd_crypt_init();
 
   motd_init();
+  hooks_init();
+  module_init();
 
   if (!init_conf()) {
     log_write(LS_SYSTEM, L_CRIT, 0, "Failed to read configuration file %s",
@@ -807,6 +814,11 @@ int main(int argc, char **argv) {
   log_write(LS_SYSTEM, L_NOTICE, 0, "Server Ready");
 
   event_loop();
+
+  /* The event loop has returned, so nothing else is running: unload every
+   * module and release the module system itself.
+   */
+  module_close();
 
   return 0;
 }

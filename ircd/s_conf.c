@@ -45,6 +45,7 @@
 #include "list.h"
 #include "listener.h"
 #include "match.h"
+#include "module.h"
 #include "motd.h"
 #include "numeric.h"
 #include "numnicks.h"
@@ -1081,6 +1082,60 @@ static void close_mappings(void)
   GlobalServiceMapList = NULL;
 }
 
+/** Load, keep or reload a module named by the configuration.
+ *
+ * Called for each Module block as the configuration is read.  A module
+ * that is already loaded stays loaded unless its file changed on disk, in
+ * which case it is unloaded and loaded again so the new code takes effect.
+ *
+ * @param[in] name Name of the module, resolved against the server's module
+ *   directory (MOD_PATH) by module_load().
+ */
+void conf_add_module(const char *name)
+{
+  struct ModuleHandle *mod;
+  const char *err = 0;
+
+  assert(0 != name);
+
+  mod = module_find_file(name);
+  if (mod) {
+    if (!module_changed_on_disk(mod)) {
+      /* Unchanged: keep it, and let it know a rehash happened. */
+      module_mark(mod);
+      module_rehash_notify(mod);
+      return;
+    }
+
+    /* The file changed underneath us; take the old code out first. */
+    if (!module_unload(mod)) {
+      sendto_opmask_butone(0, SNO_OLDSNO,
+                           "Could not unload changed module %s", name);
+      log_write(LS_SYSTEM, L_ERROR, 0,
+                "Could not unload changed module %s", name);
+      module_mark(mod);
+      return;
+    }
+  }
+
+  if (!module_load(name, NULL, &err)) {
+    if (!err)
+      err = "unknown error";
+
+    /* Same three channels yyerror() uses, so a module that will not load is
+     * visible however the server was started.  Unlike a parse error this
+     * does not set conf_error: one bad module should not stop the server
+     * from coming up, or make a rehash fail.
+     */
+    sendto_opmask_butone(0, SNO_OLDSNO, "Could not load module %s: %s",
+                         name, err);
+    log_write(LS_SYSTEM, L_ERROR, 0, "Could not load module %s: %s",
+              name, err);
+    if (!conf_already_read)
+      fprintf(stderr, "Could not load module %s: %s\n", name, err);
+  }
+}
+
 /** Reload the configuration file.
  * @param cptr Client that requested rehash (if a signal, &me).
  * @param sig Type of rehash (0 = oper-requested, 1 = signal, 2 =
@@ -1138,9 +1193,16 @@ int rehash(struct Client *cptr, int sig)
   auth_mark_closing();
   webirc_mark_stale();
   close_mappings();
+  module_unmark_all();
   DoIdentLookups = 0;
 
   read_configuration_file();
+
+  /* Modules the new configuration no longer mentions go away.  This runs
+   * after the file is read so that a module which merely moved between
+   * include files is not needlessly unloaded and reloaded.
+   */
+  module_sweep();
 
   if (sig != 2)
     restart_resolver();

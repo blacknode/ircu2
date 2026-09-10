@@ -481,6 +481,13 @@ struct Message msgtab[] = {
     { m_unregistered, m_info, ms_info, mo_info, m_ignore }
   },
   {
+    MSG_MODULE,
+    TOK_MODULE,
+    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_unregistered, m_module, m_ignore, mo_module, m_ignore }
+  },
+  {
     MSG_MOTD,
     TOK_MOTD,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
@@ -822,6 +829,75 @@ msg_tree_parse(char *cmd, struct MessageTree *root)
           return NULL;
   }
   return NULL;
+}
+
+/** Add a command to the message and token tries at run time.
+ *
+ * The strings are copied: a module supplies pointers into its own shared
+ * object, and that memory goes away when the module is unloaded while the
+ * trie would still be pointing at it.
+ *
+ * @param[in] cmd Command name, e.g. "SPAMFILTER".
+ * @param[in] tok P10 token for the command, or NULL to reuse \a cmd.
+ * @param[in] parameters Maximum number of parameters to split the line
+ *   into; use MAXPARA unless the command takes free-form trailing text.
+ *   The handler checks its own minimum with need_more_params().
+ * @param[in] flags Bitwise combination of MFLG_* values.
+ * @param[in] handlers Handler for each HandlerType, in order.
+ * @return The new message, or NULL if the name or token is already taken.
+ */
+struct Message *parse_add_command(const char *cmd, const char *tok,
+                                  unsigned int parameters, unsigned int flags,
+                                  MessageHandler handlers[LAST_HANDLER_TYPE])
+{
+  struct Message *msg;
+  int i;
+
+  assert(0 != cmd);
+  assert(0 != handlers);
+
+  if (!tok)
+    tok = cmd;
+
+  /* Commands from modules never replace core commands.  Overriding PRIVMSG
+   * from a shared object is exactly the kind of thing that makes a server
+   * impossible to reason about.
+   */
+  if (msg_tree_parse((char *)cmd, &msg_tree) ||
+      msg_tree_parse((char *)tok, &tok_tree))
+    return NULL;
+
+  msg = (struct Message *)MyCalloc(1, sizeof(struct Message));
+  DupString(msg->cmd, cmd);
+  DupString(msg->tok, tok);
+  msg->count = 0;
+  msg->parameters = parameters;
+  msg->flags = flags;
+  msg->bytes = 0;
+  msg->extra = NULL;
+
+  for (i = 0; i < LAST_HANDLER_TYPE; i++)
+    msg->handlers[i] = handlers[i] ? handlers[i] : m_ignore;
+
+  add_msg_element(&msg_tree, msg, msg->cmd);
+  add_msg_element(&tok_tree, msg, msg->tok);
+
+  return msg;
+}
+
+/** Remove a command previously added by parse_add_command().
+ * @param[in] msg Message to remove; freed by this call.
+ */
+void parse_del_command(struct Message *msg)
+{
+  assert(0 != msg);
+
+  del_msg_element(&msg_tree, msg->cmd);
+  del_msg_element(&tok_tree, msg->tok);
+
+  MyFree(msg->cmd);
+  MyFree(msg->tok);
+  MyFree(msg);
 }
 
 /** Registers a service mapping to the pseudocommand handler.

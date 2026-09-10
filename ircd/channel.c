@@ -27,6 +27,7 @@
 #include "client.h"
 #include "destruct_event.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
@@ -73,6 +74,49 @@ static struct Ban* free_bans;
 static size_t bans_alloc;
 /** Number of ban structures in use. */
 static size_t bans_inuse;
+
+/** Mask of the modes that modebuf_mode() accepts.
+ *
+ * Everything registered that is a plain flag on the channel: no argument,
+ * not a member's mode.  Modes with arguments go through the mode-with-arg
+ * slots instead, and passing one here would set the bit without ever
+ * sending the argument.
+ *
+ * @return The mask, recomputed on every call.
+ */
+static chanmode_t chan_simple_modes(void)
+{
+  const struct ChanMode *p;
+  chanmode_t mask = 0;
+
+  for (p = channel_chan_modes(); p; p = p->next)
+    if (!(p->attr & (CHANMODE_PARAM | CHANMODE_MEMBER)))
+      mask |= p->flag;
+
+  return mask;
+}
+
+/** Membership status bits a member mode flag stands for.
+ *
+ * MODE_CHANOP and MODE_VOICE were CHFL_CHANOP and CHFL_VOICE for as long
+ * as a mode flag fitted in the same word as a membership status.  The mode
+ * bits follow the letters now, so the two have to be converted rather than
+ * assumed equal.
+ *
+ * @param[in] flag Mode flag, possibly OR'd with a direction.
+ * @return The matching CHFL_* bits.
+ */
+static unsigned int chan_member_status(chanmode_t flag)
+{
+  unsigned int status = 0;
+
+  if (flag & MODE_CHANOP)
+    status |= CHFL_CHANOP;
+  if (flag & MODE_VOICE)
+    status |= CHFL_VOICE;
+
+  return status;
+}
 
 /** Count the distinct secure groups present among the non-zombie
  * members of a channel.  This is computed on demand from the
@@ -581,6 +625,11 @@ void add_user_to_channel(struct Channel* chptr, struct Client* who,
 
     /* Check if the channel needs to be updated for TLS */
     CheckChannelTLS(chptr);
+
+    /* Fired once the member is fully linked, so a hook that walks the
+     * channel sees the new member in it.
+     */
+    hook_notify(HOOK_CHANNEL_JOINED, who, NULL, chptr, chptr->chname);
   }
 }
 
@@ -664,6 +713,9 @@ void remove_user_from_channel(struct Client* cptr, struct Channel* chptr)
   assert(0 != chptr);
 
   if ((member = find_member_link(chptr, cptr))) {
+    /* Before the removal, while the membership is still walkable. */
+    hook_notify(HOOK_CHANNEL_PARTED, cptr, NULL, chptr, chptr->chname);
+
     if (remove_member_from_channel(member)) {
       if (channel_all_zombies(chptr)) {
         /*
@@ -898,7 +950,8 @@ const char* find_no_nickchange_channel(struct Client* cptr)
  * This function will hide keys from non-op'd, non-server clients.
  *
  * @param cptr	The client to generate the mode for.
- * @param mbuf	The buffer to write the modes into.
+ * @param mbuf	The buffer to write the modes into; MODEBUFLEN bytes, since
+ *		the register can hold a letter for every letter there is.
  * @param pbuf  The buffer to write the mode parameters into.
  * @param buflen The length of the buffers.
  * @param chptr	The channel to get the modes from.
@@ -909,6 +962,8 @@ const char* find_no_nickchange_channel(struct Client* cptr)
 void channel_modes(struct Client *cptr, char *mbuf, char *pbuf, int buflen,
                           struct Channel *chptr, struct Membership *member)
 {
+  const struct ChanMode *cm;
+  const char *mbuf_end = mbuf + MODEBUFLEN - CHANMODE_CHARS_LEN;
   int previous_parameter = 0;
 
   assert(0 != mbuf);
@@ -916,38 +971,44 @@ void channel_modes(struct Client *cptr, char *mbuf, char *pbuf, int buflen,
   assert(0 != chptr);
 
   *mbuf++ = '+';
-  if (chptr->mode.mode & MODE_SECRET)
-    *mbuf++ = 's';
-  else if (chptr->mode.mode & MODE_PRIVATE)
-    *mbuf++ = 'p';
-  if (chptr->mode.mode & MODE_MODERATED)
-    *mbuf++ = 'm';
-  if (chptr->mode.mode & MODE_TOPICLIMIT)
-    *mbuf++ = 't';
-  if (chptr->mode.mode & MODE_INVITEONLY)
-    *mbuf++ = 'i';
-  if (chptr->mode.mode & MODE_NOPRIVMSGS)
-    *mbuf++ = 'n';
-  if (chptr->mode.mode & MODE_REGONLY)
-    *mbuf++ = 'r';
-  if (chptr->mode.mode & MODE_DELJOINS)
-    *mbuf++ = 'D';
-  else if (MyUser(cptr) && (chptr->mode.mode & MODE_WASDELJOINS))
-    *mbuf++ = 'd';
-  if (chptr->mode.mode & MODE_REGISTERED)
-    *mbuf++ = 'R';
-  if (chptr->mode.mode & MODE_NOCOLOR)
-    *mbuf++ = 'c';
-  if (chptr->mode.mode & MODE_NOCTCP)
-    *mbuf++ = 'C';
-  if (chptr->mode.mode & MODE_NOPARTMSGS)
-    *mbuf++ = 'u';
-  if (chptr->mode.mode & MODE_MODERATENOREG)
-    *mbuf++ = 'M';
-  if (MyUser(cptr) && (chptr->mode.mode & MODE_TLSINSECURE))
-    *mbuf++ = 'z';
-  else if (chptr->mode.mode & MODE_TLSONLY)
-    *mbuf++ = 'Z';
+
+  /* Walk the register rather than a list of ifs, so that a mode a module
+   * registered shows up here too; the order is the letters' own, so every
+   * server renders the same channel the same way.  The modes with an
+   * argument are left to the block below, which also fills pbuf.
+   */
+  for (cm = channel_chan_modes(); cm && mbuf < mbuf_end; cm = cm->next) {
+    if (cm->attr & (CHANMODE_PARAM | CHANMODE_MEMBER))
+      continue;
+    if (!HasCFlag(chptr, cm->flag))
+      continue;
+
+    /* A local-only mode is exactly that: a server is told the mode this
+     * one stands for, or nothing at all.
+     */
+    if (cm->attr & CHANMODE_LOCAL) {
+      if (!MyUser(cptr))
+        continue;
+      /* +d says "joins are pending"; once +D is set it says nothing. */
+      if (cm->flag == MODE_WASDELJOINS && HasCFlag(chptr, MODE_DELJOINS))
+        continue;
+      *mbuf++ = cm->c;
+      continue;
+    }
+
+    /* Two pairs where one mode hides another on the way out: +s hides +p,
+     * and a local client is shown +z in place of the +Z it stands for.
+     * Both are core semantics, not a property of a letter.
+     */
+    if (cm->flag == MODE_PRIVATE && HasCFlag(chptr, MODE_SECRET))
+      continue;
+    if (cm->flag == MODE_TLSONLY && MyUser(cptr)
+        && HasCFlag(chptr, MODE_TLSINSECURE))
+      continue;
+
+    *mbuf++ = cm->c;
+  }
+
   if (chptr->mode.limit) {
     *mbuf++ = 'l';
     ircd_snprintf(0, pbuf, buflen, "%u", chptr->mode.limit);
@@ -1631,48 +1692,17 @@ find_delayed_joins(const struct Channel *chan)
 static int
 modebuf_flush_int(struct ModeBuf *mbuf, int all)
 {
-  /* we only need the flags that don't take args right now */
-  static int flags[] = {
-/*  MODE_CHANOP,	'o', */
-/*  MODE_VOICE,		'v', */
-    MODE_PRIVATE,	'p',
-    MODE_SECRET,	's',
-    MODE_MODERATED,	'm',
-    MODE_TOPICLIMIT,	't',
-    MODE_INVITEONLY,	'i',
-    MODE_NOPRIVMSGS,	'n',
-    MODE_REGONLY,	'r',
-    MODE_DELJOINS,      'D',
-    MODE_REGISTERED,	'R',
-    MODE_NOCOLOR,       'c',
-    MODE_NOCTCP,        'C',
-    MODE_NOPARTMSGS,    'u',
-    MODE_MODERATENOREG, 'M',
-    MODE_TLSONLY,       'Z',
-/*  MODE_KEY,		'k', */
-/*  MODE_BAN,		'b', */
-    MODE_LIMIT,		'l',
-/*  MODE_APASS,		'A', */
-/*  MODE_UPASS,		'U', */
-    0x0, 0x0
-  };
-  static int local_flags[] = {
-    MODE_WASDELJOINS,   'd',
-    MODE_TLSINSECURE,   'z',  /* Local clients see 'z' for insecure TLS */
-    0x0, 0x0
-  };
-  static int global_flags[] = {
-    MODE_TLSINSECURE,   'Z',  /* Servers propagate 'Z' for insecure TLS */
-    0x0, 0x0
-  };
+  const struct ChanMode *cm;
   int i;
-  int *flag_p;
 
   struct Client *app_source; /* where the MODE appears to come from */
 
-  char addbuf[20], addbuf_local[20], addbuf_global[20]; /* accumulates +psmtin, etc. */
+  /* accumulates +psmtin, etc.; one letter per registered mode at worst */
+  char addbuf[CHANMODE_CHARS_LEN];
+  char addbuf_local[CHANMODE_CHARS_LEN], addbuf_global[CHANMODE_CHARS_LEN];
   int addbuf_i = 0, addbuf_local_i = 0, addbuf_global_i = 0;
-  char rembuf[20], rembuf_local[20], rembuf_global[20]; /* accumulates -psmtin, etc. */
+  char rembuf[CHANMODE_CHARS_LEN];
+  char rembuf_local[CHANMODE_CHARS_LEN], rembuf_global[CHANMODE_CHARS_LEN];
   int rembuf_i = 0, rembuf_local_i = 0, rembuf_global_i = 0;
   char *bufptr; /* we make use of indirection to simplify the code */
   int *bufptr_i;
@@ -1689,7 +1719,7 @@ modebuf_flush_int(struct ModeBuf *mbuf, int all)
 
   char limitbuf[20]; /* convert limits to strings */
 
-  unsigned int limitdel = MODE_LIMIT;
+  chanmode_t limitdel = MODE_LIMIT;
 
   assert(0 != mbuf);
 
@@ -1756,28 +1786,34 @@ modebuf_flush_int(struct ModeBuf *mbuf, int all)
   if (mbuf->mb_dest & MODEBUF_DEST_DEOP)
     totalbuflen -= 6; /* numeric nick == 5, plus one space */
 
-  /* Calculate the simple flags */
-  for (flag_p = flags; flag_p[0]; flag_p += 2) {
-    if (*flag_p & mbuf->mb_add)
-      addbuf[addbuf_i++] = flag_p[1];
-    else if (*flag_p & mbuf->mb_rem)
-      rembuf[rembuf_i++] = flag_p[1];
-  }
+  /* Calculate the simple flags: everything registered that is a plain
+   * flag on the channel.  The modes with an argument are rendered by the
+   * loop below, which needs their argument to decide whether they fit.
+   */
+  for (cm = channel_chan_modes(); cm; cm = cm->next) {
+    if (cm->attr & (CHANMODE_PARAM | CHANMODE_MEMBER))
+      continue;
 
-  /* Some flags may be for local display only. */
-  for (flag_p = local_flags; flag_p[0]; flag_p += 2) {
-    if (*flag_p & mbuf->mb_add)
-      addbuf_local[addbuf_local_i++] = flag_p[1];
-    else if (*flag_p & mbuf->mb_rem)
-      rembuf_local[rembuf_local_i++] = flag_p[1];
-  }
+    /* Some flags are for local display only, and some of those stand for
+     * a different letter towards servers.
+     */
+    if (cm->attr & CHANMODE_LOCAL) {
+      if (cm->flag & mbuf->mb_add) {
+        addbuf_local[addbuf_local_i++] = cm->c;
+        if (cm->alt)
+          addbuf_global[addbuf_global_i++] = cm->alt;
+      } else if (cm->flag & mbuf->mb_rem) {
+        rembuf_local[rembuf_local_i++] = cm->c;
+        if (cm->alt)
+          rembuf_global[rembuf_global_i++] = cm->alt;
+      }
+      continue;
+    }
 
-  /* Some flags may be for propagation  only. */
-  for (flag_p = global_flags; flag_p[0]; flag_p += 2) {
-    if (*flag_p & mbuf->mb_add)
-      addbuf_global[addbuf_global_i++] = flag_p[1];
-    else if (*flag_p & mbuf->mb_rem)
-      rembuf_global[rembuf_global_i++] = flag_p[1];
+    if (cm->flag & mbuf->mb_add)
+      addbuf[addbuf_i++] = cm->c;
+    else if (cm->flag & mbuf->mb_rem)
+      rembuf[rembuf_i++] = cm->c;
   }
 
   /* Now go through the modes with arguments... */
@@ -2119,15 +2155,17 @@ modebuf_init(struct ModeBuf *mbuf, struct Client *source,
  * @param mode		MODE_ADD or MODE_DEL OR'd with MODE_PRIVATE etc.
  */
 void
-modebuf_mode(struct ModeBuf *mbuf, unsigned int mode)
+modebuf_mode(struct ModeBuf *mbuf, chanmode_t mode)
 {
   assert(0 != mbuf);
   assert(0 != (mode & (MODE_ADD | MODE_DEL)));
 
-  mode &= (MODE_ADD | MODE_DEL | MODE_PRIVATE | MODE_SECRET | MODE_MODERATED |
-	   MODE_TOPICLIMIT | MODE_INVITEONLY | MODE_NOPRIVMSGS | MODE_REGONLY |
-	   MODE_NOCOLOR | MODE_NOCTCP | MODE_NOPARTMSGS | MODE_MODERATENOREG | MODE_TLSONLY |
-	   MODE_TLSINSECURE | MODE_DELJOINS | MODE_WASDELJOINS | MODE_REGISTERED);
+  /* Every registered mode that is a plain flag on the channel, which is
+   * where a module's mode lands.  A mode with an argument dropped in here
+   * would set the bit and never send the argument, so it is filtered out
+   * rather than trusted to the caller.
+   */
+  mode &= (MODE_ADD | MODE_DEL | chan_simple_modes());
 
   if (!(mode & ~(MODE_ADD | MODE_DEL))) /* don't add empty modes... */
     return;
@@ -2152,7 +2190,7 @@ modebuf_mode(struct ModeBuf *mbuf, unsigned int mode)
  * @param uint		The argument to the mode.
  */
 void
-modebuf_mode_uint(struct ModeBuf *mbuf, unsigned int mode, unsigned int uint)
+modebuf_mode_uint(struct ModeBuf *mbuf, chanmode_t mode, unsigned int uint)
 {
   assert(0 != mbuf);
   assert(0 != (mode & (MODE_ADD | MODE_DEL)));
@@ -2181,7 +2219,7 @@ modebuf_mode_uint(struct ModeBuf *mbuf, unsigned int mode, unsigned int uint)
  * @param free		If the string should be free'd later.
  */
 void
-modebuf_mode_string(struct ModeBuf *mbuf, unsigned int mode, char *string,
+modebuf_mode_string(struct ModeBuf *mbuf, chanmode_t mode, char *string,
 		    int free)
 {
   assert(0 != mbuf);
@@ -2207,7 +2245,7 @@ modebuf_mode_string(struct ModeBuf *mbuf, unsigned int mode, char *string,
  * @param oplevel       The oplevel the user had or will have
  */
 void
-modebuf_mode_client(struct ModeBuf *mbuf, unsigned int mode,
+modebuf_mode_client(struct ModeBuf *mbuf, chanmode_t mode,
 		    struct Client *client, int oplevel)
 {
   assert(0 != mbuf);
@@ -2243,33 +2281,9 @@ modebuf_flush(struct ModeBuf *mbuf)
 void
 modebuf_extract(struct ModeBuf *mbuf, char *buf)
 {
-  static int flags[] = {
-/*  MODE_CHANOP,	'o', */
-/*  MODE_VOICE,		'v', */
-    MODE_PRIVATE,	'p',
-    MODE_SECRET,	's',
-    MODE_MODERATED,	'm',
-    MODE_TOPICLIMIT,	't',
-    MODE_INVITEONLY,	'i',
-    MODE_NOPRIVMSGS,	'n',
-    MODE_KEY,		'k',
-    MODE_APASS,		'A',
-    MODE_UPASS,		'U',
-    MODE_REGISTERED,	'R',
-/*  MODE_BAN,		'b', */
-    MODE_LIMIT,		'l',
-    MODE_REGONLY,	'r',
-    MODE_DELJOINS,      'D',
-    MODE_NOCOLOR,       'c',
-    MODE_NOCTCP,        'C',
-    MODE_NOPARTMSGS,    'u',
-    MODE_MODERATENOREG, 'M',
-    MODE_TLSONLY,       'Z',
-    0x0, 0x0
-  };
-  unsigned int add;
+  const struct ChanMode *cm;
+  chanmode_t add;
   int i, bufpos = 0, len;
-  int *flag_p;
   char *key = 0, limitbuf[20];
   char *apass = 0, *upass = 0;
 
@@ -2301,9 +2315,14 @@ modebuf_extract(struct ModeBuf *mbuf, char *buf)
 
   buf[bufpos++] = '+'; /* start building buffer */
 
-  for (flag_p = flags; flag_p[0]; flag_p += 2)
-    if (*flag_p & add)
-      buf[bufpos++] = flag_p[1];
+  /* A list mode has nothing to extract -- there is no "the ban" -- and a
+   * member's mode belongs to a member, not to the channel; everything
+   * else the channel carries goes in, argument or not.
+   */
+  for (cm = channel_chan_modes(); cm; cm = cm->next)
+    if ((cm->flag & add) && !(cm->attr & (CHANMODE_LIST | CHANMODE_MEMBER
+                                          | CHANMODE_LOCAL)))
+      buf[bufpos++] = cm->c;
 
   for (i = 0, len = bufpos; i < len; i++) {
     if (buf[i] == 'k')
@@ -2372,16 +2391,16 @@ struct ParseState {
   int parc;
   char **parv;
   unsigned int flags;
-  unsigned int dir;
+  chanmode_t dir;
   unsigned int done;
-  unsigned int add;
-  unsigned int del;
+  chanmode_t add;
+  chanmode_t del;
   int args_used;
   int max_args;
   int numbans;
   struct Ban banlist[MAXPARA];
   struct {
-    unsigned int flag;
+    chanmode_t flag;
     unsigned short oplevel;
     struct Client *client;
   } cli_change[MAXPARA];
@@ -2409,10 +2428,10 @@ send_notoper(struct ParseState *state)
  * Helper function to convert limits
  *
  * @param state		Parsing state object.
- * @param flag_p	?
+ * @param cm		The mode being parsed.
  */
 static void
-mode_parse_limit(struct ParseState *state, int *flag_p)
+mode_parse_limit(struct ParseState *state, const struct ChanMode *cm)
 {
   unsigned int t_limit;
 
@@ -2451,7 +2470,7 @@ mode_parse_limit(struct ParseState *state, int *flag_p)
     
   /* Skip if this is a burst and a lower limit than this is set already */
   if ((state->flags & MODE_PARSE_BURST) &&
-      (state->chptr->mode.mode & flag_p[0]) &&
+      (state->chptr->mode.mode & cm->flag) &&
       (state->chptr->mode.limit < t_limit))
     return;
 
@@ -2462,14 +2481,14 @@ mode_parse_limit(struct ParseState *state, int *flag_p)
   if (!state->mbuf)
     return;
 
-  modebuf_mode_uint(state->mbuf, state->dir | flag_p[0], t_limit);
+  modebuf_mode_uint(state->mbuf, state->dir | cm->flag, t_limit);
 
   if (state->flags & MODE_PARSE_SET) { /* set the limit */
     if (state->dir & MODE_ADD) {
-      state->chptr->mode.mode |= flag_p[0];
+      state->chptr->mode.mode |= cm->flag;
       state->chptr->mode.limit = t_limit;
     } else {
-      state->chptr->mode.mode &= ~flag_p[0];
+      state->chptr->mode.mode &= ~cm->flag;
       state->chptr->mode.limit = 0;
     }
   }
@@ -2516,7 +2535,7 @@ is_clean_key(struct ParseState *state, char *s, char *command)
  * Helper function to convert keys
  */
 static void
-mode_parse_key(struct ParseState *state, int *flag_p)
+mode_parse_key(struct ParseState *state, const struct ChanMode *cm)
 {
   char *t_str;
 
@@ -2584,12 +2603,12 @@ mode_parse_key(struct ParseState *state, int *flag_p)
 
   if (state->flags & MODE_PARSE_BOUNCE) {
     if (*state->chptr->mode.key) /* reset old key */
-      modebuf_mode_string(state->mbuf, MODE_DEL | flag_p[0],
+      modebuf_mode_string(state->mbuf, MODE_DEL | cm->flag,
 			  state->chptr->mode.key, 0);
     else /* remove new bogus key */
-      modebuf_mode_string(state->mbuf, MODE_ADD | flag_p[0], t_str, 0);
+      modebuf_mode_string(state->mbuf, MODE_ADD | cm->flag, t_str, 0);
   } else /* send new key */
-    modebuf_mode_string(state->mbuf, state->dir | flag_p[0], t_str, 0);
+    modebuf_mode_string(state->mbuf, state->dir | cm->flag, t_str, 0);
 
   if (state->flags & MODE_PARSE_SET) {
     if (state->dir == MODE_DEL) /* remove the old key */
@@ -2603,7 +2622,7 @@ mode_parse_key(struct ParseState *state, int *flag_p)
  * Helper function to convert user passes
  */
 static void
-mode_parse_upass(struct ParseState *state, int *flag_p)
+mode_parse_upass(struct ParseState *state, const struct ChanMode *cm)
 {
   char *t_str;
 
@@ -2703,12 +2722,12 @@ mode_parse_upass(struct ParseState *state, int *flag_p)
 
   if (state->flags & MODE_PARSE_BOUNCE) {
     if (*state->chptr->mode.upass) /* reset old upass */
-      modebuf_mode_string(state->mbuf, MODE_DEL | flag_p[0],
+      modebuf_mode_string(state->mbuf, MODE_DEL | cm->flag,
 			  state->chptr->mode.upass, 0);
     else /* remove new bogus upass */
-      modebuf_mode_string(state->mbuf, MODE_ADD | flag_p[0], t_str, 0);
+      modebuf_mode_string(state->mbuf, MODE_ADD | cm->flag, t_str, 0);
   } else /* send new upass */
-    modebuf_mode_string(state->mbuf, state->dir | flag_p[0], t_str, 0);
+    modebuf_mode_string(state->mbuf, state->dir | cm->flag, t_str, 0);
 
   if (state->flags & MODE_PARSE_SET) {
     if (state->dir == MODE_DEL) /* remove the old upass */
@@ -2722,7 +2741,7 @@ mode_parse_upass(struct ParseState *state, int *flag_p)
  * Helper function to convert admin passes
  */
 static void
-mode_parse_apass(struct ParseState *state, int *flag_p)
+mode_parse_apass(struct ParseState *state, const struct ChanMode *cm)
 {
   struct Membership *memb;
   char *t_str;
@@ -2826,12 +2845,12 @@ mode_parse_apass(struct ParseState *state, int *flag_p)
 
   if (state->flags & MODE_PARSE_BOUNCE) {
     if (*state->chptr->mode.apass) /* reset old apass */
-      modebuf_mode_string(state->mbuf, MODE_DEL | flag_p[0],
+      modebuf_mode_string(state->mbuf, MODE_DEL | cm->flag,
 			  state->chptr->mode.apass, 0);
     else /* remove new bogus apass */
-      modebuf_mode_string(state->mbuf, MODE_ADD | flag_p[0], t_str, 0);
+      modebuf_mode_string(state->mbuf, MODE_ADD | cm->flag, t_str, 0);
   } else /* send new apass */
-    modebuf_mode_string(state->mbuf, state->dir | flag_p[0], t_str, 0);
+    modebuf_mode_string(state->mbuf, state->dir | cm->flag, t_str, 0);
 
   if (state->flags & MODE_PARSE_SET) {
     if (state->dir == MODE_ADD) { /* set the new apass */
@@ -2864,7 +2883,7 @@ mode_parse_apass(struct ParseState *state, int *flag_p)
         send_reply(state->sptr, RPL_APASSWARN_CLEAR);
       /* Revert everyone to MAXOPLEVEL. */
       for (memb = state->chptr->members; memb; memb = memb->next_member) {
-        if (memb->status & MODE_CHANOP)
+        if (memb->status & CHFL_CHANOP)
           SetOpLevel(memb, MAXOPLEVEL);
       }
     }
@@ -2970,7 +2989,7 @@ int apply_ban(struct Ban **banlist, struct Ban *newban, int do_free)
  * Helper function to convert bans
  */
 static void
-mode_parse_ban(struct ParseState *state, int *flag_p)
+mode_parse_ban(struct ParseState *state, const struct ChanMode *cm)
 {
   char *t_str, *s;
   struct Ban *ban, *newban;
@@ -3018,7 +3037,7 @@ mode_parse_ban(struct ParseState *state, int *flag_p)
   newban = state->banlist + (state->numbans++);
   newban->next = 0;
   newban->flags = ((state->dir == MODE_ADD) ? BAN_ADD : BAN_DEL)
-      | (*flag_p == MODE_BAN ? 0 : BAN_EXCEPTION);
+      | (cm->flag == MODE_BAN ? 0 : BAN_EXCEPTION);
   set_ban_mask(newban, collapse(pretty_mask(t_str)));
   ircd_strncpy(newban->who, IsUser(state->sptr) ? cli_name(state->sptr) : "*", NICKLEN);
   newban->when = TStime();
@@ -3126,7 +3145,7 @@ mode_process_bans(struct ParseState *state)
  * Helper function to process client changes
  */
 static void
-mode_parse_client(struct ParseState *state, int *flag_p)
+mode_parse_client(struct ParseState *state, const struct ChanMode *cm)
 {
   char *t_str;
   char *colon;
@@ -3157,7 +3176,7 @@ mode_parse_client(struct ParseState *state, int *flag_p)
     if (colon != NULL) {
       *colon++ = '\0';
       req_oplevel = atoi(colon);
-      if (*flag_p == CHFL_VOICE || state->dir == MODE_DEL) {
+      if (cm->flag == MODE_VOICE || state->dir == MODE_DEL) {
         /* Ignore the colon and its argument. */
       } else if (!(state->flags & MODE_PARSE_FORCE)
           && state->member
@@ -3188,7 +3207,7 @@ mode_parse_client(struct ParseState *state, int *flag_p)
 
   for (i = 0; i < MAXPARA; i++) /* find an element to stick them in */
     if (!state->cli_change[i].flag || (state->cli_change[i].client == acptr &&
-				       state->cli_change[i].flag & flag_p[0]))
+				       state->cli_change[i].flag & cm->flag))
       break; /* found a slot */
 
   /* The check on max_args should prevent this for local clients. */
@@ -3198,12 +3217,12 @@ mode_parse_client(struct ParseState *state, int *flag_p)
   /* If we are going to bounce this deop, mark the correct oplevel. */
   if (state->flags & MODE_PARSE_BOUNCE
       && state->dir == MODE_DEL
-      && flag_p[0] == MODE_CHANOP
+      && cm->flag == MODE_CHANOP
       && (member = find_member_link(state->chptr, acptr)))
       oplevel = OpLevel(member);
 
   /* Store what we're doing to them */
-  state->cli_change[i].flag = state->dir | flag_p[0];
+  state->cli_change[i].flag = state->dir | cm->flag;
   state->cli_change[i].oplevel = oplevel;
   state->cli_change[i].client = acptr;
 }
@@ -3232,9 +3251,9 @@ mode_process_clients(struct ParseState *state)
     }
 
     if ((state->cli_change[i].flag & MODE_ADD &&
-	 (state->cli_change[i].flag & member->status)) ||
+	 (chan_member_status(state->cli_change[i].flag) & member->status)) ||
 	(state->cli_change[i].flag & MODE_DEL &&
-	 !(state->cli_change[i].flag & member->status)))
+	 !(chan_member_status(state->cli_change[i].flag) & member->status)))
       continue; /* no change made, don't do anything */
 
     /* see if the deop is allowed */
@@ -3313,13 +3332,11 @@ mode_process_clients(struct ParseState *state)
         if (IsDelayedJoin(member) && !IsZombie(member))
           RevealDelayedJoin(member);
         ClearDelayedTarget(member);
-	member->status |= (state->cli_change[i].flag &
-			   (MODE_CHANOP | MODE_VOICE));
+	member->status |= chan_member_status(state->cli_change[i].flag);
 	if (state->cli_change[i].flag & MODE_CHANOP)
 	  ClearDeopped(member);
       } else
-	member->status &= ~(state->cli_change[i].flag &
-			    (MODE_CHANOP | MODE_VOICE));
+	member->status &= ~chan_member_status(state->cli_change[i].flag);
     }
 
     /* accumulate the change */
@@ -3333,7 +3350,7 @@ mode_process_clients(struct ParseState *state)
  * Helper function to process the simple modes
  */
 static void
-mode_parse_mode(struct ParseState *state, int *flag_p)
+mode_parse_mode(struct ParseState *state, const struct ChanMode *cm)
 {
   /* If they're not an oper, they can't change modes */
   if (state->flags & (MODE_PARSE_NOTOPER | MODE_PARSE_NOTMEMBER)) {
@@ -3344,25 +3361,28 @@ mode_parse_mode(struct ParseState *state, int *flag_p)
   if (!state->mbuf)
     return;
 
-  /* Local users are not permitted to change registration status */
-  if (flag_p[0] == MODE_REGISTERED && !(state->flags & MODE_PARSE_FORCE) &&
+  /* Some modes are a server's to set -- registration status, for one --
+   * and a local user does not get to touch them unless forced.  Which
+   * ones is an attribute of the mode now, not a name checked here.
+   */
+  if ((cm->attr & CHANMODE_SERVERONLY) && !(state->flags & MODE_PARSE_FORCE) &&
       MyUser(state->sptr))
     return;
 
   if (state->dir == MODE_ADD) {
-    state->add |= flag_p[0];
-    state->del &= ~flag_p[0];
+    state->add |= cm->flag;
+    state->del &= ~cm->flag;
 
-    if (flag_p[0] & MODE_SECRET) {
+    if (cm->flag & MODE_SECRET) {
       state->add &= ~MODE_PRIVATE;
       state->del |= MODE_PRIVATE;
-    } else if (flag_p[0] & MODE_PRIVATE) {
+    } else if (cm->flag & MODE_PRIVATE) {
       state->add &= ~MODE_SECRET;
       state->del |= MODE_SECRET;
     }
   } else {
-    state->add &= ~flag_p[0];
-    state->del |= flag_p[0];
+    state->add &= ~cm->flag;
+    state->del |= cm->flag;
   }
 
   assert(0 == (state->add & state->del));
@@ -3389,35 +3409,9 @@ mode_parse(struct ModeBuf *mbuf, struct Client *cptr, struct Client *sptr,
 	   struct Channel *chptr, int parc, char *parv[], unsigned int flags,
 	   struct Membership* member)
 {
-  static int chan_flags[] = {
-    MODE_CHANOP,	'o',
-    MODE_VOICE,		'v',
-    MODE_PRIVATE,	'p',
-    MODE_SECRET,	's',
-    MODE_MODERATED,	'm',
-    MODE_TOPICLIMIT,	't',
-    MODE_INVITEONLY,	'i',
-    MODE_NOPRIVMSGS,	'n',
-    MODE_KEY,		'k',
-    MODE_APASS,		'A',
-    MODE_UPASS,		'U',
-    MODE_REGISTERED,	'R',
-    MODE_BAN,		'b',
-    MODE_LIMIT,		'l',
-    MODE_REGONLY,	'r',
-    MODE_DELJOINS,      'D',
-    MODE_NOCOLOR,       'c',
-    MODE_NOCTCP,        'C',
-    MODE_NOPARTMSGS,    'u',
-    MODE_MODERATENOREG, 'M',
-    MODE_TLSONLY,       'Z',
-    MODE_ADD,		'+',
-    MODE_DEL,		'-',
-    0x0, 0x0
-  };
+  const struct ChanMode *cm;
   int i;
-  int *flag_p;
-  unsigned int t_mode;
+  chanmode_t t_mode;
   char *modestr;
   struct ParseState state;
 
@@ -3452,56 +3446,88 @@ mode_parse(struct ModeBuf *mbuf, struct Client *cptr, struct Client *sptr,
     state.cli_change[i].client = 0;
   }
 
+  /* Modules see the requested mode string before any of it is applied.
+   * Only for local clients: mode changes arriving from another server
+   * have already been accepted network-wide, and refusing one here would
+   * leave this server's idea of the channel out of step with everyone
+   * else's.
+   */
+  if (MyUser(sptr) && hook_is_active(HOOK_CHANNEL_PRE_MODE)) {
+    struct HookContext hc;
+
+    hook_context_init(&hc);
+    hc.hc_client = sptr;
+    hc.hc_source = cptr;
+    hc.hc_channel = chptr;
+    hc.hc_arg = parv[0];
+
+    if (hook_run(HOOK_CHANNEL_PRE_MODE, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_CHANOPRIVSNEEDED, chptr->chname);
+      return state.args_used;
+    }
+  }
+
   modestr = state.parv[state.args_used++];
   state.parc--;
 
   while (*modestr) {
     for (; *modestr; modestr++) {
-      for (flag_p = chan_flags; flag_p[0]; flag_p += 2) /* look up flag */
-	if (flag_p[1] == *modestr)
-	  break;
+      if (*modestr == '+') { /* switch direction to MODE_ADD */
+	state.dir = MODE_ADD;
+	continue;
+      }
+      if (*modestr == '-') { /* switch direction to MODE_DEL */
+	state.dir = MODE_DEL;
+	continue;
+      }
 
-      if (!flag_p[0]) { /* didn't find it?  complain and continue */
+      /* The register is the only list of modes there is, so a mode a
+       * module added is looked up exactly like one the core implements.
+       * The server carries the bit; what the mode means is the module's
+       * business, and a module that wants a say in who may set it takes
+       * HOOK_CHANNEL_PRE_MODE.
+       */
+      cm = channel_find_chan_mode(*modestr);
+
+      /* A mode the core drives by itself was never anyone's to ask for,
+       * so it is as unknown here as a letter nobody registered.
+       */
+      if (!cm || (cm->attr & CHANMODE_INTERNAL)) {
 	if (MyUser(state.sptr))
 	  send_reply(state.sptr, ERR_UNKNOWNMODE, *modestr);
 	continue;
       }
 
       switch (*modestr) {
-      case '+': /* switch direction to MODE_ADD */
-      case '-': /* switch direction to MODE_DEL */
-	state.dir = flag_p[0];
-	break;
-
       case 'l': /* deal with limits */
-	mode_parse_limit(&state, flag_p);
+	mode_parse_limit(&state, cm);
 	break;
 
       case 'k': /* deal with keys */
-	mode_parse_key(&state, flag_p);
+	mode_parse_key(&state, cm);
 	break;
 
       case 'A': /* deal with Admin passes */
         if (IsServer(cptr) || feature_bool(FEAT_OPLEVELS))
-	mode_parse_apass(&state, flag_p);
+	mode_parse_apass(&state, cm);
 	break;
 
       case 'U': /* deal with user passes */
         if (IsServer(cptr) || feature_bool(FEAT_OPLEVELS))
-	mode_parse_upass(&state, flag_p);
+	mode_parse_upass(&state, cm);
 	break;
 
       case 'b': /* deal with bans */
-	mode_parse_ban(&state, flag_p);
+	mode_parse_ban(&state, cm);
 	break;
 
       case 'o': /* deal with ops/voice */
       case 'v':
-	mode_parse_client(&state, flag_p);
+	mode_parse_client(&state, cm);
 	break;
 
       default: /* deal with other modes */
-	mode_parse_mode(&state, flag_p);
+	mode_parse_mode(&state, cm);
 	break;
       } /* switch (*modestr) */
     } /* for (; *modestr; modestr++) */

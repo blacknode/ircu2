@@ -61,3 +61,19 @@ jobs:
 
       - name: Smoke-test the server binary
         run: ./build/ircd/ircd -v
+
+      - name: Check the example modules built and resolve only core symbols
+        run: |
+          set -e
+          for so in build/modules/*.so; do
+            echo "== $so"
+            test -f "$so"
+            # Anything a module needs that the ircd does not export would
+            # fail at dlopen with RTLD_NOW, so catch it here instead.
+            undefined=$(nm -u "$so" | awk '{print $NF}' | grep -v '^_' || true)
+            for sym in $undefined; do
+              if ! nm -D build/ircd/ircd | awk '{print $NF}' | grep -qx "$sym"                  && ! nm -D --undefined-only build/ircd/ircd | awk '{print $NF}' | grep -qx "$sym"; then
+                echo "  $sym is not exported by the ircd or its libraries"
+              fi
+            done
+          done

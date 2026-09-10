@@ -1,0 +1,493 @@
+MODULE documentation, last updated on 09 Sep 2026
+
+A module is a shared object the server loads at run time.  It can add
+commands, user modes and channel modes, and attach to points in the life
+of a user or a channel, in some cases deciding whether the server carries
+on.
+
+
+READ THIS FIRST
+===============
+
+A module runs INSIDE the server process and shares its address space.
+
+  * A module that crashes takes the whole server with it.
+  * A module that corrupts memory corrupts the server's memory.
+  * A module can read anything the server can, including the TLS private
+    key and every client's IP address.
+  * A module that blocks stalls every connected client, because the server
+    is single-threaded.
+
+There is no sandbox and no way to add one without changing what a module
+is.  Load only modules you have read and trust, from people you trust.
+This is an operational decision, not a technical one, and the server
+cannot make it for you.
+
+
+WRITING A MODULE
+================
+
+A module exports exactly one symbol, a struct ModuleInfo named
+ircu_module.  Everything else the server needs, it reaches through that.
+
+  #include "config.h"
+  #include "module.h"
+
+  static int example_init(struct ModuleHandle *mod)
+  {
+    /* register commands, modes and hooks here */
+    return 0;                 /* non-zero refuses to load */
+  }
+
+  static void example_fini(struct ModuleHandle *mod)
+  {
+    /* release your own resources; the server reverts its own */
+  }
+
+  struct ModuleInfo ircu_module = {
+    IRCU_MODULE_ABI,
+    "example",                /* name, as /MODULE UNLOAD takes it */
+    "1.0.0",                  /* version */
+    "you <you@example.org>",  /* author */
+    "One line about what it does",
+    example_init,
+    example_fini,             /* may be NULL */
+    NULL                      /* mi_rehash, may be NULL */
+  };
+
+mi_init runs once after the module loads.  Returning non-zero aborts the
+load, and the server unloads the module again -- use it when the module
+cannot do its job, for instance because a command name it needs is taken.
+
+mi_fini runs once before the module unloads.  Anything registered through
+the module API is reverted by the server whether or not mi_fini does it,
+so most modules can leave it NULL.
+
+mi_rehash runs on /REHASH when the module stays loaded.  If the module's
+file changed on disk, the server unloads and reloads it instead, and
+mi_rehash is not called.
+
+
+THE ABI
+=======
+
+IRCU_MODULE_ABI is compared exactly.  A module built against a different
+value is refused with an entry in the log.
+
+There is no backwards compatibility, on purpose.  When the ABI changes,
+modules are recompiled.  A mismatched pointer layout in a shared address
+space is not a class of failure worth being lenient about, and the
+alternative -- a module quietly reading the wrong field -- is far worse
+than one that will not load.
+
+Check the ABI a module was built against with /STATS M.
+
+
+BUILDING
+========
+
+Modules live under modules/ and are built by the same CMake run as the
+server.  Dropping mymodule.c into modules/ is all it takes: modules/
+CMakeLists.txt calls ircu_add_modules(), which builds every .c file in the
+directory as a module named after the file.  The glob is re-run by the
+build, so a new file is picked up by `cmake --build build` without
+configuring again.
+
+A module built from several source files is the exception, and gets an
+explicit call:
+
+  # modules/CMakeLists.txt
+  ircu_add_modules(EXCLUDE mymodule)
+  ircu_add_module(mymodule mymodule.c mymodule_policy.c)
+
+Either way the module links nothing: the server's symbols are resolved against
+the ircd executable at load time, which works because the ircd is built
+with ENABLE_EXPORTS.  The result is modules/mymodule.so in the build tree,
+installed into the module directory -- the IRCU_MPATH build setting, which
+defaults to a "modules" subdirectory of the data directory (DPATH), so it
+follows DPATH into a chroot.  That is the same directory the server loads
+from, so an installed module needs no further configuration to be found.
+
+To check what a module needs from the core:
+
+  nm -u mymodule.so | grep -v GLIBC
+
+
+LOADING
+=======
+
+A module is always named, never pathed.  The name is the file name of the
+shared object without its directory and without the ".so" suffix; the
+server resolves it against the module directory it was built with (MOD_PATH
+in config.h, from IRCU_MPATH).  A name containing a "/" is refused, so a
+configuration file cannot reach a shared object outside that directory.
+
+From the configuration file:
+
+  Module {
+   name = "mymodule";
+  };
+
+("file" is accepted as a spelling of "name"; it takes the same bare module
+name.)
+
+On /REHASH a module still listed stays loaded; one no longer listed is
+unloaded; one whose file changed on disk is unloaded and loaded again.
+
+Or at run time, with the module_admin privilege:
+
+  /MODULE LIST
+  /MODULE LOAD mymodule
+  /MODULE UNLOAD mymodule
+  /MODULE RELOAD mymodule
+
+The nick of the operator that loads a module is recorded and shown by both
+listings.  It is a copy taken at load time, so it survives that client
+disconnecting, and it does not follow a later nick change.
+
+All four take the module's name, the same one the configuration file uses.
+That is the file name, which need not be the name the module declares in
+its ModuleInfo; /MODULE LIST prints the file name first, then the declared
+name in parentheses.
+
+Everything except LIST also requires the CONFIG_OPERCMDS feature, since it
+changes what code the server is running.
+
+If a RELOAD unloads the module but cannot load it again, the server says
+so plainly: the module is then not loaded at all.
+
+
+COMMANDS
+========
+
+  MessageHandler handlers[LAST_HANDLER_TYPE];
+
+  handlers[UNREGISTERED_HANDLER] = NULL;      /* NULL becomes m_ignore */
+  handlers[CLIENT_HANDLER]       = m_mycmd;
+  handlers[SERVER_HANDLER]       = NULL;
+  handlers[OPER_HANDLER]         = m_mycmd;
+  handlers[SERVICE_HANDLER]      = NULL;
+
+  module_add_command(mod, "MYCMD", "MYCMD", MAXPARA, MFLG_SLOW, handlers);
+
+The handler signature is the same one every command in ircd/m_*.c uses:
+
+  int m_mycmd(struct Client *cptr, struct Client *sptr,
+              int parc, char *parv[]);
+
+Note what the parameters argument means.  It is the MAXIMUM number of
+parameters to split the line into, not a minimum: anything past that many
+arrives in the last one, as though it had been introduced with a colon.
+Pass MAXPARA unless your command takes free-form trailing text.  Check
+your own minimum in the handler with need_more_params().
+
+A module cannot replace a command the core already has.  Registering a
+name or token that is taken fails, and returning non-zero from mi_init is
+the usual response.
+
+
+USER MODES
+==========
+
+A module can add a user mode -- a letter users set on themselves with
+/MODE, that the server carries in the client's flags and propagates across
+the network like any core mode.
+
+  static flag_t my_flag;
+
+  if (!module_add_user_mode(mod, 'P', &my_flag))
+    return -1;                /* the letter is taken, or none are left */
+
+The module does not choose the bit.  Two modules that both picked, say,
+bit 3 would silently be the same mode, and neither author would ever see
+it happen -- so the server hands the bits out, and a bit freed by an
+unload is handed out again.  Keep what you are given; it is not stable
+across a reload.
+
+Read and write it on a client with the same macros the core uses:
+
+  if (HasUFlag(cptr, my_flag))    /* is the mode set? */
+  SetUFlag(cptr, my_flag);        /* set it   */
+  ClrUFlag(cptr, my_flag);        /* clear it */
+
+Registering the letter is half of a mode.  The server will accept /MODE
++P, show it in /MODE and in RPL_MYINFO, and send it to the other servers,
+but it means nothing until a hook reads the flag and acts on it -- see
+modules/umode_nopm.c, which registers +P and then refuses private messages
+to a user who has it.
+
+A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
+already owns the letter, if another module took it first, or if the module
+asks twice.  There is nothing useful to do about that but refuse the load:
+a module cannot do its job under a letter its users were not told about.
+
+The mode goes away with the module.  On unload the server unregisters the
+letter and takes the mode off every user that still has it, announcing an
+ordinary "-P" to them and to the network, so nobody is left believing a
+mode nothing implements any more is still in force.  A module can also
+give a mode back while it stays loaded:
+
+  module_del_user_mode(mod, 'P');
+
+which does the same stripping.  A module can only remove its own modes --
+not the core's, and not another module's.
+
+Two things to keep in mind:
+
+  * A module mode is global.  It is propagated to the rest of the network,
+    where a server without the module loaded will not recognise the letter
+    and will answer the sender with ERR_UMODEUNKNOWNFLAG.  A mode is
+    something every server on the network runs, or something no server
+    runs; keeping the module list the same everywhere is the network
+    operator's job.
+
+  * The core's rules about who may set a mode apply to core modes only.
+    A module mode can be set and cleared by any local user, exactly as
+    asked.  A module that wants a say in that takes
+    HOOK_CLIENT_PRE_UMODE, which sees the whole requested mode string
+    before any of it is applied, and can refuse it.
+
+Modes are counted and listed by /STATS M alongside commands.
+
+
+CHANNEL MODES
+=============
+
+A module can add a channel mode too -- a letter chanops set on the channel
+with /MODE, that the server carries in the channel's modes and propagates
+across the network like any core mode.
+
+  static chanmode_t my_flag;
+
+  if (!module_add_chan_mode(mod, 'G', &my_flag))
+    return -1;               /* the letter is taken, or is not a letter */
+
+Unlike a user mode, the bit is not handed out: it follows from the letter.
+'A' to 'Z' are bits 0 to 25 and 'a' to 'z' are bits 26 to 51, which is the
+same rule the core's own modes follow.  So the mode a module registers is
+the same bit on every server that loads the module, and two servers built
+from the same sources agree on it without exchanging a word.  Keep what
+you are given anyway: reading the bit from the letter yourself is writing
+the rule down twice.
+
+Read and write it on a channel with the same macros the core uses:
+
+  if (HasCFlag(chptr, my_flag))   /* is the mode set? */
+  SetCFlag(chptr, my_flag);       /* set it   */
+  ClrCFlag(chptr, my_flag);       /* clear it */
+
+The registered modes are readable as a list:
+
+  const struct ChanMode *cm;
+
+  for (cm = channel_chan_modes(); cm; cm = cm->next)
+    ...                           /* cm->c, cm->flag, cm->attr */
+
+It is a pointer to const, and it is the server's list: a module reads it,
+and changes it only through module_add_chan_mode() and
+module_del_chan_mode().
+
+Registering the letter is half of a mode.  The server will accept /MODE
+#channel +G from a chanop, show it in /MODE and in RPL_MYINFO, advertise
+it in the CHANMODES token of RPL_ISUPPORT and send it to the other
+servers, but it means nothing until a hook reads the flag and acts on it
+-- see modules/cmode_nocaps.c, which registers +G and then refuses shouted
+messages to a channel that has it.
+
+A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
+already owns the letter, if another module took it first, or if the module
+asks twice.
+
+The mode goes away with the module.  On unload the server unregisters the
+letter and takes the mode off every channel that still has it, announcing
+an ordinary "-G" to the members and to the rest of the network, so that no
+channel is left believing it enforces a policy nothing implements any
+more.  A module can also give a mode back while it stays loaded:
+
+  module_del_chan_mode(mod, 'G');
+
+which does the same stripping.  A module can only remove its own modes.
+
+Two things to keep in mind:
+
+  * A module's channel mode is global, and unloading the module on one
+    server clears the mode everywhere.  A channel belongs to the network,
+    not to one server: leaving the letter set on servers that still have
+    the module, while this one no longer honours it, would be a channel
+    that half-enforces a rule.  Two servers are expected to run the same
+    sources, and by the same convention to load the same modules.
+
+  * A module's mode is a plain flag on the channel: it takes no argument,
+    it is set and cleared by chanops like +m or +n, and the core does not
+    ask anything else about it.  A module that wants a say in who may set
+    it takes HOOK_CHANNEL_PRE_MODE, which sees the whole requested mode
+    string before any of it is applied, and can refuse it.
+
+Channel modes are counted and listed by /STATS M alongside commands and
+user modes.
+
+
+HOOKS
+=====
+
+  module_add_hook(mod, HOOK_CLIENT_PRE_NICK, my_hook,
+                  HOOK_PRIORITY_DEFAULT, NULL);
+
+The callback:
+
+  static enum HookResult my_hook(struct HookContext *ctx, void *user);
+
+Return HOOK_CONTINUE to abstain, HOOK_ALLOW to permit and stop the chain,
+or HOOK_DENY to refuse.  HOOK_PENDING is reserved for a future
+asynchronous hook and currently behaves as HOOK_CONTINUE, with a line in
+the log.
+
+Hooks of the same type run in priority order, lowest first, with ties
+broken by load order.  The chain stops at the first hook that does not
+return HOOK_CONTINUE.
+
+A HOOK_DENY cannot be overturned by a hook further down the chain.  If it
+could, whether a veto held would depend on which module happened to load
+first.
+
+A hook may unregister itself from inside its own call.
+
+The hook points, and what each one gets:
+
+  Hook                    hc_client      hc_source   hc_channel  hc_arg
+  ----------------------  -------------  ----------  ----------  ------------
+  CLIENT_PRE_REGISTER *   the client     its link    -           nick
+  CLIENT_REGISTERED       the client     its link    -           -
+  CLIENT_PRE_NICK *       the client     its link    -           new nick
+  CLIENT_NICK_CHANGED     the client     its link    -           old nick
+  CLIENT_PRE_UMODE *      the client     its link    -           mode string
+  CLIENT_EXITING          the client     the killer  -           quit reason
+  CHANNEL_PRE_CREATE *    the client     its link    -           channel name
+  CHANNEL_PRE_JOIN *      the client     its link    the channel channel name
+                                                     (NULL if new)
+  CHANNEL_JOINED          the client     -           the channel channel name
+  CHANNEL_PARTED          the client     -           the channel channel name
+  MESSAGE_PRE_CHANNEL *+  the sender     the sender  the channel message text
+  MESSAGE_PRE_PRIVATE *+  the recipient  the sender  -           message text
+  SERVER_LINKED           the server     -           -           server name
+
+  * can veto        + can rewrite
+
+Hooks marked as vetoing run before the server acts, so refusing leaves
+nothing to undo.  The rest are notifications: their return value is
+ignored.
+
+Some hook points listed in enum HookType are declared but not yet wired
+into the core -- CHANNEL_PRE_PART, CHANNEL_PRE_MODE, CHANNEL_PRE_TOPIC,
+CHANNEL_DESTROYED and SERVER_SPLIT.  Registering for one of them succeeds
+and simply never fires.
+
+
+VETO HOOKS ONLY SEE LOCAL CLIENTS
+=================================
+
+This is the most important thing to understand about hooks, so it gets its
+own section.
+
+Every veto hook runs only on the path taken by clients connected to THIS
+server.  A nick change, join or message arriving from another server has
+already been accepted by the rest of the network; refusing it here would
+leave this server disagreeing with everyone else about what a user is
+called or which channel they are in, which is a desynchronisation that
+does not heal by itself.
+
+So:
+
+  * A veto binds the server that ran it, not the network.
+  * A user on another server can do what your module forbids, and your
+    server will see it happen.
+  * If you want a rule to apply network-wide, every server needs the
+    module, or the rule belongs somewhere else -- a G-line, a channel
+    mode, or a service.
+
+Notification hooks do not have this restriction; some fire for remote
+clients too, because a notification cannot desynchronise anything.
+
+
+REFUSING, AND SAYING WHY
+========================
+
+  ctx->hc_numeric = ERR_CANNOTSENDTOCHAN;    /* optional */
+  ircd_strncpy(ctx->hc_reason, "Because I said so",
+               sizeof(ctx->hc_reason) - 1);   /* optional */
+  return HOOK_DENY;
+
+Both fields are optional.  Leaving hc_numeric at zero lets the server pick
+one that suits the hook point, and leaving hc_reason empty produces a
+generic message.
+
+
+REWRITING A MESSAGE
+===================
+
+Only MESSAGE_PRE_CHANNEL and MESSAGE_PRE_PRIVATE can rewrite.
+
+  if (ctx->hc_rewrite && ctx->hc_rewrite_len > 0) {
+    /* write into the server's buffer, never assign your own pointer */
+    ircd_strncpy(ctx->hc_rewrite, new_text, ctx->hc_rewrite_len - 1);
+    ctx->hc_rewrite[ctx->hc_rewrite_len - 1] = '\0';
+    ctx->hc_rewritten = 1;
+  }
+
+The server owns the buffer and tells you how big it is.  Assigning your
+own pointer to hc_rewrite would leave the server reading memory your
+module may have freed, or that goes away entirely when the module unloads.
+
+Rewriting is not a veto: return HOOK_CONTINUE so the rest of the chain
+still runs.
+
+
+WHAT A MODULE MUST NOT DO
+=========================
+
+  * Block.  The server is single-threaded and hooks run in the middle of
+    handling a client's command.  A hook that waits on a network round
+    trip or a slow disk stalls every other client.  There is no
+    asynchronous hook yet; see HOOK_PENDING.
+
+  * Unload itself.  Unloading from inside a module callback would free the
+    code that is executing.  The server refuses and logs it.
+
+  * Keep a pointer into the core across an unload, or hand the core a
+    pointer into itself that outlives the module.
+
+  * Assume another module is loaded, or assume a load order beyond hook
+    priorities.
+
+
+THE EXAMPLES
+============
+
+  modules/example_cmd.c    adds a command; the minimal reference
+  modules/trace_events.c   logs every notification hook; noisy, for
+                           debugging a hook point
+  modules/nickpolicy.c     refuses nicknames; a worked veto
+  modules/nocaps.c         refuses shouted channel messages and lowercases
+                           shouted private ones; a veto and a rewrite
+  modules/umode_nopm.c     adds user mode +P and gives it a meaning; the
+                           reference for registering a user mode
+  modules/cmode_nocaps.c   adds channel mode +G and gives it a meaning; the
+                           reference for registering a channel mode, and
+                           nocaps.c's rule made asked-for instead of
+                           always-on
+
+
+DIAGNOSTICS
+===========
+
+  /MODULE LIST     module name, declared name, version, ABI, path,
+                   description and who loaded it (the operator's nick, or
+                   the configuration file)
+  /STATS M         loaded modules, how many commands, user modes and
+                   channel modes each registered (with the mode letters
+                   for both), who loaded each one,
+                   and for each hook point in use how many hooks are
+                   attached and how many times it has fired
+
+The hook call counts are the quickest way to tell a hook that is not
+firing from one that is firing and abstaining.

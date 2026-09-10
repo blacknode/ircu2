@@ -163,7 +163,7 @@ int m_sasl(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if (!CapHas(cli_active(cptr), CAP_SASL))
     return 0;
 
-  if (HasFlag(sptr, FLAG_SASL) || HasFlag(sptr, FLAG_ACCOUNT))
+  if (HasFlag(sptr, FLAG_SASL) || IsAccount(sptr))
     return send_reply(cptr, ERR_SASLALREADY);
 
   acptr = find_match_server((char*)netconf_str(NETCONF_SASL_SERVER));

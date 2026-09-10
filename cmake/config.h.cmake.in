@@ -68,6 +68,9 @@
 /* Path to executable for restarts */
 #define SPATH "@SPATH@"
 
+/* Directory modules are loaded from; the server appends "<name>.so" */
+#define MOD_PATH "@MOD_PATH@"
+
 /* Domain name to be used for some statistics gathering */
 #define DOMAINNAME "@DOMAINNAME@"
 

@@ -20,10 +20,11 @@
 #   --with-owner=owner            -> -DIRCU_OWNER=user
 #   --with-group=group            -> -DIRCU_GROUP=group
 #   --with-domain=domain          -> -DIRCU_DOMAIN=example.com
-#   --with-chroot=dir             -> -DIRCU_CHROOT=/chroot
+#   --with-chroot=dir             -> -DIRCU_CHROOT=/chroot  (none by default)
 #   --with-dpath=dir              -> -DIRCU_DPATH=dir
 #   --with-cpath=file             -> -DIRCU_CPATH=ircd.conf
 #   --with-lpath=file             -> -DIRCU_LPATH=ircd.log
+#   (module directory)            -> -DIRCU_MPATH=dir
 #   (spath)                       -> -DIRCU_SPATH=/path/to/ircd
 #   --with-maxcon=n               -> -DIRCU_MAXCON=16384
 #   --with-tls=library            -> -DIRCU_TLS=auto|none|openssl|gnutls|libtls
@@ -206,9 +207,14 @@ if(NOT DEFINED CACHE{IRCU_DOMAIN} OR NOT IRCU_DOMAIN)
     "Domain name used in local statistics gathering")
 endif()
 
+# A missing domain only degrades the local statistics gathering, so fall back
+# to a placeholder and say so rather than refusing to configure.
 if(NOT IRCU_DOMAIN)
-  message(FATAL_ERROR
-    "Unable to determine the server DNS domain; pass -DIRCU_DOMAIN=<domain>")
+  set(IRCU_DOMAIN "localhost.domain" CACHE STRING
+    "Domain name used in local statistics gathering" FORCE)
+  message(WARNING
+    "Unable to determine the server DNS domain; defaulting to "
+    "\"${IRCU_DOMAIN}\".  Pass -DIRCU_DOMAIN=<domain> to set it yourself.")
 endif()
 
 set(DOMAINNAME "*${IRCU_DOMAIN}")

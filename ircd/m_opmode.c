@@ -102,7 +102,7 @@
 
 static void make_oper(struct Client *sptr, struct Client *dptr)
 {
-  struct Flags old_mode = cli_flags(dptr);
+  flag_t old_mode = cli_uflags(dptr);
 
   ++UserStats.opers;
   SetOper(dptr);
@@ -119,7 +119,7 @@ static void make_oper(struct Client *sptr, struct Client *dptr)
     cli_max_flood(dptr) = 0;
     client_set_privs(dptr, NULL, 1);
 
-    send_umode_out(dptr, dptr, &old_mode, HasPriv(dptr, PRIV_PROPAGATE));
+    send_umode_out(dptr, dptr, old_mode, HasPriv(dptr, PRIV_PROPAGATE));
     send_reply(dptr, RPL_YOUREOPER);
 
     sendto_opmask_butone(0, SNO_OLDSNO, "%s (%s@%s) is now operator (%c)",
@@ -133,7 +133,7 @@ static void make_oper(struct Client *sptr, struct Client *dptr)
 
 static void de_oper(struct Client *dptr)
 {
-  struct Flags old_mode = cli_flags(dptr);
+  flag_t old_mode = cli_uflags(dptr);
 
   --UserStats.opers;
   ClearOper(dptr);
@@ -155,7 +155,7 @@ static void de_oper(struct Client *dptr)
     client_set_privs(dptr, NULL, 0);
     /* prop must be 1 so send_umode_out includes FLAG_OPER; after de_oper,
      * HasPriv(PRIV_PROPAGATE) is false but SEND_UMODES_BUT_OPER would drop -o. */
-    send_umode_out(dptr, dptr, &old_mode, 1);
+    send_umode_out(dptr, dptr, old_mode, 1);
   }
 }
 
@@ -216,9 +216,9 @@ int ms_opmode(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     else if (!strcmp(parv[2], "-o") && IsOper(dptr))
       de_oper(dptr);
     else if (!strcmp(parv[2], "+x") && IsAccount(dptr) && !HasHiddenHost(dptr)) {
-      struct Flags old_mode = cli_flags(dptr);
+      flag_t old_mode = cli_uflags(dptr);
       hide_hostmask(dptr, FLAG_HIDDENHOST);
-      send_umode_out(dptr, dptr, &old_mode, HasPriv(dptr, PRIV_PROPAGATE));
+      send_umode_out(dptr, dptr, old_mode, HasPriv(dptr, PRIV_PROPAGATE));
     }
 
     return 0;

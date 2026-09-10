@@ -49,6 +49,7 @@
 #include "channel.h"
 #include "client.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_chattr.h"
 #include "ircd_features.h"
@@ -132,6 +133,35 @@ void relay_channel_message(struct Client* sptr, const char* name, const char* te
 
   if (sline_check_chanmsg(sptr, chptr, text, MSG_PRIVATE)) {
     return;
+  }
+
+  /* Last stop before delivery, so every other check has already had its
+   * say and a module sees the text as it would actually be sent.  A hook
+   * may rewrite it into the buffer the server provides; it must not hand
+   * back a pointer of its own.
+   */
+  if (hook_is_active(HOOK_MESSAGE_PRE_CHANNEL)) {
+    struct HookContext hc;
+    char rewrite[BUFSIZE];
+
+    hook_context_init(&hc);
+    hc.hc_client = sptr;
+    hc.hc_source = sptr;
+    hc.hc_channel = chptr;
+    hc.hc_arg = text;
+    hc.hc_rewrite = rewrite;
+    hc.hc_rewrite_len = sizeof(rewrite);
+    rewrite[0] = '\0';
+
+    if (hook_run(HOOK_MESSAGE_PRE_CHANNEL, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_CANNOTSENDTOCHAN, chptr->chname);
+      return;
+    }
+
+    if (hc.hc_rewritten) {
+      rewrite[sizeof(rewrite) - 1] = '\0';
+      text = rewrite;
+    }
   }
 
   RevealDelayedJoinIfNeeded(sptr, chptr);
@@ -519,6 +549,29 @@ void relay_private_message(struct Client* sptr, const char* name, const char* te
    */
   if (MyUser(acptr))
     add_target(acptr, sptr);
+
+  if (hook_is_active(HOOK_MESSAGE_PRE_PRIVATE)) {
+    struct HookContext hc;
+    char rewrite[BUFSIZE];
+
+    hook_context_init(&hc);
+    hc.hc_client = acptr;      /* who it is going to */
+    hc.hc_source = sptr;       /* who sent it */
+    hc.hc_arg = text;
+    hc.hc_rewrite = rewrite;
+    hc.hc_rewrite_len = sizeof(rewrite);
+    rewrite[0] = '\0';
+
+    if (hook_run(HOOK_MESSAGE_PRE_PRIVATE, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_CANNOTSENDTOCHAN, cli_name(acptr));
+      return;
+    }
+
+    if (hc.hc_rewritten) {
+      rewrite[sizeof(rewrite) - 1] = '\0';
+      text = rewrite;
+    }
+  }
 
   sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
 

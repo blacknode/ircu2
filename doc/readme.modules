@@ -1,8 +1,8 @@
-MODULE documentation, last updated on 08 Sep 2026
+MODULE documentation, last updated on 09 Sep 2026
 
 A module is a shared object the server loads at run time.  It can add
-commands and attach to points in the life of a user or a channel, in some
-cases deciding whether the server carries on.
+commands and user modes, and attach to points in the life of a user or a
+channel, in some cases deciding whether the server carries on.
 
 
 READ THIS FIRST
@@ -34,7 +34,7 @@ ircu_module.  Everything else the server needs, it reaches through that.
 
   static int example_init(struct ModuleHandle *mod)
   {
-    /* register commands and hooks here */
+    /* register commands, user modes and hooks here */
     return 0;                 /* non-zero refuses to load */
   }
 
@@ -185,6 +185,70 @@ name or token that is taken fails, and returning non-zero from mi_init is
 the usual response.
 
 
+USER MODES
+==========
+
+A module can add a user mode -- a letter users set on themselves with
+/MODE, that the server carries in the client's flags and propagates across
+the network like any core mode.
+
+  static flag_t my_flag;
+
+  if (!module_add_user_mode(mod, 'P', &my_flag))
+    return -1;                /* the letter is taken, or none are left */
+
+The module does not choose the bit.  Two modules that both picked, say,
+bit 3 would silently be the same mode, and neither author would ever see
+it happen -- so the server hands the bits out, and a bit freed by an
+unload is handed out again.  Keep what you are given; it is not stable
+across a reload.
+
+Read and write it on a client with the same macros the core uses:
+
+  if (HasUFlag(cptr, my_flag))    /* is the mode set? */
+  SetUFlag(cptr, my_flag);        /* set it   */
+  ClrUFlag(cptr, my_flag);        /* clear it */
+
+Registering the letter is half of a mode.  The server will accept /MODE
++P, show it in /MODE and in RPL_MYINFO, and send it to the other servers,
+but it means nothing until a hook reads the flag and acts on it -- see
+modules/umode_nopm.c, which registers +P and then refuses private messages
+to a user who has it.
+
+A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
+already owns the letter, if another module took it first, or if the module
+asks twice.  There is nothing useful to do about that but refuse the load:
+a module cannot do its job under a letter its users were not told about.
+
+The mode goes away with the module.  On unload the server unregisters the
+letter and takes the mode off every user that still has it, announcing an
+ordinary "-P" to them and to the network, so nobody is left believing a
+mode nothing implements any more is still in force.  A module can also
+give a mode back while it stays loaded:
+
+  module_del_user_mode(mod, 'P');
+
+which does the same stripping.  A module can only remove its own modes --
+not the core's, and not another module's.
+
+Two things to keep in mind:
+
+  * A module mode is global.  It is propagated to the rest of the network,
+    where a server without the module loaded will not recognise the letter
+    and will answer the sender with ERR_UMODEUNKNOWNFLAG.  A mode is
+    something every server on the network runs, or something no server
+    runs; keeping the module list the same everywhere is the network
+    operator's job.
+
+  * The core's rules about who may set a mode apply to core modes only.
+    A module mode can be set and cleared by any local user, exactly as
+    asked.  A module that wants a say in that takes
+    HOOK_CLIENT_PRE_UMODE, which sees the whole requested mode string
+    before any of it is applied, and can refuse it.
+
+Modes are counted and listed by /STATS M alongside commands.
+
+
 HOOKS
 =====
 
@@ -327,6 +391,8 @@ THE EXAMPLES
   modules/nickpolicy.c     refuses nicknames; a worked veto
   modules/nocaps.c         refuses shouted channel messages and lowercases
                            shouted private ones; a veto and a rewrite
+  modules/umode_nopm.c     adds user mode +P and gives it a meaning; the
+                           reference for registering a mode
 
 
 DIAGNOSTICS
@@ -335,10 +401,10 @@ DIAGNOSTICS
   /MODULE LIST     module name, declared name, version, ABI, path,
                    description and who loaded it (the operator's nick, or
                    the configuration file)
-  /STATS M         loaded modules, how many commands each registered, who
-                   loaded each one, and
-                   for each hook point in use how many hooks are attached
-                   and how many times it has fired
+  /STATS M         loaded modules, how many commands and user modes each
+                   registered (with the mode letters), who loaded each one,
+                   and for each hook point in use how many hooks are
+                   attached and how many times it has fired
 
 The hook call counts are the quickest way to tell a hook that is not
 firing from one that is firing and abstaining.

@@ -118,8 +118,11 @@ typedef unsigned long flagpage_t;
 /** Clear a flag in a flagset. */
 #define FlagClr(set,flag) ((set)->bits[FLAGSET_INDEX(flag)] &= ~FLAGSET_MASK(flag))
 
-/** String containing valid user modes, in no particular order. */
-#define infousermodes "diOoswkgxczIR"
+/** Size of the buffer client_user_mode_chars() renders into.
+ * A mode is one letter, so the list cannot outgrow the alphabet twice
+ * over; the slack is for the terminator and for comfort.
+ */
+#define USERMODE_CHARS_LEN 64
 
 /** Operator privileges. */
 enum Priv
@@ -923,6 +926,9 @@ extern void client_init_user_modes(void);
 extern int client_check_user_mode(char c, flag_t flag);
 extern int client_append_user_mode(char c, flag_t flag);
 extern int client_remove_user_mode(char c);
+extern const struct UserMode *client_find_user_mode(char c);
+extern flag_t client_alloc_user_mode_flag(void);
+extern const char *client_user_mode_chars(void);
 
 /** Test whether \a c is usable as a user mode character.
  * Only plain A-Z and a-z are valid: IsAlpha() would also accept the

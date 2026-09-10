@@ -401,8 +401,9 @@ int register_user(struct Client *cptr, struct Client *sptr)
      */
     send_reply(sptr, RPL_YOURHOST, cli_name(&me), version);
     send_reply(sptr, RPL_CREATED, creation);
-    send_reply(sptr, RPL_MYINFO, cli_name(&me), version, infousermodes,
-               infochanmodes, infochanmodeswithparams);
+    send_reply(sptr, RPL_MYINFO, cli_name(&me), version,
+               client_user_mode_chars(), infochanmodes,
+               infochanmodeswithparams);
     send_supported(sptr);
     m_lusers(sptr, sptr, 1, parv);
     update_load();
@@ -1204,7 +1205,21 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
           ClearCommonChans(sptr);
         break;
       default:
-        send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
+        {
+          /* Anything the core does not know about may still be a mode a
+           * module registered.  The server only carries the bit; what it
+           * means is the module's business, and a module that wants a say
+           * in who may set it takes HOOK_CLIENT_PRE_UMODE.
+           */
+          const struct UserMode *mode = client_find_user_mode(*m);
+
+          if (!mode)
+            send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
+          else if (what == MODE_ADD)
+            SetUFlag(sptr, mode->flag);
+          else
+            ClrUFlag(sptr, mode->flag);
+        }
         break;
       }
     }

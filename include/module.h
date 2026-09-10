@@ -38,6 +38,9 @@
 #ifndef INCLUDED_hooks_h
 #include "hooks.h"
 #endif
+#ifndef INCLUDED_client_h
+#include "client.h"     /* flag_t, HasUFlag() */
+#endif
 
 struct Client;
 struct ModuleHandle;
@@ -49,7 +52,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 1
+#define IRCU_MODULE_ABI 2
 
 /** Description of a module, exported by the shared object.
  *
@@ -130,6 +133,47 @@ extern int module_del_command(struct ModuleHandle* mod, const char* cmd);
 
 /** Number of commands a module currently has registered. */
 extern unsigned int module_command_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering user modes.
+ *
+ * A module asks for a mode letter and gets a bit back; it does not choose
+ * the bit, because two modules that both chose the same one would share a
+ * flag without either author noticing.  Test the bit on a client with
+ * HasUFlag(), set it with SetUFlag(), clear it with ClrUFlag().
+ *
+ * Like commands and hooks, a mode is reverted when the module unloads:
+ * every user still carrying it is stripped of it, and the change is
+ * announced as an ordinary "-<mode>" so neither they nor the rest of the
+ * network are left believing it is still set.
+ */
+
+/** Register a user mode.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter, A-Z or a-z.
+ * @param[out] flag Receives the bit the server assigned, or zero on
+ *   failure.  May be NULL, though a module that never tests its own mode
+ *   has little use for it.
+ * @return Non-zero on success; zero if the letter is not a letter, if it
+ *   is already taken by the core or by another module, or if the server
+ *   has no free bit left.
+ */
+extern int module_add_user_mode(struct ModuleHandle* mod, char mode,
+                                flag_t* flag);
+
+/** Remove a user mode this module registered.
+ *
+ * Every user that has the mode set loses it, the same way an unload would
+ * do it.  A module cannot remove a core mode, nor one another module
+ * registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter to remove.
+ * @return Non-zero if the mode was found and removed.
+ */
+extern int module_del_user_mode(struct ModuleHandle* mod, char mode);
+
+/** Number of user modes a module currently has registered. */
+extern unsigned int module_user_mode_count(const struct ModuleHandle* mod);
 
 /*
  * Registering hooks.  See hooks.h for the hook points and what each one

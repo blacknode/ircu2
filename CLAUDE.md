@@ -80,6 +80,11 @@ same command behaves differently by source. Command implementations are the
 `ircd/m_*.c` files, one per command; `ircd/m_tmpl.c` is the template. Commands can
 also be registered at runtime via `parse_add_command()`.
 
+**User modes.** Bits of a `flag_t` mask in `cli_uflags()` (`include/user_flags.h`),
+registered in a run-time list in `ircd/client.c` (`client_user_modes()` and friends)
+so modules can add their own; test them with the named `Is*`/`Send*` macros in
+`include/client.h`, and a saved pre-change snapshot with the matching `Was*` ones.
+
 **Core state.** `include/client.h` (`struct Client`, with `Connection`/`User`/`Server`
 sub-structs), `ircd/channel.c` (the largest file: channels, modes, bans, ops),
 `ircd/hash.c`, `ircd/whowas.c`, `ircd/numnicks.c` (P10 numeric nick encoding).
@@ -96,7 +101,10 @@ behind `include/ircd_tls.h`.
 **Modules** (see `doc/readme.modules`, `include/module.h`, `ircd/module.c`). A module
 is a `.so` exporting exactly one symbol, `struct ModuleInfo ircu_module`, whose
 first field is `IRCU_MODULE_ABI` — compared exactly, with no backward compatibility;
-the ABI changes mean recompiling modules. Modules run in-process with no sandbox.
+the ABI changes mean recompiling modules.  A module registers commands
+(`module_add_command()`), hooks (`module_add_hook()`) and user modes
+(`module_add_user_mode()`, which returns a server-assigned bit); everything it
+registers is reverted on unload. Modules run in-process with no sandbox.
 They are built by the same CMake run via `ircu_add_module()` (`cmake/IrcuModules.cmake`)
 and link against nothing: symbols resolve against the ircd executable, which is
 built with `ENABLE_EXPORTS`. Examples in `modules/`. A module is identified by

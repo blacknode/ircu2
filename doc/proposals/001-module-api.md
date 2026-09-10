@@ -112,7 +112,7 @@ superficie de ABI pequeña y auditable.
 ```c
 /* include/module.h */
 
-#define IRCU_MODULE_ABI 1
+#define IRCU_MODULE_ABI 2   /* 1 en la propuesta original; 2 desde 3.3.1 */
 
 struct ModuleInfo {
   unsigned int  mi_abi;        /* IRCU_MODULE_ABI con el que se compiló */
@@ -162,6 +162,56 @@ para revertirlos en `mi_fini` aunque el módulo se olvide de hacerlo.
 comprobación con `msg_tree_parse()`, como ya hace `register_mapping()`. Los módulos
 no pueden sustituir comandos del core. Sobrescribir `PRIVMSG` desde un `.so` es
 exactamente el tipo de cosa que convierte un servidor en algo indepurable.
+
+### 3.3.1 Registro de modos de usuario — extensión (ABI 2)
+
+Un módulo puede añadir un modo de usuario. Es la misma forma que el registro de
+comandos: se pide contra el `ModuleHandle`, el core lo apunta y lo revierte al
+descargar.
+
+```c
+/* El módulo pide la letra; el servidor devuelve el bit. */
+int module_add_user_mode(struct ModuleHandle *mod, char mode, flag_t *flag);
+int module_del_user_mode(struct ModuleHandle *mod, char mode);
+unsigned int module_user_mode_count(const struct ModuleHandle *mod);
+```
+
+**El módulo no elige el bit.** Dos módulos que eligieran el mismo serían en
+silencio el mismo modo, y ninguno de los dos autores lo vería. Por eso los bits
+los reparte `client_alloc_user_mode_flag()`, que devuelve el primero que ninguna
+entrada del registro esté usando; un bit liberado por una descarga se vuelve a
+repartir. El módulo guarda el bit que le den y lo prueba con `HasUFlag()`.
+
+Esto obligó a un cambio previo en el core: los modos de usuario pasaron de ser
+posiciones de un `enum Flag` a bits de una máscara (`flag_t`, ver
+`include/user_flags.h`) y de una tabla estática a una lista enlazada
+(`client_user_modes()` en `ircd/client.c`). El registro estático no admitía altas
+en tiempo de ejecución, y la comparación por orden (`flag >= FLAG_GLOBAL_UMODES`)
+no tiene sentido con máscaras: ahora los modos locales se enumeran y el resto es
+global por exclusión, de forma que un modo de módulo es global sin tener que
+tocar el core.
+
+**Reglas de colisión.** `module_add_user_mode()` falla si la letra ya es del core
+o de otro módulo, si no es `A-Z`/`a-z`, o si no queda ningún bit libre.
+`module_del_user_mode()` sólo encuentra los modos del propio módulo: no se puede
+quitar un modo del core ni el de otro módulo.
+
+**Reversión.** Al descargar, el core desregistra la letra y además la quita de
+todos los usuarios que la tuvieran puesta, anunciando un `-<letra>` normal. Sin
+eso quedarían usuarios y servidores creyendo que tienen puesto un modo que ya no
+implementa nadie, y el bit no podría reutilizarse.
+
+**Alcance.** Un modo de módulo es global: se propaga por la red, y un servidor
+sin el módulo cargado responderá `ERR_UMODEUNKNOWNFLAG`. Mantener la misma lista
+de módulos en todos los nodos es responsabilidad del operador de la red, igual
+que con cualquier extensión de protocolo. Las reglas del core sobre quién puede
+ponerse un modo (el bloque de `set_user_mode()` que revierte `+o`, `+k`, etc.)
+sólo se aplican a los modos del core; un módulo que quiera restringir el suyo usa
+`HOOK_CLIENT_PRE_UMODE`, que ve la cadena de modos entera antes de aplicar nada.
+
+`RPL_MYINFO` deja de anunciar una constante y pasa a construirse desde el
+registro (`client_user_mode_chars()`), para que un modo de módulo aparezca ahí
+también.
 
 ### 3.4 Hooks: el catálogo
 

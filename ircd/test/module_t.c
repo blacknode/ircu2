@@ -12,6 +12,7 @@
  */
 
 #include "module.h"
+#include "client.h"
 #include "ircd_log.h"
 
 #include <assert.h>
@@ -23,6 +24,12 @@
  * resolved a symbol out of this binary's dynamic symbol table.
  */
 int module_test_marker;
+
+/** Written by mod_umode with the bits the server assigned it, so the test
+ * can check they are real and distinct without knowing which ones they are.
+ */
+flag_t mod_umode_flag_one;
+flag_t mod_umode_flag_two;
 
 /* Defined by module_stub.c. */
 extern int stub_commands_live;
@@ -314,9 +321,144 @@ static void test_command_cycles(void)
   printf("Passed: 50 cycles of a command-registering module\n");
 }
 
+/* --- user modes ------------------------------------------------------- */
+
+
+/** Number of modes currently registered with the core. */
+static unsigned int core_mode_count(void)
+{
+  const struct UserMode* um;
+  unsigned int n = 0;
+
+  for (um = client_user_modes(); um; um = um->next)
+    n++;
+
+  return n;
+}
+
+/** Find a registered mode by letter. */
+static const struct UserMode* core_mode_find(char c)
+{
+  return client_find_user_mode(c);
+}
+
+/** A module's user modes reach the core registry and are reverted on
+ * unload, whether or not the module removed them itself.
+ */
+static void test_user_mode_registration(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = core_mode_count();
+
+  mod = module_load("mod_umode", 0, 0);
+  assert(mod != 0);
+
+  assert(module_user_mode_count(mod) == 2);
+  assert(core_mode_count() == before + 2);
+
+  /* The server assigned the bits; the module did not choose them, and no
+   * two modes share one.
+   */
+  assert(mod_umode_flag_one != 0);
+  assert(mod_umode_flag_two != 0);
+  assert(mod_umode_flag_one != mod_umode_flag_two);
+  assert((mod_umode_flag_one & mod_umode_flag_two) == 0);
+  assert((mod_umode_flag_one & FLAG_OPER) == 0 && "a core bit was reused");
+
+  assert(core_mode_find('Y') != 0);
+  assert(core_mode_find('Y')->flag == mod_umode_flag_one);
+  assert(core_mode_find('Z')->flag == mod_umode_flag_two);
+
+  assert(module_unload(mod) != 0);
+
+  assert(core_mode_count() == before);
+  assert(core_mode_find('Y') == 0);
+  assert(core_mode_find('Z') == 0);
+
+  printf("Passed: module user modes are reverted on unload\n");
+}
+
+/** A module can remove its own mode, and cannot remove anyone else's. */
+static void test_user_mode_explicit_removal(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = core_mode_count();
+
+  mod = module_load("mod_umode", 0, 0);
+  assert(mod != 0);
+  assert(module_user_mode_count(mod) == 2);
+
+  assert(module_del_user_mode(mod, 'Y') != 0);
+  assert(module_user_mode_count(mod) == 1);
+  assert(core_mode_find('Y') == 0);
+
+  /* Removing it again finds nothing, and neither does reaching for a mode
+   * the core owns.
+   */
+  assert(module_del_user_mode(mod, 'Y') == 0);
+  assert(module_del_user_mode(mod, 'o') == 0);
+  assert(core_mode_find('o') != 0 && "a core mode survived the attempt");
+
+  assert(module_unload(mod) != 0);
+  assert(core_mode_count() == before);
+
+  printf("Passed: explicit user mode removal\n");
+}
+
+/** Repeated load/unload neither leaks mode slots nor runs out of bits. */
+static void test_user_mode_cycles(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = core_mode_count();
+  flag_t first_run;
+  int i;
+
+  mod = module_load("mod_umode", 0, 0);
+  assert(mod != 0);
+  first_run = mod_umode_flag_one;
+  assert(module_unload(mod) != 0);
+
+  for (i = 0; i < 50; i++) {
+    mod = module_load("mod_umode", 0, 0);
+    assert(mod != 0);
+    assert(core_mode_count() == before + 2);
+    assert(module_unload(mod) != 0);
+    assert(core_mode_count() == before);
+  }
+
+  /* A freed bit is handed out again rather than the pool draining. */
+  mod = module_load("mod_umode", 0, 0);
+  assert(mod != 0);
+  assert(mod_umode_flag_one == first_run);
+  assert(module_unload(mod) != 0);
+
+  printf("Passed: 50 cycles of a mode-registering module\n");
+}
+
+/** RPL_MYINFO advertises whatever is registered, module modes included. */
+static void test_user_mode_advertised(void)
+{
+  struct ModuleHandle* mod;
+
+  assert(strchr(client_user_mode_chars(), 'Y') == 0);
+
+  mod = module_load("mod_umode", 0, 0);
+  assert(mod != 0);
+
+  assert(strchr(client_user_mode_chars(), 'Y') != 0);
+  assert(strchr(client_user_mode_chars(), 'Z') != 0);
+  assert(strchr(client_user_mode_chars(), 'o') != 0 && "core modes are still there");
+
+  assert(module_unload(mod) != 0);
+  assert(strchr(client_user_mode_chars(), 'Y') == 0);
+
+  printf("Passed: module user modes are advertised in RPL_MYINFO\n");
+}
+
 int main(void)
 {
   module_init();
+  client_init_user_modes();
 
   test_load_good();
   test_reject_bad_abi();
@@ -332,6 +474,10 @@ int main(void)
   test_command_registration();
   test_command_explicit_removal();
   test_command_cycles();
+  test_user_mode_registration();
+  test_user_mode_explicit_removal();
+  test_user_mode_cycles();
+  test_user_mode_advertised();
 
   printf("Done.\n");
   return 0;

@@ -343,6 +343,67 @@ void client_init_user_modes(void) {
     UserModeList->count = i;
 }
 
+/** Find a registered user mode by its character.
+ * @param[in] c Mode character.
+ * @return The mode, or NULL if no mode uses that character.
+ */
+const struct UserMode *client_find_user_mode(char c) {
+  const struct UserMode *p;
+
+  for (p = UserModeList; p; p = p->next)
+    if (p->c == c)
+      return p;
+
+  return NULL;
+}
+
+/** Find a user mode bit that no registered mode is using.
+ *
+ * Modules do not pick their own bit: two modules that both picked, say,
+ * bit 3 would silently share one flag, and neither author would ever see
+ * the other's module.  The server hands out the bits instead, and a bit
+ * freed by client_remove_user_mode() is handed out again.
+ *
+ * @return A free bit, or zero when every bit is taken.
+ */
+flag_t client_alloc_user_mode_flag(void) {
+  unsigned int bit;
+
+  for (bit = 0; bit < sizeof(flag_t) * 8; bit++) {
+    flag_t flag = BITSET << bit;
+    const struct UserMode *p;
+
+    for (p = UserModeList; p; p = p->next)
+      if (p->flag & flag)
+        break;
+
+    if (!p)
+      return flag;
+  }
+
+  return 0;
+}
+
+/** Build the list of registered user mode characters.
+ *
+ * RPL_MYINFO advertises the modes this server understands, which is not a
+ * constant any more: a module that registers a mode has to appear there
+ * too, or clients are told the mode does not exist.
+ *
+ * @return Pointer to a static buffer, valid until the next call.
+ */
+const char *client_user_mode_chars(void) {
+  static char buf[USERMODE_CHARS_LEN];
+  const struct UserMode *p;
+  size_t len = 0;
+
+  for (p = UserModeList; p && len + 1 < sizeof(buf); p = p->next)
+    buf[len++] = p->c;
+  buf[len] = '\0';
+
+  return buf;
+}
+
 /** Check whether a user mode can still be registered.
  * @param[in] c Mode character.
  * @param[in] flag Mode flag bit.

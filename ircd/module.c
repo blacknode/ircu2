@@ -20,6 +20,7 @@
  */
 #include "config.h"
 
+#include "client.h"
 #include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
@@ -56,6 +57,13 @@ struct ModuleCommand {
   struct Message *mc_msg;        /**< Message installed in the tries. */
 };
 
+/** A user mode registered by a module. */
+struct ModuleUserMode {
+  struct ModuleUserMode *mu_next; /**< Next mode from the same module. */
+  char mu_char;                   /**< Mode letter. */
+  flag_t mu_flag;                 /**< Bit the server assigned to it. */
+};
+
 /** A module the server has loaded. */
 struct ModuleHandle {
   struct ModuleHandle *mh_next;  /**< Next module in #ModuleManager->mod_list. */
@@ -66,6 +74,7 @@ struct ModuleHandle {
   time_t mh_mtime;               /**< Modification time when loaded. */
   int mh_marked;                 /**< Seen in the running configuration. */
   struct ModuleCommand *mh_cmds; /**< Commands this module registered. */
+  struct ModuleUserMode *mh_umodes; /**< User modes this module registered. */
   char *mh_loaded_by;            /**< Nick that loaded it, or NULL for the
                                       configuration file.  A copy: the client
                                       may be long gone by the time anyone
@@ -320,6 +329,137 @@ static void module_drop_commands(struct ModuleHandle *mod) {
   mod->mh_cmds = 0;
 }
 
+/** Register a user mode on behalf of a module.
+ * @param[in] mod Module registering the mode.
+ * @param[in] mode Mode letter.
+ * @param[out] flag Receives the bit assigned, or zero on failure.
+ * @return Non-zero on success.
+ */
+int module_add_user_mode(struct ModuleHandle *mod, char mode, flag_t *flag) {
+  struct ModuleUserMode *mu;
+  flag_t bit;
+  int res;
+
+  assert(0 != mod);
+
+  if (flag)
+    *flag = 0;
+
+  /* Allocating is only a scan for a free bit; nothing is consumed until
+   * client_append_user_mode() accepts the letter as well.
+   */
+  bit = client_alloc_user_mode_flag();
+  if (!bit) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s could not register user mode %c: no free mode bit",
+              mod->mh_info->mi_name, mode);
+    return 0;
+  }
+
+  res = client_append_user_mode(mode, bit);
+  if (UMODE_APPEND_OK != res) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s could not register user mode %c: %s",
+              mod->mh_info->mi_name, mode,
+              UMODE_INVALID_MODE == res ? "not a mode letter"
+                                        : "already in use");
+    return 0;
+  }
+
+  mu = (struct ModuleUserMode *)MyCalloc(1, sizeof(struct ModuleUserMode));
+  mu->mu_char = mode;
+  mu->mu_flag = bit;
+  mu->mu_next = mod->mh_umodes;
+  mod->mh_umodes = mu;
+
+  if (flag)
+    *flag = bit;
+
+  return 1;
+}
+
+/** Remove a user mode a module registered.
+ * @param[in] mod Module that owns the mode.
+ * @param[in] mode Mode letter to remove.
+ * @return Non-zero if the mode was found and removed.
+ */
+int module_del_user_mode(struct ModuleHandle *mod, char mode) {
+  struct ModuleUserMode **mu_p;
+  struct ModuleUserMode *mu;
+
+  assert(0 != mod);
+
+  /* Only this module's own list is searched: a module may not take a mode
+   * away from the core or from another module.
+   */
+  for (mu_p = &mod->mh_umodes; (mu = *mu_p); mu_p = &mu->mu_next) {
+    if (mu->mu_char == mode) {
+      *mu_p = mu->mu_next;
+      client_remove_user_mode(mu->mu_char);
+      MyFree(mu);
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+/** Return how many user modes a module currently has registered. */
+unsigned int module_user_mode_count(const struct ModuleHandle *mod) {
+  struct ModuleUserMode *mu;
+  unsigned int count = 0;
+
+  assert(0 != mod);
+
+  for (mu = mod->mh_umodes; mu; mu = mu->mu_next)
+    count++;
+
+  return count;
+}
+
+/** Render a module's mode letters as "(+xy)" for /STATS M.
+ * @param[in] mod Module to describe.
+ * @return Pointer to a static buffer, empty if the module has no modes.
+ */
+static const char *module_user_mode_chars(const struct ModuleHandle *mod) {
+  static char buf[USERMODE_CHARS_LEN + 4];
+  struct ModuleUserMode *mu;
+  size_t len = 0;
+
+  if (!mod->mh_umodes)
+    return "";
+
+  buf[len++] = '(';
+  buf[len++] = '+';
+  for (mu = mod->mh_umodes; mu && len + 2 < sizeof(buf); mu = mu->mu_next)
+    buf[len++] = mu->mu_char;
+  buf[len++] = ')';
+  buf[len] = '\0';
+
+  return buf;
+}
+
+/** Remove every user mode a module registered.
+ *
+ * client_remove_user_mode() strips the mode from every user that still has
+ * it and announces the change, so no one is left believing a mode nothing
+ * implements any more is still in force.
+ *
+ * @param[in] mod Module being torn down.
+ */
+static void module_drop_user_modes(struct ModuleHandle *mod) {
+  struct ModuleUserMode *mu;
+  struct ModuleUserMode *next;
+
+  for (mu = mod->mh_umodes; mu; mu = next) {
+    next = mu->mu_next;
+    client_remove_user_mode(mu->mu_char);
+    MyFree(mu);
+  }
+
+  mod->mh_umodes = 0;
+}
+
 /** Attach a hook on behalf of a module.
  * @param[in] mod Module registering the hook.
  * @param[in] type Hook point.
@@ -563,6 +703,11 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    */
   module_drop_commands(mod);
   hook_del_module(mod);
+  /* User modes last: taking a mode off a user announces a MODE change, and
+   * the module's own hooks are already detached by then, so none of its
+   * code runs on the way out.
+   */
+  module_drop_user_modes(mod);
 
   for (mod_p = &manager->mod_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {
@@ -658,10 +803,15 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
 
   for (mod = manager->mod_list; mod; mod = mod->mh_next)
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Module %s %s: %u command%s, from %s, loaded by %s",
+               ":Module %s %s: %u command%s, %u user mode%s%s%s, from %s, "
+               "loaded by %s",
                mod->mh_info->mi_name, module_version(mod),
                module_command_count(mod),
-               module_command_count(mod) == 1 ? "" : "s", mod->mh_path,
+               module_command_count(mod) == 1 ? "" : "s",
+               module_user_mode_count(mod),
+               module_user_mode_count(mod) == 1 ? "" : "s",
+               module_user_mode_count(mod) ? " " : "",
+               module_user_mode_chars(mod), mod->mh_path,
                mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
 
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%u module%s loaded, ABI %u",

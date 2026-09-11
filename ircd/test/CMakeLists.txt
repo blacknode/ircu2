@@ -75,6 +75,11 @@ add_ircu_test(chan_modes_t
   "${IRCU_IRCD_DIR}/chan_modes.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c")
 
+add_ircu_test(worker_t
+  worker_stub.c
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/worker.c")
+
 # ---------------------------------------------------------------------------
 # Module loader
 #
@@ -87,12 +92,14 @@ add_ircu_test(chan_modes_t
 add_ircu_test(module_t
   module_stub.c
   user_modes_stub.c
+  worker_stub.c
   "${IRCU_IRCD_DIR}/chan_modes.c"
   "${IRCU_IRCD_DIR}/client.c"
   "${IRCU_IRCD_DIR}/hooks.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"
-  "${IRCU_IRCD_DIR}/module.c")
+  "${IRCU_IRCD_DIR}/module.c"
+  "${IRCU_IRCD_DIR}/worker.c")
 target_link_libraries(module_t PRIVATE ${CMAKE_DL_LIBS})
 set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
 

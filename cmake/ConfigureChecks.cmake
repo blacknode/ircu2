@@ -62,6 +62,13 @@ if(NOT IRCU_SOCKET_IN_LIBC AND NOT HAVE_LIBSOCKET)
   endif()
 endif()
 
+# Worker threads (ircd/worker.c).  Required, not optional: the worker API is
+# always compiled in, and FEAT_WORKER_THREADS decides at run time whether any
+# thread is ever created.  See doc/readme.workers.
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+list(APPEND IRCU_SYSTEM_LIBRARIES Threads::Threads)
+
 list(REMOVE_DUPLICATES IRCU_SYSTEM_LIBRARIES)
 
 # ---------------------------------------------------------------------------

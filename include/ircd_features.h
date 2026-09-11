@@ -111,6 +111,10 @@ enum Feature {
   FEAT_NETWORK_FEATURES,
   FEAT_NETWORK_TIME,
 
+  /* Worker threads (see doc/readme.workers) */
+  FEAT_WORKER_THREADS,
+  FEAT_WORKER_QUEUE_MAX,
+
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,
 

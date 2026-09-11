@@ -1,0 +1,387 @@
+WORKER documentation, last updated on 10 Sep 2026
+
+A worker is a thread that does something slow so that the server does not
+have to stop while it happens.  The IRC core stays single-threaded; only
+the work around it moves.
+
+This is the implementation of doc/proposals/002-multithreaded-event-loop.md,
+option B.
+
+
+READ THIS FIRST
+===============
+
+There is exactly one rule, and everything else in this file follows from it:
+
+  A WORKER THREAD NEVER TOUCHES CORE STATE.
+
+Not struct Client, not struct Channel, not the hash tables, not
+CurrentTime, not any global.  Not MyMalloc() and not MyFree().  Not
+log_write(), not Debug(), not send_reply(), not sendcmdto_one() or any of
+the sendto_* family.  Not findNUser(), not FindUser(), not feature_int().
+
+The reason is not style.  The core keeps its clients and channels on free
+lists, its buffers in file-scope statics, and its time in a global that the
+main thread rewrites after every pass through the event engine.  None of it
+is locked, because for twenty-five years nothing else was running.  A
+worker thread that reaches into any of it corrupts memory -- quietly, under
+load, in a way that shows up as a crash somewhere else entirely, hours
+later, on a server you cannot attach a debugger to.
+
+What a worker thread MAY call is short enough to list in full:
+
+  worker_alloc()      allocate memory
+  worker_free()       release it
+  worker_log()        write a line to the server log
+  worker_submit()     hand another task to the pool
+  worker_post()       hand a result to the main thread (dedicated workers)
+  worker_stopping()   has somebody asked this worker to stop?
+  worker_stop_fd()    a descriptor that becomes readable when they have
+  worker_name()
+
+  the system allocator and the system's own thread-safe library functions
+
+  pure functions that operate on a context the caller supplies.  SHA1Init(),
+  SHA1Update() and SHA1Final() qualify: they keep no state of their own.
+  Anything that returns a pointer to a static buffer does not.
+
+Everything a worker needs, it receives copied into the task.  Everything it
+produces, it returns copied in the task.  That boundary is the only part of
+the server that has to be audited for thread safety, and keeping it that
+way is the whole point of the design.
+
+
+TURNING IT ON
+=============
+
+Nothing runs until you ask for it.  Two features, both in
+doc/readme.features:
+
+  WORKER_THREADS      size of the pool.  0, the default, means no threads,
+                      no queues, no pipe -- the server behaves exactly as it
+                      did before workers existed.  Maximum 64.
+  WORKER_QUEUE_MAX    how many tasks may be outstanding at once; further
+                      submissions are refused until the queue drains.
+                      Default 1024.
+
+  features {
+    "WORKER_THREADS" = "4";
+  };
+
+Both take effect on /SET and on /REHASH.  Raising WORKER_THREADS starts
+threads; lowering it stops the surplus, waiting for whatever they are in
+the middle of.
+
+WORKER_THREADS = 0 is the master switch, and it is deliberately blunt: it
+stops the pool AND every dedicated worker, and makes worker_submit() and
+worker_spawn() fail until it is non-zero again.  Setting it back does not
+bring dedicated workers back; the module that wanted one asks again.
+
+/STATS M reports the pool, the dedicated workers, and how much work has
+been submitted, completed and refused.
+
+
+THE TWO SHAPES
+==============
+
+A TASK is a one-shot unit of work.  You fill in a struct WorkTask, submit
+it, and get called back in the main thread when it is done.  The pool is a
+fixed set of interchangeable threads; a task goes to whichever one is free.
+This is the shape for a database query, a hash, an HTTP request, publishing
+to a message bus -- anything with a beginning and an end.
+
+A DEDICATED WORKER is a thread with a loop of its own that stays up for as
+long as you want it.  This is the shape for something that is not a series
+of short tasks: a listening socket, a subscription, an embedded service.
+It hands results to the main thread with worker_post(), which puts them on
+the same reply queue a finished task uses.
+
+Both end up in the same place: a callback running in the main thread, where
+core state is safe to touch.
+
+
+A TASK, END TO END
+==================
+
+  #include "module.h"
+  #include "worker.h"
+
+  struct MyRequest { int n; char text[64]; };
+  struct MyResult  { int answer; };
+
+  /* --- in a worker thread --- */
+  static void my_work(struct WorkTask *task)
+  {
+    const struct MyRequest *req = task->wt_in;
+    struct MyResult *res = worker_alloc(sizeof(*res));
+
+    if (!res) {                       /* say so rather than pretending */
+      task->wt_status = -1;
+      return;
+    }
+
+    res->answer = something_slow(req->n);
+
+    task->wt_out = res;
+    task->wt_out_len = sizeof(*res);
+    task->wt_status = 0;
+  }
+
+  /* --- back in the main thread --- */
+  static void my_done(struct WorkTask *task)
+  {
+    struct Client *sptr = worker_task_client(task);
+    const struct MyResult *res = task->wt_out;
+
+    if (!sptr)                        /* they left while we worked */
+      return;
+
+    if (task->wt_status) {
+      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :it failed", sptr);
+      return;
+    }
+
+    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :answer %d", sptr, res->answer);
+  }
+
+  /* --- submitting, from a command handler or a hook --- */
+  static int m_mycmd(struct Client *cptr, struct Client *sptr,
+                     int parc, char *parv[])
+  {
+    struct WorkTask *task = worker_task_new(my_work, my_done);
+    struct MyRequest *req;
+
+    if (!task)
+      return 0;
+
+    if (!(req = worker_alloc(sizeof(*req)))) {
+      worker_task_free(task);
+      return 0;
+    }
+
+    req->n = atoi(parv[1]);
+    task->wt_in = req;
+    task->wt_in_len = sizeof(*req);
+
+    worker_task_set_client(task, sptr);
+
+    if (!module_submit_work(my_module, task)) {
+      worker_task_free(task);           /* still ours: say why */
+      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :no workers available", sptr);
+      return 0;
+    }
+
+    return 0;                           /* the answer follows, later */
+  }
+
+Note what the submit does NOT do: it does not wait.  The command handler
+returns immediately, the server carries on serving everybody else, and the
+answer arrives whenever it arrives.  A user who expects a reply gets an
+acknowledgement now and the result later.
+
+
+WHO OWNS WHAT
+=============
+
+  worker_task_new()   gives you a task.  It is yours.
+  worker_submit()     on success, the task is the server's.  On failure it
+                      is still yours, and you free it.
+  after wt_done       the server frees the task.  Never keep the pointer.
+
+The payload follows the task.  By default the server calls worker_free() on
+wt_in and wt_out after wt_done has run, which is right for anything
+allocated with worker_alloc().  If the payload owns something else -- a
+descriptor, a nested allocation, a handle from a third-party library --
+supply wt_free and release it there.  wt_free runs on every path, including
+when the task is cancelled without ever having been worked on.
+
+Use worker_alloc() and worker_free(), not MyMalloc() and MyFree().  This is
+the easiest rule in the file to break out of habit and one of the worst to
+break: the core's pools are plain linked lists with no locking, and two
+threads pushing onto one produces corruption that surfaces nowhere near the
+code that caused it.
+
+
+NEVER STORE A struct Client *
+=============================
+
+A task outlives the command that created it, by design -- that is what it
+is for.  The user who asked may be gone by the time the answer is ready.
+And a struct Client is not freed to the system; it goes back on a free list
+and is handed to the next connection.  A pointer stored across a task is a
+use-after-free waiting for a slow query.
+
+So the API does not accept one:
+
+  worker_task_set_client(task, sptr);        /* main thread */
+  ...
+  struct Client *sptr = worker_task_client(task);   /* main thread */
+  if (!sptr)
+    return;                                  /* they left; nothing to do */
+
+What the task actually stores is the numnick plus the time the client
+connected.  The lookup checks both, because numnicks are reused -- the
+allocator walks the whole 2^18 space before it comes back round, but
+"eventually" is not "never", and the failure it would cause is answering
+one user's question to a different user.
+
+Both calls are main-thread only.  A worker thread has no business knowing
+which client the work is for; if it needs the nick, copy the nick into the
+task.
+
+
+A DEDICATED WORKER
+==================
+
+  static void my_main(struct Worker *worker, void *arg)
+  {
+    while (!worker_stopping(worker)) {
+      fd_set r;
+      int stopfd = worker_stop_fd(worker);
+
+      FD_ZERO(&r);
+      FD_SET(stopfd, &r);
+      FD_SET(my_socket, &r);
+
+      if (select(max + 1, &r, NULL, NULL, NULL) < 0)
+        break;
+
+      if (FD_ISSET(stopfd, &r))
+        break;                       /* asked to stop */
+
+      /* ... do the work, then hand it over ... */
+      task = worker_task_new(NULL, my_report);   /* no wt_work: done already */
+      task->wt_out = result;
+      if (!worker_post(worker, task))
+        worker_task_free(task);      /* queue full; drop it, don't block */
+    }
+  }
+
+  /* in mi_init */
+  my_worker = module_spawn_worker(mod, "myservice", my_main, NULL);
+  if (!my_worker)
+    return -1;                       /* workers are off; say so and refuse */
+
+Wait on worker_stop_fd(), do not sleep.  worker_stop() writes a byte to
+that descriptor and then joins the thread, so a worker parked in select()
+stops immediately and a worker asleep for sixty seconds keeps the server
+waiting for up to sixty seconds.
+
+module_spawn_worker() may be called from mi_init even though the worker
+subsystem has not started at that point -- a module loaded from a Module{}
+block runs its mi_init while the configuration file is still being read.
+The request is held and the thread starts once the configuration is known.
+It still returns NULL when WORKER_THREADS is zero, so a module that needs a
+thread can refuse to load and say why.
+
+The server owns the worker and frees it when it stops it, which happens
+when the module unloads, when WORKER_THREADS is set to zero, or when the
+module asks with module_stop_worker().  The module's copy of the pointer is
+stale from then on.  module_stop_worker() checks the handle against the
+list of live workers before it reads anything through it, so calling it on
+a worker the server already stopped returns zero and does nothing -- a
+module that stops its thread from mi_fini, as worker_ticker.c does, is
+always doing exactly that, because the unload stops the thread first.
+Nothing else in the API accepts a stale handle: worker_name() and
+worker_owner() on one read freed memory.
+
+
+UNLOADING A MODULE THAT HAS WORK IN FLIGHT
+==========================================
+
+Unloading a module unmaps its code.  If a worker thread is executing that
+code at the time, there is no clever way out: the server waits.
+
+  worker: waiting for work in flight before unloading a module
+  worker: still waiting after 2 seconds; the server is blocked until a
+          worker returns
+  worker: discarded 5 tasks belonging to an unloaded module
+
+Everything that module owns goes with it -- tasks not yet started are
+dropped, tasks running are waited for, results already finished are thrown
+away rather than delivered (wt_done belongs to the module too), and its
+dedicated workers are stopped and joined.
+
+The server is unresponsive while this happens.  That is the cost of
+unloading a module in the middle of a fifty-million-round hash, it is
+logged so an operator can see why the server went quiet, and it is the
+reason a wt_work that can run for minutes should check something and give
+up early.
+
+A wt_work that never returns hangs the server permanently.  There is no
+timeout, because there is no safe way to enforce one: killing a thread
+mid-allocation leaves the allocator broken.  Do not write one.
+
+
+LOGGING AND TIME
+================
+
+log_write() and Debug() are not thread-safe.  From a worker thread use
+worker_log(), which formats the line there and hands it to the main thread
+to write, so it appears slightly late and is dropped rather than blocking
+if the reply queue is full.
+
+CurrentTime is a core global the main thread rewrites after every pass
+through the event engine.  From a worker thread call time(NULL).
+
+
+HOW THE MAIN THREAD FINDS OUT
+=============================
+
+A worker that finishes a task puts it on the reply queue and writes one
+byte to a pipe.  The read end of that pipe is registered with the event
+system as an ordinary Socket, exactly the way signal delivery has worked
+since ircd_events.c was written.  The engine sees a readable descriptor,
+the callback drains the queue, and every wt_done runs in the main thread
+between commands.
+
+None of the five event engines needed changing.  The byte is coalesced --
+one is enough however many tasks are waiting -- so a busy pool does not
+fill the pipe.
+
+
+CHECKING YOUR WORK
+==================
+
+Build with ThreadSanitizer and run the unit test:
+
+  cmake --preset tsan && cmake --build --preset tsan
+  ctest --preset tsan -R worker_t
+
+ircd/test/worker_t.c covers the boundary: work crossing in both directions,
+the queue bound, the client reference surviving a quit and a reused
+numnick, and a module unload taking exactly its own work.  Any change to
+ircd/worker.c should be run under tsan several times, because a race that
+appears one run in five is still a race.
+
+When reviewing a module that uses workers, the check is short.  Read every
+function that runs in a worker thread and ask of each line: does this touch
+anything the main thread can also touch?  If the answer is anywhere other
+than "no", it is a bug, whether or not it has caused one yet.
+
+
+THE EXAMPLES
+============
+
+  modules/worker_demo.c     adds /HASHPASS, which derives a key with
+                            PBKDF2-HMAC-SHA1 in a pool thread; the
+                            reference for worker_submit() and for the
+                            client reference.  Ask it for a few million
+                            rounds and watch the server keep answering.
+
+  modules/worker_ticker.c   starts a thread of its own that waits on its
+                            stop descriptor and posts back every ten
+                            seconds; the reference for worker_spawn(),
+                            worker_post() and worker_stop_fd().
+
+
+WHAT THIS IS NOT
+================
+
+The IRC core is still single-threaded.  Parsing, channels, the hash tables
+and the P10 protocol all run in one thread on one core, and this does not
+change that -- see section 3 of the proposal for why making it multi-
+threaded is a different and much larger project.
+
+What workers buy is that a slow thing no longer stops the server.  What
+they do not buy is more throughput for IRC itself.

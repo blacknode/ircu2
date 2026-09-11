@@ -454,6 +454,43 @@ from the kernel at once.  Since the number retrieved can impact
 performance, it can be tuned by modifying this value.  The engines
 enforce a lower limit of 20.
 
+WORKER_THREADS
+ * Type: integer
+ * Default: 0
+
+Number of threads in the worker pool.  Zero, the default, means no
+worker threads are created at all and the server behaves exactly as it
+did before workers existed; there are no queues and no descriptors to
+show for the feature being compiled in.  The maximum is 64.
+
+Workers exist so that slow work -- a database round trip, a password
+hash worth the name, an outbound HTTP request -- can happen without
+stopping the server, which is otherwise single-threaded.  The IRC core
+itself is not made parallel by this and does not become faster; see
+doc/readme.workers.
+
+Zero is also the master switch.  Setting it to zero at run time stops
+the pool and every dedicated worker a module started, and makes further
+submissions fail; setting it back does not restart those workers, since
+the module that wanted one asks again on its own terms.  Lowering it
+waits for the threads it removes to finish what they are doing.
+
+Nothing in the core submits work today, so a server that loads no
+modules has no reason to change this.
+
+WORKER_QUEUE_MAX
+ * Type: integer
+ * Default: 1024
+
+How many worker tasks may be outstanding -- queued, running, or waiting
+to be delivered -- at one time.  Submissions past this are refused, and
+the caller decides what to do about it, rather than the queue growing
+until the server runs out of memory.
+
+/STATS M reports how many submissions have been refused.  A number that
+climbs means either the pool is too small for what is being asked of it
+or something is submitting work faster than any pool could absorb.
+
 CONFIG_OPERCMDS
  * Type: boolean
  * Default: FALSE

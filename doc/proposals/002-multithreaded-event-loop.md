@@ -1,10 +1,53 @@
 # Propuesta 002 — Concurrencia: del event loop monohilo a ejecución paralela
 
-**Estado:** borrador para revisión
+**Estado:** aceptada — opción B implementada (fases 1, 2, 3 y 6)
 **Rama base:** `main` (`0200c5d`)
 **Alcance:** permitir que el servidor ejecute trabajo en paralelo (HTTP, servicios
 embebidos, clientes de base de datos o de cola de mensajes) sin depender de procesos
 externos
+
+---
+
+## 0. Estado de la implementación
+
+Se implementó la **opción B**. La API vive en `include/worker.h` y
+`ircd/worker.c`, y está documentada en `doc/readme.workers`.
+
+| Fase | Estado | Dónde |
+|---|---|---|
+| 1 — pool, colas, integración por self-pipe | Hecha | `ircd/worker.c` |
+| 2 — feature `WORKER_THREADS` (0 = desactivado) | Hecha | `FEAT_WORKER_THREADS`, `FEAT_WORKER_QUEUE_MAX` |
+| 3 — worker de ejemplo + prueba | Hecha (prueba unitaria) | `modules/worker_demo.c`, `modules/worker_ticker.c`, `ircd/test/worker_t.c` |
+| 4 — primer worker real | Pendiente | — |
+| 5 — canal de comandos worker → núcleo | Pendiente | — |
+| 6 — documentar la frontera | Hecha | `doc/readme.workers` |
+
+Diferencias respecto de lo propuesto en §4.3, todas por cosas que cambiaron
+desde que se escribió este documento o que aparecieron al implementarlo:
+
+- **Dos formas, no una.** Además del pool de tareas de §4.3, hay workers
+  dedicados (`worker_spawn()`): un hilo con bucle propio, que es la forma
+  que pedía el caso "servidor HTTP" de §4.4 y que el pool no cubre.
+- **La API es de módulos.** La propuesta es anterior a la estabilización de
+  la API de módulos (propuesta 001). `module_submit_work()` y
+  `module_spawn_worker()` contabilizan el trabajo contra el `ModuleHandle`,
+  de modo que descargar un módulo cancela lo suyo y espera lo que ya corre
+  — no hay alternativa correcta a esperar, porque el código del worker está
+  a punto de desmapearse. Esto subió `IRCU_MODULE_ABI` de 3 a 4.
+- **El cliente se referencia por numnick *y* por `cli_firsttime()`.** §4.3
+  proponía sólo el numnick; los numnicks se reutilizan, y comparar también
+  el instante de conexión evita el caso —raro pero silencioso— de contestarle
+  a otro usuario.
+- **Self-pipe, no `eventfd`.** Un descriptor más y funciona en los cinco
+  motores sin condicionales. Cambiarlo a `eventfd` en Linux es una
+  optimización local si alguna vez importa.
+- **`worker_log()`.** No estaba en la propuesta. `log_write()` no es
+  thread-safe, y "no loguees desde un worker" es una regla que se rompe por
+  costumbre; darle una función que sí puede usar la quita del camino.
+
+Sobre §8, pregunta 1 ("¿cuál es el caso de uso número uno?"): sigue abierta.
+La frontera se diseñó sin un consumidor real, así que la fase 4 puede
+descubrir que le falta algo.
 
 ---
 

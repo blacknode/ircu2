@@ -40,6 +40,16 @@
       }
     },
     {
+      "name": "tsan",
+      "inherits": "dev",
+      "displayName": "Development with ThreadSanitizer",
+      "description": "For anything touching ircd/worker.c; see doc/readme.workers.",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
       "name": "release",
       "inherits": "base",
       "displayName": "Release (optimised, assertions off)",
@@ -62,6 +72,7 @@
     { "name": "default", "configurePreset": "default" },
     { "name": "dev", "configurePreset": "dev" },
     { "name": "asan", "configurePreset": "asan" },
+    { "name": "tsan", "configurePreset": "tsan" },
     { "name": "release", "configurePreset": "release" },
     { "name": "no-tls", "configurePreset": "no-tls" }
   ],
@@ -74,6 +85,7 @@
     { "name": "default", "inherits": "base", "configurePreset": "default" },
     { "name": "dev", "inherits": "base", "configurePreset": "dev" },
     { "name": "asan", "inherits": "base", "configurePreset": "asan" },
+    { "name": "tsan", "inherits": "base", "configurePreset": "tsan" },
     { "name": "release", "inherits": "base", "configurePreset": "release" },
     { "name": "no-tls", "inherits": "base", "configurePreset": "no-tls" }
   ]

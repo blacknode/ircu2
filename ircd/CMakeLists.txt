@@ -236,7 +236,8 @@ set(IRCU_SOURCES
   userload.c
   websocket.c
   whocmds.c
-  whowas.c)
+  whowas.c
+  worker.c)
 
 # The event engines that survived configuration, plus the selected TLS
 # backend.  See cmake/IrcuOptions.cmake and cmake/IrcuTLS.cmake.

@@ -44,6 +44,9 @@
 #ifndef INCLUDED_channel_h
 #include "channel.h"    /* chanmode_t, HasCFlag() */
 #endif
+#ifndef INCLUDED_worker_h
+#include "worker.h"     /* struct WorkTask, WorkerMainFn */
+#endif
 
 struct Client;
 struct ModuleHandle;
@@ -55,7 +58,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 3
+#define IRCU_MODULE_ABI 4
 
 /** Description of a module, exported by the shared object.
  *
@@ -225,6 +228,85 @@ extern int module_del_chan_mode(struct ModuleHandle* mod, char mode);
 
 /** Number of channel modes a module currently has registered. */
 extern unsigned int module_chan_mode_count(const struct ModuleHandle* mod);
+
+/*
+ * Handing work to another thread.
+ *
+ * A hook or a command handler runs in the main thread, in the middle of
+ * serving a client, so a module that needs to wait for something -- a
+ * database, an HTTP API, a password hash worth the name -- cannot simply do
+ * it there without stalling every other client.  It submits the work
+ * instead, and gets called back in the main thread when it is done.
+ *
+ * The rules for what a module may touch from a worker thread are in
+ * worker.h and doc/readme.workers.  They are short and they are absolute:
+ * a worker thread that touches core state corrupts it, silently, under
+ * load, in a way no test will reproduce.
+ *
+ * Both calls need FEAT_WORKER_THREADS to be non-zero and both fail
+ * gracefully when it is not, which is the default.  A module that needs
+ * workers checks the return value and says so, rather than assuming.
+ *
+ * Work is tracked against the module handle, like everything else here.
+ * Unloading the module cancels whatever it has queued, waits for whatever
+ * is running -- there is no safe alternative to waiting, since the code in
+ * the worker is about to be unmapped -- and stops its dedicated workers.
+ */
+
+/** Submit a task to the worker pool.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] task Task from worker_task_new(), with wt_work set.  On
+ *   success the server owns it and frees it after wt_done has run.
+ * @return Non-zero on success.  Zero if the pool is off or its queue is
+ *   full, in which case the task is still the caller's to free.
+ */
+extern int module_submit_work(struct ModuleHandle* mod,
+                              struct WorkTask* task);
+
+/** Start a thread with a loop of its own.
+ *
+ * For work that is not a series of short tasks: a listening socket, a
+ * subscription, anything that has to stay up.  The thread hands results
+ * back with worker_post().
+ *
+ * Safe to call from mi_init even though the worker subsystem is not up yet
+ * at that point: the request is held and the thread starts once the
+ * configuration file has been read.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Short name, for logs and /STATS M.
+ * @param[in] fn The thread body.
+ * @param[in] arg Passed through to \a fn.
+ * @return The worker, or NULL.  The server owns it; it is stopped when the
+ *   module unloads (before mi_fini runs), when WORKER_THREADS is set to
+ *   zero, or earlier with module_stop_worker().
+ */
+extern struct Worker* module_spawn_worker(struct ModuleHandle* mod,
+                                          const char* name, WorkerMainFn fn,
+                                          void* arg);
+
+/** Stop a dedicated worker this module started.
+ *
+ * Waits for the thread to return.  Not required: unloading the module does
+ * the same thing, and does it before mi_fini is called, so a module that
+ * stops its worker from mi_fini is stopping one the server already
+ * stopped.  That is fine -- the handle is checked before it is read, and
+ * a worker that is already gone makes this return zero and do nothing --
+ * but it is nothing more than tidiness.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] worker Worker to stop, or NULL.  Invalid once this returns.
+ * @return Non-zero if it was this module's worker and it was stopped;
+ *   zero if it was not, or if it had already been stopped.
+ */
+extern int module_stop_worker(struct ModuleHandle* mod,
+                              struct Worker* worker);
+
+/** Tasks this module has submitted and not yet had delivered. */
+extern unsigned int module_work_count(const struct ModuleHandle* mod);
+
+/** Dedicated workers this module currently has running. */
+extern unsigned int module_worker_count(const struct ModuleHandle* mod);
 
 /*
  * Registering hooks.  See hooks.h for the hook points and what each one

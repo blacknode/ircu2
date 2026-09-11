@@ -4,8 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-ircu2 — the Undernet IRC server (P10 protocol), a single-process, single-threaded
-C99 daemon. The historical autotools build has been replaced by CMake.
+ircu2 — the Undernet IRC server (P10 protocol), a single-process C99 daemon.
+The IRC core is single-threaded; optional worker threads run auxiliary work
+beside it (`include/worker.h`). The historical autotools build has been
+replaced by CMake.
 
 ## Build
 
@@ -20,7 +22,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 Presets (CMake 3.21+) in `CMakePresets.json`: `dev` (Debug + `IRCU_ENABLE_DEBUG`
-+ `-Wall`), `asan`, `release`, `no-tls`, `default`. Use them for anything
++ `-Wall`), `asan`, `tsan`, `release`, `no-tls`, `default`. Use them for anything
 non-trivial:
 
 ```sh
@@ -46,7 +48,9 @@ Two independent suites.
 [sources...])` in `ircd/test/CMakeLists.txt` compiles `<name>.c` + `test_stub.c`
 (logging/client stubs) plus whichever `ircd/*.c` files it exercises; there is no
 link against the full server. Run one with `ctest --test-dir build -R ircd_match_t`
-or by executing `build/ircd/test/<name>` directly.
+or by executing `build/ircd/test/<name>` directly. `worker_t` is the only test
+with real threads: run it under the `tsan` preset after any change to
+`ircd/worker.c`.
 
 **Integration tests** — Python/pytest over Docker, in `tests/` (see `tests/README.md`).
 
@@ -66,11 +70,13 @@ with `tests/docker/generate-certs.sh`.
 
 ## Architecture
 
-**Event loop.** `ircd/ircd.c` runs one thread. `include/ircd_events.h` defines the
+**Event loop.** `ircd/ircd.c` runs the one thread that touches core state.
+`include/ircd_events.h` defines the
 generic `Socket`/`Timer`/`Signal` generators; each `ircd/engine_*.c` (epoll, kqueue,
 devpoll, poll, select) is one backend, picked at configure time. `ircd/s_bsd.c` and
 `ircd/listener.c` sit on top for connections; `ircd/packet.c` feeds complete lines
-into the parser. Nothing in the server may block — a stall delays every client.
+into the parser. Nothing on this thread may block — a stall delays every client;
+blocking work goes to a worker (below).
 
 **Command dispatch.** `ircd/parse.c` holds `msgtab[]` (`struct Message`, defined in
 `include/msg.h`) and builds two prefix trees: one for full command names, one for
@@ -125,15 +131,31 @@ config.h — `MPATH` was already taken by the MOTD feature) is both where
 `/MODULE LOAD|UNLOAD|RELOAD nocaps` (privilege `module_admin`) all take that name;
 `/STATS M` reports state.
 
+**Workers** (`include/worker.h`, `ircd/worker.c`, `doc/readme.workers`). Optional
+threads for work that would otherwise stall the core: `worker_submit()` hands a
+`struct WorkTask` to a pool, `worker_spawn()` starts a thread with a loop of its
+own, and both deliver results back to the main thread through a self-pipe the
+event engine watches like any other descriptor — no engine was changed. The one
+rule is absolute: **a worker thread never touches core state** — no `struct
+Client`, no `CurrentTime`, no `MyMalloc()`, no `log_write()`, no `sendto_*`; it
+gets its input copied into the task and returns its output the same way, and a
+client is referred to by numnick (`worker_task_set_client()`), never by pointer.
+`FEAT_WORKER_THREADS` is 0 by default, and at 0 nothing is created at all.
+Modules reach this through `module_submit_work()`/`module_spawn_worker()`;
+unloading a module cancels its queued work and waits for what is running, which
+blocks the server. Run `ctest --preset tsan -R worker_t` after touching
+`worker.c`.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact
 notifications whose return value is ignored. All hooks run inline on the main thread.
 
 **Design docs.** `doc/proposals/` holds the accepted designs for the module API
-(001), the multithreading direction (002, in Spanish) and the channel modes by
-module (003, in Spanish); read the relevant one before changing either
-subsystem. Other useful docs: `doc/p10.html` (protocol),
+(001), the multithreading direction (002, in Spanish — option B is what
+`ircd/worker.c` implements) and the channel modes by module (003, in Spanish);
+read the relevant one before changing either subsystem. Other useful docs:
+`doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root generates reference docs).
 
 ## Conventions

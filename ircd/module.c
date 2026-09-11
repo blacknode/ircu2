@@ -34,6 +34,7 @@
 #include "parse.h"
 #include "s_debug.h"
 #include "send.h"
+#include "worker.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <dlfcn.h>
@@ -598,6 +599,69 @@ static void module_drop_chan_modes(struct ModuleHandle *mod) {
   mod->mh_cmodes = 0;
 }
 
+/** Submit a task to the worker pool on a module's behalf.
+ * @param[in] mod Module submitting the work.
+ * @param[in] task Task to run.
+ * @return Non-zero on success.
+ */
+int module_submit_work(struct ModuleHandle *mod, struct WorkTask *task) {
+  assert(0 != mod);
+  assert(0 != task);
+
+  return worker_submit_owned(mod, task);
+}
+
+/** Start a dedicated worker on a module's behalf.
+ * @param[in] mod Module starting the thread.
+ * @param[in] name Short name for logs and /STATS M.
+ * @param[in] fn The thread body.
+ * @param[in] arg Passed through to \a fn.
+ * @return The worker, or NULL.
+ */
+struct Worker *module_spawn_worker(struct ModuleHandle *mod, const char *name,
+                                   WorkerMainFn fn, void *arg) {
+  assert(0 != mod);
+  assert(0 != fn);
+
+  return worker_spawn_owned(mod, name, fn, arg);
+}
+
+/** Stop a dedicated worker a module started.
+ *
+ * The ownership check is the point: a module must not be able to stop
+ * another module's thread, whether by accident or otherwise.  It is made
+ * in worker.c and not here, because the handle may already be stale --
+ * the server stops a module's workers before mi_fini runs, and a module
+ * that stops its own thread from mi_fini is handing back a pointer to
+ * freed memory -- and only worker.c can tell without reading it.
+ *
+ * @param[in] mod Module that owns the worker.
+ * @param[in] worker Worker to stop.
+ * @return Non-zero if it was stopped; zero if it was not this module's,
+ *   or was already gone.
+ */
+int module_stop_worker(struct ModuleHandle *mod, struct Worker *worker) {
+  assert(0 != mod);
+
+  return worker_stop_owned(mod, worker);
+}
+
+/** Tasks a module has submitted and not yet had delivered.
+ * @param[in] mod Module to query.
+ */
+unsigned int module_work_count(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return worker_module_tasks(mod);
+}
+
+/** Dedicated workers a module currently has running.
+ * @param[in] mod Module to query.
+ */
+unsigned int module_worker_count(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return worker_module_workers(mod);
+}
+
 /** Attach a hook on behalf of a module.
  * @param[in] mod Module registering the hook.
  * @param[in] type Hook point.
@@ -828,6 +892,14 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
   ircd_strncpy(name, mod->mh_info->mi_name, sizeof(name) - 1);
   name[sizeof(name) - 1] = '\0';
 
+  /* Before mi_fini, not after: a worker thread still executing this
+   * module's code would be reading whatever mi_fini has just freed.  This
+   * waits for work in flight, and blocks the server while it does -- there
+   * is no correct alternative to waiting, because the code is about to be
+   * unmapped.
+   */
+  worker_cancel_module(mod);
+
   if (mod->mh_info->mi_fini) {
     manager->mod_cb_depth++;
     (*mod->mh_info->mi_fini)(mod);
@@ -957,9 +1029,48 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
                module_chan_mode_chars(mod), mod->mh_path,
                mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
 
+  /* Only for modules that actually use workers: on a server where nothing
+   * does, this section is silent.
+   */
+  for (mod = manager->mod_list; mod; mod = mod->mh_next) {
+    unsigned int tasks = worker_module_tasks(mod);
+    unsigned int workers = worker_module_workers(mod);
+
+    if (tasks || workers)
+      send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+                 ":Module %s: %u task%s in flight, %u dedicated worker%s",
+                 mod->mh_info->mi_name, tasks, tasks == 1 ? "" : "s",
+                 workers, workers == 1 ? "" : "s");
+  }
+
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%u module%s loaded, ABI %u",
              manager->mod_count, manager->mod_count == 1 ? "" : "s",
              (unsigned int)IRCU_MODULE_ABI);
+
+  /* Workers live next to modules in the operator's mental model, and this
+   * is where an operator already looks; a stats letter of their own would
+   * be one more thing to remember for four lines of output.
+   */
+  if (!worker_enabled())
+    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+               ":Workers disabled (WORKER_THREADS is 0)");
+  else {
+    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+               ":Workers: %u pool thread%s, %u dedicated",
+               worker_thread_count(),
+               worker_thread_count() == 1 ? "" : "s",
+               worker_dedicated_count());
+    /* Split three ways rather than one "outstanding": a backlog that is all
+     * queued means the pool is too small, and one that is all running means
+     * something is taking far longer than it should.
+     */
+    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+               ":Workers: %u queued, %u running, %u waiting to be delivered",
+               worker_queued(), worker_running(), worker_undelivered());
+    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+               ":Workers: %u submitted, %u completed, %u rejected",
+               worker_submitted(), worker_completed(), worker_rejected());
+  }
 
   /* Only hook points that are in use or have fired: listing all eighteen
    * every time would bury the two lines an operator actually wants.

@@ -47,6 +47,7 @@
 #include "struct.h"
 #include "sys.h"    /* FALSE bleah */
 #include "whowas.h"	/* whowas_realloc */
+#include "worker.h"	/* worker_feature_notify */
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <stdlib.h>
@@ -383,6 +384,12 @@ static struct FeatureDesc {
   F_B(TLS_SYSTEMCA, 0, 1, 0),
   F_B(NETWORK_FEATURES, 0, 1, 0),
   F_B(NETWORK_TIME, 0, 1, 0),
+
+  /* Worker threads.  Zero is the master switch: no threads, no queues, no
+   * pipe, and the server behaves exactly as it did before workers existed.
+   */
+  F_I(WORKER_THREADS, FEAT_OPER, 0, worker_feature_notify),
+  F_I(WORKER_QUEUE_MAX, FEAT_OPER, 1024, worker_feature_notify),
 
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),

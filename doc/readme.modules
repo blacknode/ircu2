@@ -1,4 +1,4 @@
-MODULE documentation, last updated on 09 Sep 2026
+MODULE documentation, last updated on 10 Sep 2026
 
 A module is a shared object the server loads at run time.  It can add
 commands, user modes and channel modes, and attach to points in the life
@@ -448,7 +448,10 @@ WHAT A MODULE MUST NOT DO
   * Block.  The server is single-threaded and hooks run in the middle of
     handling a client's command.  A hook that waits on a network round
     trip or a slow disk stalls every other client.  There is no
-    asynchronous hook yet; see HOOK_PENDING.
+    asynchronous hook yet -- see HOOK_PENDING -- so a hook cannot suspend
+    the operation it is judging and answer later.  What it can do is hand
+    the slow part to a worker thread and act on the answer when it
+    arrives; see WORKER THREADS below and doc/readme.workers.
 
   * Unload itself.  Unloading from inside a module callback would free the
     code that is executing.  The server refuses and logs it.
@@ -458,6 +461,47 @@ WHAT A MODULE MUST NOT DO
 
   * Assume another module is loaded, or assume a load order beyond hook
     priorities.
+
+
+WORKER THREADS
+==============
+
+A module that needs to wait for something -- a database, an HTTP API, a
+password hash -- cannot wait in a command handler or a hook, because both
+run in the main thread in the middle of serving a client.  It submits the
+work instead and is called back when the answer is ready:
+
+  #include "worker.h"
+
+  struct WorkTask *task = worker_task_new(my_work, my_done);
+  task->wt_in = payload;                /* from worker_alloc() */
+  worker_task_set_client(task, sptr);   /* the numnick, not the pointer */
+
+  if (!module_submit_work(mod, task))
+    worker_task_free(task);             /* refused: still ours */
+
+my_work runs in a worker thread; my_done runs in the main thread, where
+touching core state is safe again.  For something that is not a series of
+short tasks -- a listening socket, a subscription -- module_spawn_worker()
+starts a thread with a loop of its own.
+
+Everything a module registers is reverted when it unloads, and work is no
+exception: queued tasks are dropped, running ones are waited for, finished
+results are discarded rather than delivered, and dedicated workers are
+stopped.  Waiting is not optional -- the module's code is about to be
+unmapped -- so unloading a module with slow work in flight blocks the whole
+server until that work returns.  It is logged when it happens.
+
+Both calls need FEAT_WORKER_THREADS to be non-zero, which it is not by
+default, and both fail gracefully when it is zero.  Check the return value
+and tell the operator, rather than assuming.
+
+There is one rule for code that runs in a worker thread, and it admits no
+exceptions: it never touches core state.  No struct Client, no struct
+Channel, no CurrentTime, no MyMalloc(), no log_write(), no send_reply().
+Read doc/readme.workers before writing any of it -- the list of what is
+allowed is short, and breaking the rule produces corruption that surfaces
+somewhere else entirely.
 
 
 THE EXAMPLES
@@ -475,6 +519,11 @@ THE EXAMPLES
                            reference for registering a channel mode, and
                            nocaps.c's rule made asked-for instead of
                            always-on
+  modules/worker_demo.c    hashes a password in a worker thread; the
+                           reference for module_submit_work() and for
+                           referring to a client that may have left
+  modules/worker_ticker.c  runs a thread with a loop of its own; the
+                           reference for module_spawn_worker()
 
 
 DIAGNOSTICS
@@ -486,8 +535,10 @@ DIAGNOSTICS
   /STATS M         loaded modules, how many commands, user modes and
                    channel modes each registered (with the mode letters
                    for both), who loaded each one,
-                   and for each hook point in use how many hooks are
-                   attached and how many times it has fired
+                   for each hook point in use how many hooks are
+                   attached and how many times it has fired,
+                   the state of the worker pool, and for any module using
+                   workers how much work it has in flight
 
 The hook call counts are the quickest way to tell a hook that is not
 firing from one that is firing and abstaining.

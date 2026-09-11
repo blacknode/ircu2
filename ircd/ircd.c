@@ -68,6 +68,7 @@
 #include "version.h"
 #include "websocket.h"
 #include "whowas.h"
+#include "worker.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <ctype.h>
@@ -756,6 +757,13 @@ int main(int argc, char **argv) {
     return 10;
   }
 
+  /* After init_conf(), so FEAT_WORKER_THREADS has its final value, and so a
+   * module loaded from a Module{} block has already had its chance to ask
+   * for a dedicated worker: those requests are held and started here.  With
+   * the feature at its default of zero this creates nothing at all.
+   */
+  worker_init();
+
   if (thisServer.bootopt & BOOT_CHKCONF) {
     if (dbg_client)
       conf_debug_iline(dbg_client);
@@ -816,9 +824,12 @@ int main(int argc, char **argv) {
   event_loop();
 
   /* The event loop has returned, so nothing else is running: unload every
-   * module and release the module system itself.
+   * module and release the module system itself.  Modules first, because
+   * unloading one waits for the work it has in flight; worker_shutdown()
+   * then stops whatever the core itself started.
    */
   module_close();
+  worker_shutdown();
 
   return 0;
 }

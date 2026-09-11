@@ -303,6 +303,16 @@ builds them again from the new configuration.  An unchanged block changes
 nothing and costs nothing.
 
 
+MIGRATIONS
+==========
+
+Schema changes are not queries and do not go through db_query(): their SQL
+is DDL, which no database prepares, and a migration is a script rather than
+one statement.  They have their own entry point (db_migrate()), their own
+connection, their own transaction and their own timeout, and an operator
+drives them by hand with /MODULE MIGRATION.  See doc/readme.migrations.
+
+
 WRITING ANOTHER DRIVER
 ======================
 

@@ -150,3 +150,15 @@ int feature_bool(enum Feature feat)
   /* Oplevels on, so +A and +U are registered like on a stock server. */
   return feat == FEAT_OPLEVELS;
 }
+
+/** Stub for the one thing ircd_snprintf.c reaches out of itself for.
+ *
+ * module.c formats the load errors that migration.c hands it, and that
+ * pulls in ircd_snprintf(), whose %C conversion can render a client's
+ * username.  No module load error names a client.
+ */
+const char* visible_username(const struct Client* cptr)
+{
+  (void) cptr;
+  return "";
+}

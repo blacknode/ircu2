@@ -44,6 +44,7 @@
 #include "jupe.h"
 #include "list.h"
 #include "match.h"
+#include "migration.h"
 #include "hooks.h"
 #include "module.h"
 #include "motd.h"
@@ -793,6 +794,17 @@ int main(int argc, char **argv) {
 
   IPcheck_init();
   sline_init();
+
+  /* The server's own migrations, and only those: they create the table
+   * every other migration is recorded in, so there is nothing to decide
+   * about them.  A module's migrations never run by themselves -- an
+   * operator applies them with /MODULE MIGRATION; see
+   * doc/readme.migrations.
+   *
+   * Does nothing when no database driver is loaded, and the driver calls
+   * this again itself if one is loaded later with /MODULE LOAD.
+   */
+  migration_core_start();
   timer_add(timer_init(&connect_timer), try_connections, 0, TT_RELATIVE, 1);
   timer_add(timer_init(&ping_timer), check_pings, 0, TT_RELATIVE, 1);
   timer_add(timer_init(&destruct_event_timer), exec_expired_destruct_events, 0, TT_PERIODIC, 60);
@@ -838,6 +850,7 @@ int main(int argc, char **argv) {
    */
   module_close();
   worker_shutdown();
+  migration_shutdown();
   db_shutdown();
 
   return 0;

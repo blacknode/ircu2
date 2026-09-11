@@ -570,6 +570,32 @@ The driver is configured by a Database{} block in ircd.conf, which the
 server keeps whether or not any driver is loaded.  See doc/readme.database.
 
 
+SQL MIGRATIONS
+==============
+
+A module that needs tables of its own ships the SQL that makes them, in a
+migrations/ subdirectory of its own directory:
+
+  modules/<type>/<name>/migrations/v1_create_accounts.up.sql
+  modules/<type>/<name>/migrations/v1_create_accounts.down.sql
+
+The build compiles them into the shared object -- they are never copied
+beside it -- and the server checks them when the module is loaded: the
+v<N>_<name>.<up|down>.sql spelling, a name of letters, digits and
+underscores, versions running from 1 with no gaps, and an up for every
+down.  A module that breaks any of that does not load, and the operator is
+told which file is wrong.
+
+Nothing runs by itself.  An operator applies and reverts with /MODULE
+MIGRATION; the server never does it on load, on reload or on start-up.  The
+one exception is the server's own set, which creates the table the rest are
+recorded in, and which is why no module may be called "core".
+
+A module reads its own tables with the database API in include/db.h; see
+A DATABASE above.  Read doc/readme.migrations before shipping any of it --
+the rules are short and the loader enforces all of them.
+
+
 A LIBRARY OF ITS OWN
 ====================
 
@@ -680,6 +706,12 @@ DIAGNOSTICS
   /MODULE LIST     module name, declared name, version, ABI, path,
                    description and who loaded it (the operator's nick, or
                    the configuration file)
+  /MODULE MIGRATION LIST
+                   every row of the migrations table: what has actually
+                   been applied to this database, by whom, when, and how
+                   long it took
+  /MODULE MIGRATION STATUS <module>
+                   what that module ships, and which of it is applied
   /STATS M         loaded modules, how many commands, user modes and
                    channel modes each registered (with the mode letters
                    for both), who loaded each one,

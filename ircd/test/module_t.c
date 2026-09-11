@@ -13,6 +13,7 @@
  * server resolves real modules against MOD_PATH.
  */
 
+#include "migration.h"
 #include "module.h"
 #include "channel.h"
 #include "client.h"
@@ -644,6 +645,81 @@ static void test_chan_mode_advertised(void)
   printf("Passed: module channel modes are advertised\n");
 }
 
+/* ------------------------------------------------------------------------
+ * Migrations
+ * ------------------------------------------------------------------------ */
+
+static void test_migrations_loaded(void)
+{
+  const struct MigrationSet* set;
+  struct ModuleHandle* mod;
+  const char* err = 0;
+
+  mod = module_load("mod_mig", 0, &err);
+  assert(mod != 0);
+  assert(!err);
+
+  /* The .sql files were compiled into the shared object; nothing was copied
+   * beside it, and the loader read them from the module itself.
+   */
+  set = module_migrations(mod);
+  assert(set != 0);
+  assert(set->ms_count == 2);
+  assert(!strcmp(set->ms_module, "mod_mig"));
+  assert(set->ms_list[0].mg_version == 1);
+  assert(!strcmp(set->ms_list[0].mg_name, "create_thing"));
+  assert(strstr(set->ms_list[0].mg_up, "CREATE TABLE") != 0);
+  assert(strstr(set->ms_list[0].mg_down, "DROP TABLE") != 0);
+  assert(set->ms_list[1].mg_version == 2);
+  assert(!strcmp(set->ms_list[1].mg_name, "add_label"));
+
+  assert(module_unload(mod) != 0);
+
+  printf("Passed: a module's migrations are embedded and read at load\n");
+}
+
+static void test_module_without_migrations(void)
+{
+  struct ModuleHandle* mod = module_load("mod_good", 0, 0);
+
+  assert(mod != 0);
+  assert(module_migrations(mod) == 0);
+  assert(module_unload(mod) != 0);
+
+  printf("Passed: a module with no migrations has no set\n");
+}
+
+static void test_reject_bad_migrations(void)
+{
+  const char* err = 0;
+
+  /* An up with no down.  The module is otherwise perfectly good, and it
+   * still must not load: a migration nobody can revert is not one an
+   * operator can safely apply.
+   */
+  assert(module_load("mod_migbad", 0, &err) == 0);
+  assert(err != 0);
+  assert(strstr(err, "v1_lonely") != 0);
+  assert(strstr(err, "down") != 0);
+  assert(module_find_file("mod_migbad") == 0);
+
+  printf("Passed: a module with an unpaired migration is refused (%s)\n",
+         err);
+}
+
+static void test_reject_reserved_name(void)
+{
+  const char* err = 0;
+
+  /* "core" is the migrations table's name for the server itself. */
+  assert(module_load("mod_core", 0, &err) == 0);
+  assert(err != 0);
+  assert(strstr(err, "core") != 0);
+  assert(module_find("core") == 0);
+
+  printf("Passed: a module calling itself \"core\" is refused (%s)\n", err);
+}
+
 int main(void)
 {
   channel_init_chan_modes();
@@ -674,6 +750,10 @@ int main(void)
   test_chan_mode_explicit_removal();
   test_chan_mode_cycles();
   test_chan_mode_advertised();
+  test_migrations_loaded();
+  test_module_without_migrations();
+  test_reject_bad_migrations();
+  test_reject_reserved_name();
 
   printf("Done.\n");
   return 0;

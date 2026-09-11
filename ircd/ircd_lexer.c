@@ -135,6 +135,7 @@ static const struct lexer_token tokens[] = {
   { "mb", MBYTES },
   { "mbytes", MBYTES },
   { "megabytes", MBYTES },
+  { "migration_timeout", MIGRATION_TIMEOUT },
   { "minutes", MINUTES },
   { "mode_lchan", TPRIV_MODE_LCHAN },
   { "module", MODULE },

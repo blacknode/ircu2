@@ -93,6 +93,15 @@ static void pg_now(struct timespec* now)
   }
 }
 
+long pg_monotonic_ms(void)
+{
+  struct timespec now;
+
+  pg_now(&now);
+
+  return (long) now.tv_sec * 1000L + now.tv_nsec / 1000000L;
+}
+
 void pg_deadline_set(struct PgDeadline* deadline, int ms)
 {
   if (ms < 0)
@@ -128,16 +137,7 @@ int pg_deadline_left(const struct PgDeadline* deadline)
   return (int) ms;
 }
 
-/** Wait for \a fd, for a stop request, or for the deadline.
- *
- * @param[in] fd Descriptor to watch.
- * @param[in] forwrite Non-zero to wait for writability instead.
- * @param[in] stopfd worker_stop_fd(), or -1.
- * @param[in] deadline When to give up.
- * @return 1 when \a fd is ready, 0 when the deadline passed, -1 when the
- *   thread was asked to stop or the wait itself failed.
- */
-static int pg_wait(int fd, int forwrite, int stopfd,
+int pg_socket_wait(int fd, int forwrite, int stopfd,
                    const struct PgDeadline* deadline)
 {
   struct pollfd fds[2];
@@ -278,20 +278,8 @@ static struct PgStmt* pg_stmt_find(struct PgConn* conn,
  * Talking to the server.
  * ------------------------------------------------------------------------ */
 
-/** Wait for the result of whatever was sent, honouring the deadline.
- *
- * Drains the connection completely -- libpq hands back results until it
- * returns NULL, and leaving one behind would desynchronise the next query.
- *
- * @param[in] conn Connection to read.
- * @param[in] stopfd worker_stop_fd(), or -1.
- * @param[in] deadline When to give up.
- * @param[out] out Receives the first result, or NULL.  The caller clears it.
- * @return 0 when a result arrived, -1 on the deadline, -2 when the
- *   connection is no longer usable.
- */
-static int pg_collect(struct PgConn* conn, int stopfd,
-                      const struct PgDeadline* deadline, PGresult** out)
+int pg_collect(PGconn* pg, int stopfd, const struct PgDeadline* deadline,
+               PGresult** out)
 {
   PGresult* first = 0;
   PGresult* res;
@@ -302,8 +290,8 @@ static int pg_collect(struct PgConn* conn, int stopfd,
   /* Push the request out first; a full send buffer is a wait like any
    * other, and it is on the same deadline.
    */
-  while ((flushed = PQflush(conn->pgc_pg)) > 0) {
-    int ready = pg_wait(PQsocket(conn->pgc_pg), 1, stopfd, deadline);
+  while ((flushed = PQflush(pg)) > 0) {
+    int ready = pg_socket_wait(PQsocket(pg), 1, stopfd, deadline);
 
     if (ready <= 0)
       return ready == 0 ? -1 : -2;
@@ -312,8 +300,8 @@ static int pg_collect(struct PgConn* conn, int stopfd,
     return -2;
 
   for (;;) {
-    while (PQisBusy(conn->pgc_pg)) {
-      int ready = pg_wait(PQsocket(conn->pgc_pg), 0, stopfd, deadline);
+    while (PQisBusy(pg)) {
+      int ready = pg_socket_wait(PQsocket(pg), 0, stopfd, deadline);
 
       if (ready <= 0) {
         /* Whatever has arrived so far is of no use to anybody now, and the
@@ -324,14 +312,14 @@ static int pg_collect(struct PgConn* conn, int stopfd,
         return ready == 0 ? -1 : -2;
       }
 
-      if (!PQconsumeInput(conn->pgc_pg)) {
-        pg_error_log("reading a result", PQerrorMessage(conn->pgc_pg));
+      if (!PQconsumeInput(pg)) {
+        pg_error_log("reading a result", PQerrorMessage(pg));
         PQclear(first);
         return -2;
       }
     }
 
-    if (!(res = PQgetResult(conn->pgc_pg)))
+    if (!(res = PQgetResult(pg)))
       break;
 
     /* The first result is the answer; anything after it can only come from
@@ -373,7 +361,7 @@ static int pg_cancel(struct PgConn* conn, int stopfd)
    */
   pg_deadline_set(&grace, PG_CANCEL_GRACE_MS);
 
-  if (pg_collect(conn, stopfd, &grace, &res))
+  if (pg_collect(conn->pgc_pg, stopfd, &grace, &res))
     return 0;
 
   PQclear(res);
@@ -415,7 +403,7 @@ static int pg_run_setup(struct PgConn* conn, int stopfd,
 
   if (!PQsendPrepare(conn->pgc_pg, name, sql, 1, 0))
     return 0;
-  if (pg_collect(conn, stopfd, deadline, &res) || !res)
+  if (pg_collect(conn->pgc_pg, stopfd, deadline, &res) || !res)
     return 0;
 
   ok = PQresultStatus(res) == PGRES_COMMAND_OK;
@@ -425,7 +413,7 @@ static int pg_run_setup(struct PgConn* conn, int stopfd,
 
   if (!PQsendQueryPrepared(conn->pgc_pg, name, 1, &value, 0, 0, 0))
     return 0;
-  if (pg_collect(conn, stopfd, deadline, &res) || !res)
+  if (pg_collect(conn->pgc_pg, stopfd, deadline, &res) || !res)
     return 0;
 
   ok = PQresultStatus(res) == PGRES_TUPLES_OK;
@@ -474,7 +462,7 @@ static enum DbError pg_connect(struct PgConn* conn, int stopfd,
   }
 
   for (;;) {
-    int ready = pg_wait(PQsocket(pg), polling == PGRES_POLLING_WRITING,
+    int ready = pg_socket_wait(PQsocket(pg), polling == PGRES_POLLING_WRITING,
                         stopfd, deadline);
 
     if (ready <= 0) {
@@ -599,7 +587,7 @@ static enum DbError pg_prepare(struct PgConn* conn, struct PgRequest* req,
     return DB_ERR_CONNECT;
   }
 
-  collected = pg_collect(conn, stopfd, deadline, &res);
+  collected = pg_collect(conn->pgc_pg, stopfd, deadline, &res);
 
   if (collected == -1) {
     pg_stmt_free(stmt);
@@ -677,7 +665,7 @@ static enum DbError pg_execute(struct PgConn* conn, struct PgRequest* req,
     return DB_ERR_CONNECT;
   }
 
-  collected = pg_collect(conn, stopfd, deadline, &res);
+  collected = pg_collect(conn->pgc_pg, stopfd, deadline, &res);
 
   if (collected == -1) {
     if (!pg_cancel(conn, stopfd))

@@ -1,0 +1,1 @@
+ALTER TABLE thing DROP COLUMN label;

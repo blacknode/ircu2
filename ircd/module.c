@@ -29,6 +29,7 @@
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
+#include "migration.h"
 #include "module.h"
 #include "msg.h"
 #include "numeric.h"
@@ -85,6 +86,7 @@ struct ModuleHandle {
   char *mh_path;                 /**< Path the module was loaded from. */
   char *mh_relpath;              /**< The same, relative to #MOD_PATH. */
   char *mh_dir;                  /**< Directory of #mh_path. */
+  struct MigrationSet *mh_migrations; /**< Its migrations, or NULL. */
   time_t mh_mtime;               /**< Modification time when loaded. */
   int mh_marked;                 /**< Seen in the running configuration. */
   struct ModuleCommand *mh_cmds; /**< Commands this module registered. */
@@ -158,6 +160,11 @@ const char *module_relpath(const struct ModuleHandle *mod) {
  * @param[in] mod Module to query.
  * @return Absolute directory, without a trailing slash.
  */
+const struct MigrationSet *module_migrations(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return mod->mh_migrations;
+}
+
 const char *module_dir(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return mod->mh_dir;
@@ -864,6 +871,7 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
                                  const char **errstr) {
   struct ModuleHandle *mod;
   struct ModuleInfo *info;
+  struct MigrationSet *migrations;
   char path[1024];
   char relpath[256];
   char *slash;
@@ -930,6 +938,21 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
     return 0;
   }
 
+  /* "core" is the migrations table's name for the server itself.  A module
+   * answering to it could rewrite the server's own rows, and /MODULE
+   * MIGRATION would have no way to tell the two apart.
+   */
+  if (migration_reserved_name(info->mi_name)
+      || migration_reserved_name(name)) {
+    snprintf(errbuf, sizeof(errbuf),
+             "\"%s\" is reserved for the server's own migrations; "
+             "a module cannot be called that", MIGRATION_CORE);
+    dlclose(dl);
+    if (errstr)
+      *errstr = errbuf;
+    return 0;
+  }
+
   if (module_find(info->mi_name)) {
     snprintf(errbuf, sizeof(errbuf), "a module named %s is already loaded",
              info->mi_name);
@@ -939,9 +962,33 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
     return 0;
   }
 
+  /* The build embeds a module's migrations/ directory as this symbol; a
+   * module with no migrations simply does not have it.  Everything about
+   * the files is checked here, so that a module shipping a migration nobody
+   * can revert -- or two of them wearing one version number -- is refused
+   * with a message naming the file, rather than loading and failing later
+   * in front of an operator who is mid-migration.
+   */
+  {
+    const struct MigrationFile *files = (const struct MigrationFile *)
+      dlsym(dl, "ircu_module_migrations");
+    const char *migerr = 0;
+
+    migrations = migration_build(info->mi_name, files, &migerr);
+
+    if (!migrations && migerr) {
+      snprintf(errbuf, sizeof(errbuf), "%s", migerr);
+      dlclose(dl);
+      if (errstr)
+        *errstr = errbuf;
+      return 0;
+    }
+  }
+
   mod = (struct ModuleHandle *)MyCalloc(1, sizeof(struct ModuleHandle));
   mod->mh_dl = dl;
   mod->mh_info = info;
+  mod->mh_migrations = migrations;
   DupString(mod->mh_file, name);
   if (loaded_by)
     DupString(mod->mh_loaded_by, loaded_by);
@@ -1061,6 +1108,7 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
   }
 
   dl = mod->mh_dl;
+  migration_free(mod->mh_migrations);
   MyFree(mod->mh_file);
   MyFree(mod->mh_loaded_by);
   MyFree(mod->mh_path);

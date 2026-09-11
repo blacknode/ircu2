@@ -90,7 +90,11 @@ static void pg_driver_release(struct json_t* data)
 static const struct DbDriver pg_driver = {
   "postgres",
   pg_driver_submit,
-  pg_driver_release
+  pg_driver_release,
+  pg_migrate_submit,
+  pg_json_count,
+  pg_json_str,
+  pg_json_int
 };
 
 /** Register the driver.

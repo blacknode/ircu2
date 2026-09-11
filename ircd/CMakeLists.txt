@@ -86,6 +86,19 @@ add_custom_command(
   VERBATIM)
 
 # ---------------------------------------------------------------------------
+# Generated source: the server's own migrations
+#
+# ircd/migrations/*.sql become string literals compiled into the ircd, the
+# same way a module's are compiled into its shared object.  These are the
+# ones that create and maintain the "migrations" table itself, and they are
+# the only migrations the server runs by itself.
+# ---------------------------------------------------------------------------
+include(IrcuMigrations)
+
+ircu_add_migrations(ircd "${CMAKE_CURRENT_SOURCE_DIR}/migrations"
+  ircu_core_migrations IRCU_CORE_MIGRATIONS_C)
+
+# ---------------------------------------------------------------------------
 # The server
 # ---------------------------------------------------------------------------
 set(IRCU_SOURCES
@@ -209,6 +222,8 @@ set(IRCU_SOURCES
   m_xquery.c
   m_xreply.c
   match.c
+  migration.c
+  migration_run.c
   memdebug.c
   module.c
   motd.c
@@ -248,6 +263,7 @@ list(APPEND IRCU_SOURCES ${IRCU_ENGINE_SOURCES} ${IRCU_TLS_SOURCE})
 add_executable(ircd
   ${IRCU_SOURCES}
   ${BISON_IrcdParser_OUTPUTS}
+  "${IRCU_CORE_MIGRATIONS_C}"
   "${IRCU_VERSION_C}")
 
 # Order matters: include/ has to come before the patchlist fallback, and

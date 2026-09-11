@@ -161,6 +161,13 @@ struct PgDeadline {
   struct timespec pgd_at;   /**< When the work must be finished. */
 };
 
+/** Milliseconds on the monotonic clock.  Worker thread.
+ *
+ * Only good for subtracting from itself, which is all anything here wants:
+ * how long a migration's script took.
+ */
+extern long pg_monotonic_ms(void);
+
 /** Arm a deadline \a ms milliseconds from now.
  * @param[out] deadline Deadline to arm.
  * @param[in] ms Milliseconds from now.
@@ -171,6 +178,37 @@ extern void pg_deadline_set(struct PgDeadline* deadline, int ms);
  * @param[in] deadline Deadline to measure.
  */
 extern int pg_deadline_left(const struct PgDeadline* deadline);
+
+/** Wait for \a fd, for a stop request, or for the deadline.  Worker thread.
+ *
+ * The one place this driver ever waits.  Every deadline it honours -- a
+ * connect, a result, a send buffer that will not drain -- goes through
+ * here, which is what makes #DB_TIMEOUT_MAX_MS a promise rather than a hope.
+ * @param[in] fd Descriptor to watch.
+ * @param[in] forwrite Non-zero to wait for writability instead.
+ * @param[in] stopfd worker_stop_fd(), or -1 for a thread with no worker of
+ *   its own.
+ * @param[in] deadline When to give up.
+ * @return 1 when \a fd is ready, 0 when the deadline passed, -1 when the
+ *   thread was asked to stop or the wait itself failed.
+ */
+extern int pg_socket_wait(int fd, int forwrite, int stopfd,
+                          const struct PgDeadline* deadline);
+
+/** Wait for the result of whatever was sent, honouring the deadline.
+ *
+ * Drains the connection completely -- libpq hands back results until it
+ * returns NULL, and leaving one behind would desynchronise the next
+ * statement on that connection.
+ * @param[in] pg Connection to read.
+ * @param[in] stopfd worker_stop_fd(), or -1.
+ * @param[in] deadline When to give up.
+ * @param[out] out Receives the first result, or NULL.  The caller clears it.
+ * @return 0 when a result arrived, -1 on the deadline, -2 when the
+ *   connection is no longer usable.
+ */
+extern int pg_collect(PGconn* pg, int stopfd,
+                      const struct PgDeadline* deadline, PGresult** out);
 
 /** Create a connection for \a pool.  Main thread.
  *
@@ -200,6 +238,49 @@ extern const char* pg_conn_name(const struct PgConn* conn);
  * @param[in] arg The #PgConn, as handed to module_spawn_worker().
  */
 extern void pg_conn_main(struct Worker* worker, void* arg);
+
+/* ------------------------------------------------------------------------
+ * pg_migrate.c -- schema migrations, off the pool and in a transaction.
+ * ------------------------------------------------------------------------ */
+
+/** Start one migration.  Main thread.
+ *
+ * Copies everything it needs and hands the work to the worker pool.  See
+ * pg_migrate.c for why a migration does not go through #PgPool at all.
+ * @param[in] id Handle to complete the migration with.
+ * @param[in] migration What to run.
+ * @return #DB_OK when it was queued.
+ */
+extern enum DbError pg_migrate_submit(unsigned long id,
+                                      const struct DbMigration* migration);
+
+/* ------------------------------------------------------------------------
+ * pg_json.c, again -- reading a result back, for a caller with no jansson.
+ * ------------------------------------------------------------------------ */
+
+/** Rows in \a data.  Main thread.
+ * @param[in] data A JSON array of row objects, or NULL.
+ */
+extern unsigned int pg_json_count(json_t* data);
+
+/** One column of one row, rendered as text.  Main thread.
+ * @param[in] data A JSON array of row objects, or NULL.
+ * @param[in] row Row index, from zero.
+ * @param[in] column Column name.
+ * @return The value, or NULL when there is no such row or column.  Points
+ *   into a buffer that the next call overwrites.
+ */
+extern const char* pg_json_str(json_t* data, unsigned int row,
+                               const char* column);
+
+/** One column of one row, as an integer.  Main thread.
+ * @param[in] data A JSON array of row objects, or NULL.
+ * @param[in] row Row index, from zero.
+ * @param[in] column Column name.
+ * @return The value, or zero if it is not a number.
+ */
+extern long long pg_json_int(json_t* data, unsigned int row,
+                             const char* column);
 
 /* ------------------------------------------------------------------------
  * pg_pool.c -- the queue, the connections, and the counters.

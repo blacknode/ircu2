@@ -39,6 +39,7 @@
 #include "ircd_alloc.h"
 #include "ircd_log.h"
 #include "ircd_string.h"
+#include "migration.h"
 #include "module.h"
 
 #include <assert.h>
@@ -130,6 +131,7 @@ void db_conf_clear(void)
 {
   db_conf_release(&db_pending);
   db_pending.dbconf_timeout_ms = DB_TIMEOUT_DEFAULT_MS;
+  db_pending.dbconf_migration_ms = DB_MIGRATION_TIMEOUT_DEFAULT;
   db_pending_seen = 1;
 }
 
@@ -162,6 +164,11 @@ void db_conf_set_timeout(int ms)
   db_pending.dbconf_timeout_ms = ms;
 }
 
+void db_conf_set_migration_timeout(int ms)
+{
+  db_pending.dbconf_migration_ms = ms;
+}
+
 int db_conf_commit(const char** errstr)
 {
   static unsigned int generation;
@@ -190,6 +197,19 @@ int db_conf_commit(const char** errstr)
               db_pending.dbconf_timeout_ms, DB_TIMEOUT_MAX_MS,
               DB_TIMEOUT_MAX_MS);
     db_pending.dbconf_timeout_ms = DB_TIMEOUT_MAX_MS;
+  }
+
+  /* The migration timeout has a ceiling of its own, and a much higher one:
+   * see DB_MIGRATION_TIMEOUT_MAX.
+   */
+  if (db_pending.dbconf_migration_ms <= 0)
+    db_pending.dbconf_migration_ms = DB_MIGRATION_TIMEOUT_DEFAULT;
+  if (db_pending.dbconf_migration_ms > DB_MIGRATION_TIMEOUT_MAX) {
+    log_write(LS_CONFIG, L_WARNING, 0,
+              "Database: migration_timeout of %dms exceeds the %dms maximum; "
+              "using %dms", db_pending.dbconf_migration_ms,
+              DB_MIGRATION_TIMEOUT_MAX, DB_MIGRATION_TIMEOUT_MAX);
+    db_pending.dbconf_migration_ms = DB_MIGRATION_TIMEOUT_MAX;
   }
 
   for (role = 0; role < DB_ROLE_LAST; role++) {
@@ -278,6 +298,15 @@ int db_conf_timeout(void)
   return (ms > 0 && ms <= DB_TIMEOUT_MAX_MS) ? ms : DB_TIMEOUT_MAX_MS;
 }
 
+int db_conf_migration_timeout(void)
+{
+  int ms = db_config ? db_config->dbconf_migration_ms
+                     : DB_MIGRATION_TIMEOUT_DEFAULT;
+
+  return (ms > 0 && ms <= DB_MIGRATION_TIMEOUT_MAX)
+         ? ms : DB_MIGRATION_TIMEOUT_MAX;
+}
+
 unsigned int db_conf_generation(void)
 {
   return db_config ? db_config->dbconf_generation : 0;
@@ -310,6 +339,13 @@ int db_register_driver(struct ModuleHandle* mod, const struct DbDriver* driver)
 
   log_write(LS_SYSTEM, L_INFO, 0, "Database driver %s registered",
             driver->dbdrv_name);
+
+  /* A driver loaded by hand arrives long after start-up, and the migrations
+   * table still has to exist.  Harmless at start-up, where the workers are
+   * not up yet and this finds nothing to do; main() asks again once they
+   * are.
+   */
+  migration_core_start();
 
   return 1;
 }
@@ -498,6 +534,76 @@ enum DbError db_exec(struct ModuleHandle* mod, const struct DbQuery* query,
                      DbResultFn cb, void* user)
 {
   return db_submit(mod, query, cb, user, DB_ROLE_WRITE);
+}
+
+enum DbError db_migrate(struct ModuleHandle* mod,
+                        const struct DbMigration* migration,
+                        DbResultFn cb, void* user)
+{
+  struct DbCall* call;
+  enum DbError err;
+
+  if (!migration || !migration->dbm_sql || !*migration->dbm_sql
+      || !migration->dbm_module || !*migration->dbm_module
+      || !migration->dbm_name || !*migration->dbm_name)
+    return DB_ERR_PARAM;
+
+  if (!db_driver || !db_driver->dbdrv_migrate)
+    return DB_ERR_UNAVAILABLE;
+  if (!db_config)
+    return DB_ERR_CONFIG;
+
+  call = (struct DbCall*) MyCalloc(1, sizeof(*call));
+  call->dbc_id = db_next_id++;
+  call->dbc_fn = cb;
+  call->dbc_user = user;
+  call->dbc_owner = mod;
+
+  call->dbc_next = db_calls;
+  db_calls = call;
+  db_stat_pending++;
+
+  err = (*db_driver->dbdrv_migrate)(call->dbc_id, migration);
+
+  if (err != DB_OK) {
+    if ((call = db_call_take(call->dbc_id)))
+      MyFree(call);
+    return err;
+  }
+
+  db_stat_total++;
+
+  return DB_OK;
+}
+
+unsigned int db_rows(struct json_t* data)
+{
+  if (!data || !db_driver || !db_driver->dbdrv_rows)
+    return 0;
+
+  return (*db_driver->dbdrv_rows)(data);
+}
+
+const char* db_row_str(struct json_t* data, unsigned int row,
+                       const char* column)
+{
+  const char* value;
+
+  if (!data || !column || !db_driver || !db_driver->dbdrv_row_str)
+    return "";
+
+  value = (*db_driver->dbdrv_row_str)(data, row, column);
+
+  return value ? value : "";
+}
+
+long long db_row_int(struct json_t* data, unsigned int row,
+                     const char* column)
+{
+  if (!data || !column || !db_driver || !db_driver->dbdrv_row_int)
+    return 0;
+
+  return (*db_driver->dbdrv_row_int)(data, row, column);
 }
 
 void db_complete(unsigned long id, struct json_t* data, unsigned int rows,

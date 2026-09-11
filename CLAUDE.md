@@ -129,8 +129,10 @@ the ABI changes mean recompiling modules.  A module registers commands
 registers is reverted on unload. Modules run in-process with no sandbox.
 They are built by the same CMake run via `ircu_add_modules()` (`cmake/IrcuModules.cmake`)
 and link against nothing: symbols resolve against the ircd executable, which is
-built with `ENABLE_EXPORTS`. A module that needs a library of its own declares it
-in its own fragment — `modules/<type>/<name>/module.cmake`, or
+built with `ENABLE_EXPORTS`. A module that ships SQL
+migrations keeps them in `migrations/` under its own directory, compiled in
+rather than installed (see **Migrations**). A module that needs a library of its
+own declares it in its own fragment — `modules/<type>/<name>/module.cmake`, or
 `modules/<type>/<name>.cmake` for a single-file module — which may set
 `IRCU_MODULE_LINK_LIBRARIES`, `IRCU_MODULE_INCLUDE_DIRECTORIES`,
 `IRCU_MODULE_COMPILE_{DEFINITIONS,OPTIONS}`, or `IRCU_MODULE_SKIP` to opt out
@@ -177,6 +179,22 @@ driver: one dedicated worker per pooled connection, always `PQsendPrepare` +
 `PQsendQueryPrepared` (never `PQexec`), with a hard deadline capped at
 `DB_TIMEOUT_MAX_MS` (5s) enforced by `poll()` rather than by libpq.
 
+**Migrations** (`include/migration.h`, `ircd/migration.c` + `ircd/migration_run.c`,
+`doc/readme.migrations`). A module with SQL migrations is a *directory* module
+with a `migrations/` subdirectory holding `v<N>_<name>.{up,down}.sql`. The build
+compiles them into the `.so` as string literals (`cmake/IrcuMigrations.cmake`) —
+they are never copied beside it — and the loader `dlsym`s them, validates them
+(format, `[A-Za-z0-9_]` names, versions 1..N without gaps, an up for every down)
+and **refuses the load** with a message naming the bad file. `migration.c` is the
+validator (no database, no client — unit-tested by `migration_t`);
+`migration_run.c` is the runner. A module's migrations never run automatically:
+an operator drives them with `/MODULE MIGRATION LIST|STATUS|APPLY|REVERT`. The
+one exception is the core set (`ircd/migrations/`), which creates the
+`migrations` table at start-up under `module_name = "core"` — a name no module
+may take. Each migration is one transaction (script + its `migrations` row),
+runs on its own connection off the pool, and gets `migration_timeout` rather
+than the 5s query cap.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact
@@ -187,7 +205,7 @@ notifications whose return value is ignored. All hooks run inline on the main th
 `ircd/worker.c` implements) and the channel modes by module (003, in Spanish);
 read the relevant one before changing either subsystem. Other useful docs:
 `doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
-`doc/readme.database`, `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root generates reference docs).
+`doc/readme.database`, `doc/readme.migrations`, `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root generates reference docs).
 
 ## Conventions
 

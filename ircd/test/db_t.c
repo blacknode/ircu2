@@ -134,6 +134,42 @@ static int configure(const char* dsn, const char* read_dsn, int pool,
   return db_conf_commit(err);
 }
 
+static void test_migration_timeout(void)
+{
+  const char* err = 0;
+
+  assert(configure("host=primary", 0, 0, 0, &err));
+  assert(db_conf_migration_timeout() == DB_MIGRATION_TIMEOUT_DEFAULT);
+
+  /* A separate budget from the query timeout, and a much larger one: a
+   * migration is DDL an operator is waiting on.
+   */
+  db_conf_unmark();
+  db_conf_clear();
+  db_conf_set_dsn(-1, strdup("host=primary"));
+  db_conf_set_timeout(1000);
+  db_conf_set_migration_timeout(300000);
+  assert(db_conf_commit(&err));
+  assert(db_conf_timeout() == 1000);
+  assert(db_conf_migration_timeout() == 300000);
+
+  printf("ok - migrations have a budget of their own\n");
+
+  /* It has a ceiling all the same. */
+  db_conf_unmark();
+  db_conf_clear();
+  db_conf_set_dsn(-1, strdup("host=primary"));
+  db_conf_set_migration_timeout(DB_MIGRATION_TIMEOUT_MAX * 4);
+  assert(db_conf_commit(&err));
+  assert(db_conf_migration_timeout() == DB_MIGRATION_TIMEOUT_MAX);
+
+  /* ... and it is not the query cap, which would make it useless. */
+  assert(DB_MIGRATION_TIMEOUT_MAX > DB_TIMEOUT_MAX_MS);
+
+  printf("ok - the migration timeout is clamped to %dms\n",
+         DB_MIGRATION_TIMEOUT_MAX);
+}
+
 /* ------------------------------------------------------------------------
  * The tests.
  * ------------------------------------------------------------------------ */
@@ -410,6 +446,7 @@ int main(void)
   test_conf_requires_dsn();
   test_conf_defaults_and_clamp();
   test_conf_generation_and_sweep();
+  test_migration_timeout();
   test_one_driver();
   test_query_round_trip();
   test_error_message();

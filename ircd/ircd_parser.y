@@ -242,6 +242,7 @@ static void free_slist(struct SLink **link) {
 %token WRITE_POOL
 %token TIMEOUT
 %token TIMEOUT_MS
+%token MIGRATION_TIMEOUT
 %token INCLUDE
 %token FROM
 %token TEOF
@@ -1554,7 +1555,7 @@ databaseblock: DATABASE
 databaseitems: databaseitem databaseitems | databaseitem;
 databaseitem: databasedsn | databaseread | databasewrite | databasepool |
   databasereadpool | databasewritepool | databasetimeout |
-  databasetimeoutms;
+  databasetimeoutms | databasemigrationtimeout;
 
 databasedsn: DSN '=' QSTRING ';'
 {
@@ -1591,6 +1592,14 @@ databasetimeout: TIMEOUT '=' timespec ';'
 databasetimeoutms: TIMEOUT_MS '=' expr ';'
 {
   db_conf_set_timeout($3);
+};
+/* Migrations get their own budget, and a much larger one: a migration is
+ * DDL an operator is waiting on, not a query a user is waiting on, and the
+ * five second rule would make any migration over a real table impossible.
+ */
+databasemigrationtimeout: MIGRATION_TIMEOUT '=' timespec ';'
+{
+  db_conf_set_migration_timeout($3 * 1000);
 };
 
 includeblock: INCLUDE {

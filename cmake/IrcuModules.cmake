@@ -15,6 +15,11 @@
 #                                  headers, and anything else is a resource
 #                                  copied next to the shared object
 #
+# A module that ships SQL migrations keeps them in a migrations/ subdirectory
+# of its own directory.  They are compiled into the shared object rather than
+# copied beside it, and a module with migrations must therefore be a module
+# built from a directory; see cmake/IrcuMigrations.cmake.
+#
 # A module that needs something the core knows nothing about -- a client
 # library, a header outside the tree, a definition of its own -- says so in
 # its own CMake fragment rather than in the core's build files:
@@ -173,6 +178,8 @@ endfunction()
 #
 # CONFIGURE_DEPENDS makes the build re-run the globs, so a new file or
 # directory is picked up by `cmake --build` without configuring again.
+include(IrcuMigrations)
+
 function(ircu_add_modules)
   if(ARGN)
     message(FATAL_ERROR
@@ -229,6 +236,17 @@ function(ircu_add_modules)
         set(directory "")
         set(sources "${entry}")
         set(resources "")
+
+        # Migrations belong to a module built from a directory.  A stray
+        # migrations/ beside a single-file module would be silently ignored,
+        # which is the one outcome worth refusing outright.
+        if(IS_DIRECTORY "${typedir}/migrations")
+          message(FATAL_ERROR
+            "${typedir}/migrations: migrations belong to one module, so a "
+            "module with them must be a directory -- "
+            "${typedir}/${name}/migrations/, with ${leaf} moved inside it. "
+            "See cmake/IrcuMigrations.cmake")
+        endif()
       else()
         continue()
       endif()
@@ -269,6 +287,17 @@ function(ircu_add_modules)
         message(STATUS "Module ${name}: not built (${IRCU_MODULE_SKIP})")
         list(APPEND skipped "${name}")
         continue()
+      endif()
+
+      # A module with migrations is a module built from a directory, with a
+      # migrations/ subdirectory.  The .sql files are embedded as a generated
+      # source; the loader validates them and refuses the module if they
+      # break the rules (see include/migration.h).
+      set(migration_source "")
+      if(directory AND IS_DIRECTORY "${directory}/migrations")
+        ircu_add_migrations("${name}" "${directory}/migrations"
+          ircu_module_migrations migration_source)
+        list(APPEND sources "${migration_source}")
       endif()
 
       if(directory)
@@ -320,6 +349,12 @@ function(_ircu_module_directory_contents dir sources_var resources_var)
       list(APPEND sources "${file}")
     elseif(relative MATCHES "\\.h$" OR relative STREQUAL "CMakeLists.txt"
            OR relative MATCHES "\\.cmake$")
+      continue()
+    elseif(relative MATCHES "^migrations/")
+      # Migrations are compiled into the shared object, never copied beside
+      # it: see cmake/IrcuMigrations.cmake.  A .sql that reached the install
+      # tree as a resource could be edited after it had been applied, and
+      # then the module and its schema would disagree with nobody noticing.
       continue()
     else()
       list(APPEND resources "${file}")

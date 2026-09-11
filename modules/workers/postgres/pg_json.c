@@ -37,7 +37,9 @@
 #include "postgres.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* OIDs; see pg_types.c for why they are written out. */
 #define PG_OID_BOOL    16
@@ -160,4 +162,105 @@ json_t* pg_json_rows(const PGresult* res)
   }
 
   return rows;
+}
+
+/* ------------------------------------------------------------------------
+ * Reading a result back, for a caller with no jansson.
+ *
+ * The ircd does not link against jansson and neither need a module, so the
+ * few things db.h offers for reading a row without it land here, where the
+ * library already is.  Main thread: these are called from a callback, on
+ * values the main thread owns.
+ * ------------------------------------------------------------------------ */
+
+/** Buffer behind pg_json_str(), which renders numbers and nested values. */
+static char pg_json_scratch[1024];
+
+/** The value at \a row / \a column, or NULL.
+ * @param[in] data A JSON array of row objects, or NULL.
+ * @param[in] row Row index, from zero.
+ * @param[in] column Column name.
+ */
+static json_t* pg_json_cell(json_t* data, unsigned int row,
+                            const char* column)
+{
+  json_t* object;
+
+  if (!data || !json_is_array(data) || !column)
+    return 0;
+
+  if (!(object = json_array_get(data, row)) || !json_is_object(object))
+    return 0;
+
+  return json_object_get(object, column);
+}
+
+unsigned int pg_json_count(json_t* data)
+{
+  if (!data || !json_is_array(data))
+    return 0;
+
+  return (unsigned int) json_array_size(data);
+}
+
+const char* pg_json_str(json_t* data, unsigned int row, const char* column)
+{
+  json_t* value = pg_json_cell(data, row, column);
+  char* dumped;
+
+  if (!value || json_is_null(value))
+    return 0;
+
+  /* A string is already text; everything else is rendered into the scratch
+   * buffer, which is why the result is only good until the next call.
+   */
+  if (json_is_string(value))
+    return json_string_value(value);
+
+  if (json_is_integer(value)) {
+    snprintf(pg_json_scratch, sizeof(pg_json_scratch), "%lld",
+             (long long) json_integer_value(value));
+    return pg_json_scratch;
+  }
+
+  if (json_is_real(value)) {
+    snprintf(pg_json_scratch, sizeof(pg_json_scratch), "%g",
+             json_real_value(value));
+    return pg_json_scratch;
+  }
+
+  if (json_is_boolean(value))
+    return json_is_true(value) ? "true" : "false";
+
+  if ((dumped = json_dumps(value, JSON_COMPACT | JSON_ENCODE_ANY))) {
+    strncpy(pg_json_scratch, dumped, sizeof(pg_json_scratch) - 1);
+    pg_json_scratch[sizeof(pg_json_scratch) - 1] = '\0';
+    free(dumped);
+    return pg_json_scratch;
+  }
+
+  return 0;
+}
+
+long long pg_json_int(json_t* data, unsigned int row, const char* column)
+{
+  json_t* value = pg_json_cell(data, row, column);
+
+  if (!value)
+    return 0;
+
+  if (json_is_integer(value))
+    return (long long) json_integer_value(value);
+  if (json_is_real(value))
+    return (long long) json_real_value(value);
+  if (json_is_boolean(value))
+    return json_is_true(value) ? 1 : 0;
+
+  /* A numeric column that came back as text -- an out-of-range value, say
+   * -- is still worth reading as a number when it is one.
+   */
+  if (json_is_string(value))
+    return strtoll(json_string_value(value), 0, 10);
+
+  return 0;
 }

@@ -103,6 +103,19 @@ struct json_t;
 /** Timeout used when @c Database{} does not set one, in milliseconds. */
 #define DB_TIMEOUT_DEFAULT_MS 5000
 
+/** Longest a migration may run, in milliseconds.
+ *
+ * An hour.  Migrations are not queries: they are DDL an operator asked for
+ * and is waiting on, and #DB_TIMEOUT_MAX_MS would make any migration over a
+ * table with real data in it impossible.  There is still a ceiling, because
+ * a migration blocked on a lock forever is a migration nobody ever hears
+ * about again.
+ */
+#define DB_MIGRATION_TIMEOUT_MAX 3600000
+
+/** Migration timeout when @c Database{} does not set one, in milliseconds. */
+#define DB_MIGRATION_TIMEOUT_DEFAULT 60000
+
 /** Most parameters one query may carry. */
 #define DB_MAX_PARAMS 64
 
@@ -331,6 +344,8 @@ struct DatabaseConf {
   int   dbconf_role_pool[DB_ROLE_LAST]; /**< Connections per role. */
   int   dbconf_timeout_ms;           /**< Query timeout, at most
                                           #DB_TIMEOUT_MAX_MS. */
+  int   dbconf_migration_ms;         /**< Migration timeout, at most
+                                          #DB_MIGRATION_TIMEOUT_MAX. */
   unsigned int dbconf_generation;    /**< Bumped every time this changes. */
 };
 
@@ -349,12 +364,107 @@ extern int db_conf_pool(enum DbRole role);
 /** Query timeout in milliseconds, already clamped to #DB_TIMEOUT_MAX_MS. */
 extern int db_conf_timeout(void);
 
+/** Migration timeout in milliseconds.
+ *
+ * Not capped at #DB_TIMEOUT_MAX_MS: an index on a table with real data in it
+ * takes minutes, and the five second rule exists to stop a user's command
+ * stalling the server, which is not what a migration is.  Capped at
+ * #DB_MIGRATION_TIMEOUT_MAX all the same, so that a stuck migration
+ * eventually gives the operator an answer.
+ */
+extern int db_conf_migration_timeout(void);
+
 /** Counter that changes whenever the configuration does.
  *
  * A driver records this when it builds its pools and compares on rehash;
  * an unchanged generation means nothing it cares about moved.
  */
 extern unsigned int db_conf_generation(void);
+
+/*
+ * Reading a result without linking against jansson.
+ *
+ * A consumer that already links jansson reads #DbResult::data directly and
+ * ignores all of this.  The ircd does not, and neither does a module that
+ * only wants two columns out of a row, so the little that is needed is asked
+ * of the driver instead.  Every one of these is safe on a NULL result and on
+ * a row or column that is not there: a caller checking #DbErrDetails first
+ * should not have to check again here.
+ */
+
+/** Number of rows in \a data.
+ * @param[in] data #DbResult::data, or NULL.
+ */
+extern unsigned int db_rows(struct json_t* data);
+
+/** One column of one row, as text.
+ *
+ * Numbers and booleans are rendered; a JSON object or array comes back as
+ * its compact encoding.
+ * @param[in] data #DbResult::data, or NULL.
+ * @param[in] row Row index, from zero.
+ * @param[in] column Column name.
+ * @return The value, or "" when there is no such row or column, or when it
+ *   is SQL NULL.  Valid until the next call.
+ */
+extern const char* db_row_str(struct json_t* data, unsigned int row,
+                              const char* column);
+
+/** One column of one row, as an integer.
+ * @param[in] data #DbResult::data, or NULL.
+ * @param[in] row Row index, from zero.
+ * @param[in] column Column name.
+ * @return The value, or zero when there is no such row or column, when it is
+ *   SQL NULL, or when it is not a number.
+ */
+extern long long db_row_int(struct json_t* data, unsigned int row,
+                            const char* column);
+
+/*
+ * Migrations.
+ *
+ * A migration is not a query and does not go through db_query(): its SQL is
+ * DDL, which no database prepares, and it is a script rather than one
+ * statement.  It gets its own entry point, its own connection and its own
+ * timeout, and it is the one thing in this API that runs SQL the caller
+ * supplied as a whole script.  That SQL comes from a file the module author
+ * shipped -- never from a user, never from a parameter -- and the record of
+ * having run it is written with bound parameters like everything else.
+ *
+ * See include/migration.h; ircd/migration.c is the only caller.
+ */
+
+/** One migration to run, and what to record for it. */
+struct DbMigration {
+  const char*  dbm_module;    /**< Module it belongs to, or "core". */
+  unsigned int dbm_version;   /**< Version being applied or reverted. */
+  const char*  dbm_name;      /**< Migration name, for the record. */
+  const char*  dbm_sql;       /**< The whole script. */
+  const char*  dbm_exec_by;   /**< Operator's nick, for the record. */
+  int          dbm_revert;    /**< Non-zero to revert instead of apply. */
+};
+
+/** Run one migration, and record it, atomically.
+ *
+ * The script and the row that says it ran are one transaction: a script that
+ * fails leaves neither the change nor the record, and a recorded migration
+ * is one that actually happened.  Reverting deletes the row in the same way.
+ *
+ * Takes as long as @c migration_timeout allows -- minutes, not the five
+ * seconds a query gets, because an operator is waiting for a command they
+ * typed rather than a user waiting for the server.
+ *
+ * @param[in] mod Module making the call, or NULL from the core.
+ * @param[in] migration What to run.
+ * @param[in] cb Called in the main thread with the result.  On success its
+ *   #DbResult::data holds the one row that was recorded, whose
+ *   @c exec_duration says how long the script took.
+ * @param[in] user Passed through to \a cb.
+ * @return #DB_OK when the migration was accepted.
+ */
+extern enum DbError db_migrate(struct ModuleHandle* mod,
+                               const struct DbMigration* migration,
+                               DbResultFn cb, void* user);
 
 /*
  * Instrumentation.
@@ -405,6 +515,39 @@ struct DbDriver {
    * @param[in] data Value from db_complete(), possibly NULL.
    */
   void (*dbdrv_release)(struct json_t* data);
+
+  /** Start one migration.  Optional; NULL means the driver has none.
+   *
+   * The same contract as #dbdrv_submit, with a different deadline and a
+   * connection of its own.
+   * @param[in] id Handle to hand back to db_complete().
+   * @param[in] migration What to run.
+   * @return #DB_OK when it was queued.
+   */
+  enum DbError (*dbdrv_migrate)(unsigned long id,
+                                const struct DbMigration* migration);
+
+  /** Rows in a result the driver produced.  Optional.
+   * @param[in] data A value from db_complete(), possibly NULL.
+   */
+  unsigned int (*dbdrv_rows)(struct json_t* data);
+
+  /** One column of one row, as text.  Optional.
+   * @param[in] data A value from db_complete(), possibly NULL.
+   * @param[in] row Row index.
+   * @param[in] column Column name.
+   * @return The value, or NULL.  Valid until the next call.
+   */
+  const char* (*dbdrv_row_str)(struct json_t* data, unsigned int row,
+                               const char* column);
+
+  /** One column of one row, as an integer.  Optional.
+   * @param[in] data A value from db_complete(), possibly NULL.
+   * @param[in] row Row index.
+   * @param[in] column Column name.
+   */
+  long long (*dbdrv_row_int)(struct json_t* data, unsigned int row,
+                             const char* column);
 };
 
 /** Register the loaded module as the database driver.
@@ -455,6 +598,8 @@ extern void db_conf_set_dsn(int role, char* dsn);
 extern void db_conf_set_pool(int role, int size);
 /** Set the query timeout, in milliseconds; clamped on commit. */
 extern void db_conf_set_timeout(int ms);
+/** Set the migration timeout, in milliseconds; clamped on commit. */
+extern void db_conf_set_migration_timeout(int ms);
 /** Finish a @c Database{} block: validate it and publish it.
  * @param[out] errstr Receives a reason when this returns zero.
  * @return Non-zero when the block was accepted.

@@ -14,6 +14,8 @@
 
 set(IRCU_IRCD_DIR "${PROJECT_SOURCE_DIR}/ircd")
 
+include(IrcuMigrations)
+
 # ircd_string.c #includes the generated chattr.tab.c; source properties do not
 # cross directories, so the dependency is restated here.
 set_source_files_properties("${IRCU_IRCD_DIR}/ircd_string.c"
@@ -74,6 +76,12 @@ add_ircu_test(db_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
+add_ircu_test(migration_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/migration.c")
+
 add_ircu_test(user_modes_t
   user_modes_stub.c
   "${IRCU_IRCD_DIR}/client.c"
@@ -107,7 +115,9 @@ add_ircu_test(module_t
   "${IRCU_IRCD_DIR}/db.c"
   "${IRCU_IRCD_DIR}/hooks.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/migration.c"
   "${IRCU_IRCD_DIR}/module.c"
   "${IRCU_IRCD_DIR}/worker.c")
 target_link_libraries(module_t PRIVATE ${CMAKE_DL_LIBS})
@@ -134,10 +144,26 @@ function(_ircu_test_module target source subdir)
 endfunction()
 
 foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_umode
-                 mod_cmode)
+                 mod_cmode mod_core)
   _ircu_test_module(${_fixture} ${_fixture} /test)
 endforeach()
 _ircu_test_module(mod_cmd mod_cmd /test/mod_cmd)
+
+# Two fixtures with migrations, built the way a real module with migrations
+# is: the .sql files are embedded as a generated source rather than copied
+# anywhere.  mod_mig's set is well-formed; mod_migbad's has an up with no
+# down, which the loader must refuse.
+function(_ircu_test_module_migrations target migrations)
+  ircu_add_migrations("${target}" "${CMAKE_CURRENT_SOURCE_DIR}/${migrations}"
+    ircu_module_migrations generated)
+  target_sources(${target} PRIVATE "${generated}")
+endfunction()
+
+_ircu_test_module(mod_mig mod_mig /test/mod_mig)
+_ircu_test_module_migrations(mod_mig modules/mod_mig_migrations)
+
+_ircu_test_module(mod_migbad mod_migbad /test/mod_migbad)
+_ircu_test_module_migrations(mod_migbad modules/mod_migbad_migrations)
 
 # mod_good again under two names the loader must refuse: mod_dup is in two
 # type directories at once, and mod_flat sits directly in the module

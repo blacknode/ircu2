@@ -47,6 +47,9 @@
 #ifndef INCLUDED_worker_h
 #include "worker.h"     /* struct WorkTask, WorkerMainFn */
 #endif
+#ifndef INCLUDED_migration_h
+#include "migration.h"  /* struct MigrationSet */
+#endif
 
 struct Client;
 struct ModuleHandle;
@@ -58,7 +61,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 4
+#define IRCU_MODULE_ABI 5
 
 /** Description of a module, exported by the shared object.
  *
@@ -107,6 +110,18 @@ extern const char* module_relpath(const struct ModuleHandle* mod);
  * from a directory, the resources that were copied in beside it. */
 extern const char* module_dir(const struct ModuleHandle* mod);
 extern const char* module_file(const struct ModuleHandle* mod);
+
+/** The module's migrations, or NULL if it ships none.
+ *
+ * Built and validated while the module was loading; a module whose
+ * migrations/ directory broke any of the rules in migration.h did not load
+ * at all, so a handle that exists has a set that is known good.
+ *
+ * Nothing in it runs by itself.  An operator applies and reverts migrations
+ * with /MODULE MIGRATION; see doc/readme.migrations.
+ */
+extern const struct MigrationSet* module_migrations(
+  const struct ModuleHandle* mod);
 /** Nick that loaded the module, or NULL if the configuration file did. */
 extern const char* module_loaded_by(const struct ModuleHandle* mod);
 extern const char* module_version(const struct ModuleHandle* mod);

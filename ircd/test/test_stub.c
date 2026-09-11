@@ -39,3 +39,15 @@ exit_client(struct Client *cptr, struct Client *victim, struct Client *killer,
     Debug((DEBUG_LIST, "exit_client(%p, %p, %p, \"%s\")\n", cptr, victim, killer, comment));
     return 0;
 }
+
+/* Stub for migration_core_start().
+ *
+ * db.c calls it when a driver registers, so that a database module loaded
+ * by hand still gets the migrations table created.  The real one lives in
+ * migration_run.c, which reaches into the event loop, the client list and
+ * send.c; a test that links db.c or module.c wants the validation half of
+ * the migration subsystem (migration.c) and none of that.
+ */
+void migration_core_start(void)
+{
+}

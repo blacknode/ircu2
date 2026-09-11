@@ -1,5 +1,5 @@
 /*
- * IRC - Internet Relay Chat, modules/trace_events.c
+ * IRC - Internet Relay Chat, modules/hooks/trace_events.c
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

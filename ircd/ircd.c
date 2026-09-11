@@ -677,7 +677,7 @@ int main(int argc, char **argv) {
   memset(&me_con, 0, sizeof(me_con));
   /* The magic makes me_con a Connection make_client() will accept as a
    * parent: a module introducing a client on the server's own behalf
-   * (modules/m_bot.c) passes &me the way a server link is passed for a
+   * (modules/commands/m_bot.c) passes &me the way a server link is passed for a
    * remote user, and the client then shares this descriptor-less
    * connection, so anything sent to it is dropped in can_send().
    */

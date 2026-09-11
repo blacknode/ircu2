@@ -98,7 +98,14 @@ struct ModuleInfo {
  * into struct ModuleHandle, which is private to the server.
  */
 extern const char* module_name(const struct ModuleHandle* mod);
+/** Absolute path of the shared object; for the module, not for display. */
 extern const char* module_path(const struct ModuleHandle* mod);
+/** The same path relative to the module directory: "<type>/<name>.so" or
+ * "<type>/<name>/<name>.so".  This is what the listings show. */
+extern const char* module_relpath(const struct ModuleHandle* mod);
+/** Absolute directory holding the shared object -- and, for a module built
+ * from a directory, the resources that were copied in beside it. */
+extern const char* module_dir(const struct ModuleHandle* mod);
 extern const char* module_file(const struct ModuleHandle* mod);
 /** Nick that loaded the module, or NULL if the configuration file did. */
 extern const char* module_loaded_by(const struct ModuleHandle* mod);
@@ -347,8 +354,10 @@ extern void module_shutdown(void);
 /** Shut down and release the module system; main() only, once, at exit. */
 extern void module_close(void);
 
-/** Load MOD_PATH/<name>.so; \a name carries no directory and no suffix.
- * \a loaded_by is the loading operator's nick, or NULL for the config file.
+/** Load <name>.so from under MOD_PATH, searching every type directory for
+ * <type>/<name>.so or <type>/<name>/<name>.so; \a name carries no
+ * directory and no suffix.  \a loaded_by is the loading operator's nick,
+ * or NULL for the config file.
  */
 extern struct ModuleHandle* module_load(const char* name,
                                         const char* loaded_by,

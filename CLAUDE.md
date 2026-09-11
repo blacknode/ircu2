@@ -37,8 +37,8 @@ Every old `configure` switch has an `IRCU_*` cache variable (`cmake/IrcuOptions.
 so it cannot override that.
 
 CI (`.github/workflows/build.yml`) builds the openssl/gnutls/none × RelWithDebInfo
-matrix plus one Debug build, runs ctest, and checks that every `modules/*.so`
-resolves only symbols the ircd exports.
+matrix plus one Debug build, runs ctest, and checks that every `.so` under
+`build/modules/` resolves only symbols the ircd exports.
 
 ## Tests
 
@@ -122,14 +122,22 @@ the ABI changes mean recompiling modules.  A module registers commands
 (`module_add_user_mode()`, which returns a server-assigned bit) and channel modes
 (`module_add_chan_mode()`, whose bit follows from the letter); everything it
 registers is reverted on unload. Modules run in-process with no sandbox.
-They are built by the same CMake run via `ircu_add_module()` (`cmake/IrcuModules.cmake`)
+They are built by the same CMake run via `ircu_add_modules()` (`cmake/IrcuModules.cmake`)
 and link against nothing: symbols resolve against the ircd executable, which is
-built with `ENABLE_EXPORTS`. Examples in `modules/`. A module is identified by
-name, never by path: `IRCU_MPATH` (default `$DPATH/modules`; macro `MOD_PATH` in
-config.h — `MPATH` was already taken by the MOTD feature) is both where
-`ircu_add_module()` installs and where the loader looks, appending `<name>.so`. `Module { name = "nocaps"; };` and
+built with `ENABLE_EXPORTS`. Sources live in `modules/<type>/` (`commands`,
+`modes`, `hooks`, `workers`; a type is just a directory) as either
+`<name>.c` or a `<name>/` directory whose `*.c` are compiled in, `*.h` are
+private and everything else is a resource copied beside the `.so`; the build
+and install trees mirror that layout (`<type>/<name>.so` or
+`<type>/<name>/<name>.so`). A module is identified by name, never by path or
+type: `IRCU_MPATH` (default `$DPATH/modules`; macro `MOD_PATH` in config.h —
+`MPATH` was already taken by the MOTD feature) is both where the build installs
+and where the loader looks, searching every type directory for the two shapes
+and refusing a name found under two. `Module { name = "nocaps"; };` and
 `/MODULE LOAD|UNLOAD|RELOAD nocaps` (privilege `module_admin`) all take that name;
-`/STATS M` reports state.
+`/MODULE LIST` and `/STATS M` report state with the path relative to the module
+directory (`modules/hooks/nocaps.so`), never the absolute one. A module reaches
+its resources through `module_dir()`.
 
 **Workers** (`include/worker.h`, `ircd/worker.c`, `doc/readme.workers`). Optional
 threads for work that would otherwise stall the core: `worker_submit()` hands a

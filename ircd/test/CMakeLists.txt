@@ -105,15 +105,36 @@ set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
 
 set(IRCU_TEST_MODULE_DIR "${CMAKE_CURRENT_BINARY_DIR}/modules")
 
-foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_cmd mod_umode
-                 mod_cmode)
-  add_library(${_fixture} MODULE "modules/${_fixture}.c")
-  target_link_libraries(${_fixture} PRIVATE ircu_config)
-  set_target_properties(${_fixture} PROPERTIES
+# The fixtures are laid out the way the server expects the module
+# directory: a type directory ("test") holding either <name>.so or
+# <name>/<name>.so.  mod_cmd takes the directory shape so both are covered.
+#
+# _ircu_test_module(<target> <source> <subdir> [<output name>])
+function(_ircu_test_module target source subdir)
+  add_library(${target} MODULE "modules/${source}.c")
+  target_link_libraries(${target} PRIVATE ircu_config)
+  set_target_properties(${target} PROPERTIES
     PREFIX ""
-    LIBRARY_OUTPUT_DIRECTORY "${IRCU_TEST_MODULE_DIR}")
-  add_dependencies(module_t ${_fixture})
+    SUFFIX ".so"
+    LIBRARY_OUTPUT_DIRECTORY "${IRCU_TEST_MODULE_DIR}${subdir}")
+  if(ARGC GREATER 3)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME "${ARGV3}")
+  endif()
+  add_dependencies(module_t ${target})
+endfunction()
+
+foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_umode
+                 mod_cmode)
+  _ircu_test_module(${_fixture} ${_fixture} /test)
 endforeach()
+_ircu_test_module(mod_cmd mod_cmd /test/mod_cmd)
+
+# mod_good again under two names the loader must refuse: mod_dup is in two
+# type directories at once, and mod_flat sits directly in the module
+# directory, which is not a place modules are looked for.
+_ircu_test_module(mod_dup_alpha mod_good /alpha mod_dup)
+_ircu_test_module(mod_dup_beta mod_good /beta mod_dup)
+_ircu_test_module(mod_flat mod_good "" mod_flat)
 
 # The fixture directory is baked in rather than passed as a test argument:
 # a compile definition cannot drift out of sync with the test registration.

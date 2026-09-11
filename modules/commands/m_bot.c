@@ -1,5 +1,5 @@
 /*
- * IRC - Internet Relay Chat, modules/m_bot.c
+ * IRC - Internet Relay Chat, modules/commands/m_bot.c
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -45,7 +45,7 @@
  * sends goes straight to send.c rather than through the relay layer,
  * whose flood limits assert on a client that is not local.
  *
- * Every bot carries user mode +B if modules/m_botmode.c has registered
+ * Every bot carries user mode +B if modules/modes/m_botmode.c has registered
  * the letter; it is looked up when a bot is created rather than assumed,
  * so this module loads without it, just less usefully.
  *
@@ -82,7 +82,7 @@
 
 #include <string.h>
 
-/** The user mode that marks a bot; modules/m_botmode.c registers it. */
+/** The user mode that marks a bot; modules/modes/m_botmode.c registers it. */
 #define BOT_UMODE 'B'
 
 /** One bot this module owns. */

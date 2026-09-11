@@ -222,7 +222,7 @@ static void test_remove_clears_the_mode_from_users(void)
   printf("Passed: removing a mode takes it off the users that carry it\n");
 }
 
-/** A client the server introduced on its own behalf, as modules/m_bot.c
+/** A client the server introduced on its own behalf, as modules/commands/m_bot.c
  * does: its server is &me but its connection is &me's, so it is not
  * MyUser().  Nobody else will announce its modes, so this server must.
  */

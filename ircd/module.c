@@ -37,7 +37,9 @@
 #include "worker.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
+#include <dirent.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +82,8 @@ struct ModuleHandle {
   struct ModuleInfo *mh_info;    /**< The module's exported description. */
   char *mh_file;                 /**< Name the module was loaded by. */
   char *mh_path;                 /**< Path the module was loaded from. */
+  char *mh_relpath;              /**< The same, relative to #MOD_PATH. */
+  char *mh_dir;                  /**< Directory of #mh_path. */
   time_t mh_mtime;               /**< Modification time when loaded. */
   int mh_marked;                 /**< Seen in the running configuration. */
   struct ModuleCommand *mh_cmds; /**< Commands this module registered. */
@@ -101,6 +105,12 @@ struct ModuleManager {
 /** Manager (stats & more) */
 struct ModuleManager *manager;
 
+/** Where the last failure was explained; see module_load().  Big enough
+ * that the ambiguity message, which quotes two relative paths, never
+ * truncates.
+ */
+static char errbuf[1024];
+
 static int module_unload_internal(struct ModuleHandle *mod, int quiet);
 
 /** Get the name of a module.
@@ -113,12 +123,43 @@ const char *module_name(const struct ModuleHandle *mod) {
 }
 
 /** Get the path a module was loaded from.
+ *
+ * This is an absolute path, for the module's own use; what an operator is
+ * shown is module_relpath().
+ *
  * @param[in] mod Module to query.
  * @return Filesystem path of the shared object.
  */
 const char *module_path(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return mod->mh_path;
+}
+
+/** Get where a module sits under the module directory.
+ *
+ * "<type>/<name>.so" or "<type>/<name>/<name>.so": enough to find the
+ * module in the tree, and nothing about where that tree is on the host,
+ * which is why the listings print this and not module_path().
+ *
+ * @param[in] mod Module to query.
+ * @return Path of the shared object relative to #MOD_PATH.
+ */
+const char *module_relpath(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return mod->mh_relpath;
+}
+
+/** Get the directory a module's shared object is in.
+ *
+ * A module built from a directory has its resources copied here, beside
+ * the shared object, so this is how it finds them.
+ *
+ * @param[in] mod Module to query.
+ * @return Absolute directory, without a trailing slash.
+ */
+const char *module_dir(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return mod->mh_dir;
 }
 
 /** Get the name a module was loaded by.
@@ -689,20 +730,32 @@ int module_del_hook(struct ModuleHandle *mod, enum HookType type, HookFn fn) {
 
 /** Turn a module name into the path of its shared object.
  *
- * The name is a plain file name under #MOD_PATH: it may not contain a
- * directory separator and may not be a relative directory reference, so a
- * Module{} block or a /MODULE LOAD cannot reach outside the module
- * directory the server was built with.
+ * The name is a bare name: it may not contain a directory separator and
+ * may not be a relative directory reference, so a Module{} block or a
+ * /MODULE LOAD cannot reach outside the module directory the server was
+ * built with.
+ *
+ * The module directory is organised by type, and a name says nothing
+ * about the type, so every type directory is searched for the two shapes
+ * a module comes in: <type>/<name>.so, a module built from one source,
+ * and <type>/<name>/<name>.so, one built from a directory.  Exactly one
+ * match is a module; none is an unknown name, and two is refused rather
+ * than picked from, because whichever won would be an accident of readdir
+ * order.  Nothing directly in the module directory is considered.
  *
  * @param[in] name Module name, without directory or ".so" suffix.
- * @param[out] buf Receives the resolved path.
- * @param[in] len Size of \a buf.
+ * @param[out] path Receives the absolute path of the shared object.
+ * @param[in] pathlen Size of \a path.
+ * @param[out] relpath Receives the same path relative to #MOD_PATH.
+ * @param[in] rellen Size of \a relpath.
  * @param[out] errstr If non-NULL, receives the reason the name was refused.
  * @return Non-zero on success.
  */
-static int module_resolve(const char *name, char *buf, size_t len,
-                          const char **errstr) {
-  int written;
+static int module_resolve(const char *name, char *path, size_t pathlen,
+                          char *relpath, size_t rellen, const char **errstr) {
+  struct dirent *ent;
+  DIR *dir;
+  unsigned int found = 0;
 
   if (!name || !*name) {
     if (errstr)
@@ -716,10 +769,76 @@ static int module_resolve(const char *name, char *buf, size_t len,
     return 0;
   }
 
-  written = snprintf(buf, len, "%s/%s.so", IRCU_MODULE_DIR, name);
-  if (written < 0 || (size_t)written >= len) {
+  if (!(dir = opendir(IRCU_MODULE_DIR))) {
+    snprintf(errbuf, sizeof(errbuf), "cannot open the module directory: %s",
+             strerror(errno));
     if (errstr)
-      *errstr = "module name is too long";
+      *errstr = errbuf;
+    return 0;
+  }
+
+  while ((ent = readdir(dir))) {
+    char candidate[1024];
+    char rel[256];
+    struct stat sb;
+    int shape;
+
+    /* Hidden entries are nobody's type directory, and this also covers
+     * "." and "..".
+     */
+    if (ent->d_name[0] == '.')
+      continue;
+
+    if (snprintf(candidate, sizeof(candidate), "%s/%s", IRCU_MODULE_DIR,
+                 ent->d_name) >= (int)sizeof(candidate)
+        || stat(candidate, &sb) < 0 || !S_ISDIR(sb.st_mode))
+      continue;
+
+    for (shape = 0; shape < 2; shape++) {
+      int written;
+
+      if (shape == 0)
+        written = snprintf(rel, sizeof(rel), "%s/%s.so", ent->d_name, name);
+      else
+        written = snprintf(rel, sizeof(rel), "%s/%s/%s.so", ent->d_name, name,
+                           name);
+      if (written < 0 || (size_t)written >= sizeof(rel)
+          || (size_t)written >= rellen)
+        continue;
+
+      written = snprintf(candidate, sizeof(candidate), "%s/%s",
+                         IRCU_MODULE_DIR, rel);
+      if (written < 0 || (size_t)written >= sizeof(candidate)
+          || (size_t)written >= pathlen)
+        continue;
+
+      if (stat(candidate, &sb) < 0 || !S_ISREG(sb.st_mode))
+        continue;
+
+      if (found++) {
+        snprintf(errbuf, sizeof(errbuf),
+                 "module %s is ambiguous: found as modules/%s and modules/%s",
+                 name, relpath, rel);
+        closedir(dir);
+        if (errstr)
+          *errstr = errbuf;
+        return 0;
+      }
+
+      strcpy(path, candidate);
+      strcpy(relpath, rel);
+    }
+  }
+
+  closedir(dir);
+
+  if (!found) {
+    snprintf(errbuf, sizeof(errbuf),
+             "no module named %s: looked for <type>/%s.so and "
+             "<type>/%s/%s.so under the module directory",
+             name, name, name, name);
+    if (errstr)
+      *errstr = errbuf;
     return 0;
   }
 
@@ -728,9 +847,9 @@ static int module_resolve(const char *name, char *buf, size_t len,
 
 /** Load a module by name from the module directory.
  *
- * The shared object is #MOD_PATH/<name>.so; see module_resolve().  On
- * failure nothing is left behind: the shared object is closed again and no
- * handle is added to the module list.
+ * The shared object is <name>.so under one of the type directories of
+ * #MOD_PATH; see module_resolve().  On failure nothing is left behind: the
+ * shared object is closed again and no handle is added to the module list.
  *
  * @param[in] name Module name, as a Module{} block or /MODULE LOAD gives it.
  * @param[in] loaded_by Nick of the operator loading it, or NULL when the
@@ -742,10 +861,11 @@ static int module_resolve(const char *name, char *buf, size_t len,
  */
 struct ModuleHandle *module_load(const char *name, const char *loaded_by,
                                  const char **errstr) {
-  static char errbuf[512];
   struct ModuleHandle *mod;
   struct ModuleInfo *info;
   char path[1024];
+  char relpath[256];
+  char *slash;
   void *dl;
 
   assert(0 != name);
@@ -759,7 +879,8 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
     return 0;
   }
 
-  if (!module_resolve(name, path, sizeof(path), errstr))
+  if (!module_resolve(name, path, sizeof(path), relpath, sizeof(relpath),
+                      errstr))
     return 0;
 
   if (module_find_file(name)) {
@@ -824,6 +945,11 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
   if (loaded_by)
     DupString(mod->mh_loaded_by, loaded_by);
   DupString(mod->mh_path, path);
+  DupString(mod->mh_relpath, relpath);
+  /* module_resolve() built the path with at least one '/' in it. */
+  DupString(mod->mh_dir, path);
+  if ((slash = strrchr(mod->mh_dir, '/')))
+    *slash = '\0';
   mod->mh_mtime = module_mtime(path);
   mod->mh_marked = 1;
 
@@ -932,6 +1058,8 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
   MyFree(mod->mh_file);
   MyFree(mod->mh_loaded_by);
   MyFree(mod->mh_path);
+  MyFree(mod->mh_relpath);
+  MyFree(mod->mh_dir);
   MyFree(mod);
 
   /* dlclose() last: mh_info points into the object we are about to
@@ -1015,7 +1143,7 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
   for (mod = manager->mod_list; mod; mod = mod->mh_next)
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
                ":Module %s %s: %u command%s, %u user mode%s%s%s, "
-               "%u channel mode%s%s%s, from %s, loaded by %s",
+               "%u channel mode%s%s%s, from modules/%s, loaded by %s",
                mod->mh_info->mi_name, module_version(mod),
                module_command_count(mod),
                module_command_count(mod) == 1 ? "" : "s",
@@ -1026,7 +1154,7 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
                module_chan_mode_count(mod),
                module_chan_mode_count(mod) == 1 ? "" : "s",
                module_chan_mode_count(mod) ? " " : "",
-               module_chan_mode_chars(mod), mod->mh_path,
+               module_chan_mode_chars(mod), mod->mh_relpath,
                mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
 
   /* Only for modules that actually use workers: on a server where nothing

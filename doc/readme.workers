@@ -363,13 +363,15 @@ than "no", it is a bug, whether or not it has caused one yet.
 THE EXAMPLES
 ============
 
-  modules/worker_demo.c     adds /HASHPASS, which derives a key with
+  modules/workers/worker_demo.c
+                            adds /HASHPASS, which derives a key with
                             PBKDF2-HMAC-SHA1 in a pool thread; the
                             reference for worker_submit() and for the
                             client reference.  Ask it for a few million
                             rounds and watch the server keep answering.
 
-  modules/worker_ticker.c   starts a thread of its own that waits on its
+  modules/workers/worker_ticker.c
+                            starts a thread of its own that waits on its
                             stop descriptor and posts back every ten
                             seconds; the reference for worker_spawn(),
                             worker_post() and worker_stop_fd().

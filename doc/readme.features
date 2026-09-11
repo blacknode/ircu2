@@ -864,7 +864,7 @@ BOT_HOSTNAME
  * Default: "bots.undernet.org"
 
 The suffix of the virtual host given to network bots created with /BOT
-(modules/m_bot.c).  A bot's username is its nickname in lower case and
+(modules/commands/m_bot.c).  A bot's username is its nickname in lower case and
 its host is that name followed by a dot and this value, so with the
 default a bot named "Helper" appears as helper@helper.bots.undernet.org.
 The value is read when a bot is created; changing it afterwards does not

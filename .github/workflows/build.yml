@@ -65,7 +65,10 @@ jobs:
       - name: Check the example modules built and resolve only core symbols
         run: |
           set -e
-          for so in build/modules/*.so; do
+          # Modules mirror the source tree: build/modules/<type>/<name>.so,
+          # or <type>/<name>/<name>.so for one built from a directory.
+          test -n "$(find build/modules -mindepth 2 -name '*.so')"
+          for so in $(find build/modules -mindepth 2 -name '*.so' | sort); do
             echo "== $so"
             test -f "$so"
             # Anything a module needs that the ircd does not export would

@@ -1,5 +1,5 @@
 /*
- * IRC - Internet Relay Chat, modules/m_botmode.c
+ * IRC - Internet Relay Chat, modules/modes/m_botmode.c
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
  * The mode is a label, not a policy: it says nothing about what the
  * client may do, only what it is, so that other code -- /WHOIS output,
  * a module that treats bots differently -- has one flag to look at.
- * modules/m_bot.c sets it on every bot it creates by looking the letter
+ * modules/commands/m_bot.c sets it on every bot it creates by looking the letter
  * up with client_find_user_mode(), so the two modules share nothing but
  * the letter and this module loads first.
  *

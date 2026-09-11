@@ -6,9 +6,11 @@
  * module list.
  *
  * The test modules live in modules/ next to this file and are built as
- * MODULE libraries by CMake.  module.c is compiled with IRCU_MODULE_DIR
- * pointing at that build directory, so the loader resolves the fixtures by
- * name just as the server resolves real modules against MOD_PATH.
+ * MODULE libraries by CMake into a tree shaped like the server's module
+ * directory: a type directory holding <name>.so or <name>/<name>.so.
+ * module.c is compiled with IRCU_MODULE_DIR pointing at that build
+ * directory, so the loader resolves the fixtures by name just as the
+ * server resolves real modules against MOD_PATH.
  */
 
 #include "module.h"
@@ -63,11 +65,21 @@ static void test_load_good(void)
   assert(0 == strcmp(module_name(mod), "mod_good"));
 
   /* Loaded by name; the name is what a later load or unload names, and the
-   * path the loader built from it ends in that name.
+   * path the loader built from it ends in that name, under the type
+   * directory it found the module in.
    */
   assert(module_find_file("mod_good") == mod);
   assert(0 == strcmp(module_file(mod), "mod_good"));
-  assert(0 != strstr(module_path(mod), "/mod_good.so"));
+  assert(0 != strstr(module_path(mod), "/test/mod_good.so"));
+  assert(0 == strcmp(module_relpath(mod), "test/mod_good.so"));
+
+  /* The directory is the path without the file name, and is absolute. */
+  assert(module_dir(mod)[0] == '/');
+  assert(strlen(module_dir(mod)) + strlen("/mod_good.so")
+         == strlen(module_path(mod)));
+  assert(0 == strncmp(module_dir(mod), module_path(mod),
+                      strlen(module_dir(mod))));
+  assert(0 == strcmp(module_dir(mod) + strlen(module_dir(mod)) - 5, "/test"));
 
   /* Name lookup is case-insensitive, like the rest of ircu. */
   assert(module_find("MOD_GOOD") == mod);
@@ -122,16 +134,48 @@ static void test_reject_failed_init(void)
   printf("Passed: failed mi_init unwinds the load\n");
 }
 
-/** A path that is not a shared object at all is refused. */
+/** A name that matches nothing in any type directory is refused. */
 static void test_reject_missing_file(void)
 {
   const char* err = 0;
 
   assert(module_load("no_such_module_here", 0, &err) == 0);
   assert(err != 0);
+  assert(strstr(err, "no_such_module_here") != 0);
   assert(module_count() == 0);
 
   printf("Passed: missing file rejected\n");
+}
+
+/** A shared object directly in the module directory is not a module: the
+ * loader only looks inside the type directories.
+ */
+static void test_reject_flat(void)
+{
+  const char* err = 0;
+
+  assert(module_load("mod_flat", 0, &err) == 0);
+  assert(err != 0);
+  assert(module_count() == 0);
+
+  printf("Passed: a shared object outside any type directory is not found\n");
+}
+
+/** The same name under two type directories is refused rather than
+ * resolved to whichever readdir() happened to return first.
+ */
+static void test_reject_ambiguous(void)
+{
+  const char* err = 0;
+
+  assert(module_load("mod_dup", 0, &err) == 0);
+  assert(err != 0);
+  assert(strstr(err, "ambiguous") != 0);
+  assert(strstr(err, "alpha/mod_dup.so") != 0);
+  assert(strstr(err, "beta/mod_dup.so") != 0);
+  assert(module_count() == 0);
+
+  printf("Passed: a name found under two types is rejected\n");
 }
 
 /** The nick that loaded a module is recorded, and outlives the client. */
@@ -269,6 +313,13 @@ static void test_command_registration(void)
 
   mod = module_load("mod_cmd", 0, 0);
   assert(mod != 0);
+
+  /* This fixture is built in the directory shape, <name>/<name>.so, and
+   * the loader found it there by the same bare name.
+   */
+  assert(0 == strcmp(module_relpath(mod), "test/mod_cmd/mod_cmd.so"));
+  assert(0 == strcmp(module_dir(mod) + strlen(module_dir(mod)) - 13,
+                     "/test/mod_cmd"));
 
   /* mod_cmd registers two and removes neither. */
   assert(stub_commands_added == 2);
@@ -604,6 +655,8 @@ int main(void)
   test_reject_no_symbol();
   test_reject_failed_init();
   test_reject_missing_file();
+  test_reject_flat();
+  test_reject_ambiguous();
   test_loaded_by();
   test_reject_path();
   test_reject_duplicate();

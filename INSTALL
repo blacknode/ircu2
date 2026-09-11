@@ -82,10 +82,12 @@ remembered in the build directory, so later builds do not need to repeat them.
     IRCU_CPATH              Default configuration file (default: ircd.conf)
     IRCU_LPATH              Default debugging log file (default: ircd.log)
     IRCU_MPATH              Directory modules are installed into and loaded
-                            from; a Module{} block or /MODULE LOAD names a
-                            module and the server appends "<name>.so" to this
-                            directory (default: IRCU_DPATH/modules, so it
-                            follows the data directory)
+                            from, organised by kind as <type>/<name>.so or
+                            <type>/<name>/<name>.so; a Module{} block or
+                            /MODULE LOAD names a module and the server finds
+                            it under whichever type it is in (default:
+                            IRCU_DPATH/modules, so it follows the data
+                            directory)
     IRCU_CHROOT             Directory the server will be chrooted into; every
                             compiled-in path is rewritten relative to it, and
                             the install prefix defaults to it so the paths

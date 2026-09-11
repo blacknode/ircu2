@@ -505,7 +505,7 @@ int client_remove_user_mode(char c) {
      * path for the clients it is responsible for, and announcing remote
      * users here would send the network one MODE per user per server.
      * "Our own" is decided by server, not by connection: a client this
-     * server introduced on its own behalf (modules/m_bot.c) has no
+     * server introduced on its own behalf (modules/commands/m_bot.c) has no
      * connection to be MyUser() through, and nobody else will speak for
      * it.
      */

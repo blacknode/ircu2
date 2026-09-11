@@ -474,7 +474,7 @@ static struct FeatureDesc {
   F_S(URLREG, 0, "http://cservice.undernet.org/live/", 0),
 
   /* Network bots.  The suffix of every bot's virtual host: a bot created
-   * by modules/m_bot.c as "helper" gets helper.<BOT_HOSTNAME>.  Read at
+   * by modules/commands/m_bot.c as "helper" gets helper.<BOT_HOSTNAME>.  Read at
    * creation; changing it later leaves existing bots as they are.
    */
   F_S(BOT_HOSTNAME, 0, "bots.undernet.org", 0),

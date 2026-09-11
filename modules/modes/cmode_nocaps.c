@@ -1,5 +1,5 @@
 /*
- * IRC - Internet Relay Chat, modules/cmode_nocaps.c
+ * IRC - Internet Relay Chat, modules/modes/cmode_nocaps.c
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,12 +19,12 @@
  * @brief Adds channel mode +G: no shouting in this channel.
  *
  * The reference for registering a channel mode from a module, and the
- * counterpart of modules/umode_nopm.c.  A mode is two halves that have to
+ * counterpart of modules/modes/umode_nopm.c.  A mode is two halves that have to
  * be written together: the registration, which makes the letter something
  * /MODE will accept and the server will carry across the network, and a
  * hook that gives the letter a meaning.  A mode without the hook is a flag
  * nothing reads; a hook without the mode has no way for anyone to ask for
- * it -- which is the difference between this module and modules/nocaps.c,
+ * it -- which is the difference between this module and modules/hooks/nocaps.c,
  * whose rule applies to every channel because there is no letter to turn
  * it on with.
  *

@@ -46,8 +46,9 @@ set(_ircu_spath "${IRCU_SPATH}")
 # Module directory
 #
 # Both ends of a module's life come from here: `ircu_add_module()` installs
-# into this directory, and the server appends "<name>.so" to it when a
-# Module{} block or /MODULE LOAD names a module.  That is why a module is
+# below this directory, as <type>/<name>.so or <type>/<name>/<name>.so, and
+# the server searches its type directories for those same two shapes when
+# a Module{} block or /MODULE LOAD names a module.  That is why a module is
 # configured by name and never by path.
 #
 # It defaults to a "modules" subdirectory of the data directory, so it

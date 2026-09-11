@@ -47,11 +47,15 @@ static void module_send_list(struct Client* sptr)
   for (mod = module_next(0); mod; mod = module_next(mod))
     /* The file name comes first: that is what LOAD, UNLOAD and RELOAD
      * take, and it need not match the name the module declares.
+     *
+     * The location is relative to the module directory, never the
+     * absolute path: where the server keeps its files on the host is not
+     * something to hand out over IRC, even to an operator.
      */
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Module %s (%s %s, ABI %u): %s -- %s [loaded by %s]",
+               ":Module %s (%s %s, ABI %u): modules/%s -- %s [loaded by %s]",
                module_file(mod), module_name(mod), module_version(mod),
-               (unsigned int) IRCU_MODULE_ABI, module_path(mod),
+               (unsigned int) IRCU_MODULE_ABI, module_relpath(mod),
                module_description(mod),
                module_loaded_by(mod) ? module_loaded_by(mod)
                                      : "the configuration file");

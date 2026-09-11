@@ -1,4 +1,4 @@
-MODULE documentation, last updated on 10 Sep 2026
+MODULE documentation, last updated on 11 Sep 2026
 
 A module is a shared object the server loads at run time.  It can add
 commands, user modes and channel modes, and attach to points in the life
@@ -86,27 +86,58 @@ Check the ABI a module was built against with /STATS M.
 BUILDING
 ========
 
-Modules live under modules/ and are built by the same CMake run as the
-server.  Dropping mymodule.c into modules/ is all it takes: modules/
-CMakeLists.txt calls ircu_add_modules(), which builds every .c file in the
-directory as a module named after the file.  The glob is re-run by the
+Modules live under modules/, organised by kind, and are built by the same
+CMake run as the server:
+
+  modules/<type>/<name>.c      a module self-contained in one file
+  modules/<type>/<name>/       a module built from a directory
+
+<type> is a directory name that only organises the tree -- commands,
+modes, hooks and workers are the ones in use, and a new one is just a new
+directory.  The type is not part of a module's name: the module is named,
+loaded and unloaded by <name> alone, so a name may appear under one type
+only, and the build refuses to configure if it appears under two.
+
+Dropping mymodule.c into modules/<type>/ is all it takes for a module in
+one file: modules/CMakeLists.txt calls ircu_add_modules(), which finds it
+and builds it as the module "mymodule".  The globs are re-run by the
 build, so a new file is picked up by `cmake --build build` without
 configuring again.
 
-A module built from several source files is the exception, and gets an
-explicit call:
+A module that outgrows one file becomes a directory, modules/<type>/
+mymodule/, and is still named after it.  Everything below the directory
+is sorted by suffix:
 
-  # modules/CMakeLists.txt
-  ircu_add_modules(EXCLUDE mymodule)
-  ircu_add_module(mymodule mymodule.c mymodule_policy.c)
+  *.c              compiled into mymodule.so, subdirectories included
+  *.h              the module's own headers; the directory is on the
+                   include path, and nothing outside the module sees them
+  anything else    a resource: copied next to the shared object at build
+                   time and installed with it, at the same relative path
 
-Either way the module links nothing: the server's symbols are resolved against
-the ircd executable at load time, which works because the ircd is built
-with ENABLE_EXPORTS.  The result is modules/mymodule.so in the build tree,
-installed into the module directory -- the IRCU_MPATH build setting, which
-defaults to a "modules" subdirectory of the data directory (DPATH), so it
-follows DPATH into a chroot.  That is the same directory the server loads
-from, so an installed module needs no further configuration to be found.
+A resource is anything the module wants to read at run time -- a word
+list, a template, a default configuration.  The module finds it through
+module_dir(), which is the absolute directory the shared object was loaded
+from:
+
+  snprintf(path, sizeof(path), "%s/words.txt", module_dir(mod));
+
+Read it in mi_init, not from a hook: a module loads at startup or on an
+operator's request, when reading a file is fine, and never in the middle
+of the message flow, where it is not.
+
+Either way the module links nothing: the server's symbols are resolved
+against the ircd executable at load time, which works because the ircd is
+built with ENABLE_EXPORTS.  The build tree mirrors the source tree, with a
+shared object where the sources were:
+
+  build/modules/<type>/mymodule.so
+  build/modules/<type>/mymodule/mymodule.so     + the resources
+
+and `cmake --install` puts the same shape under the module directory --
+the IRCU_MPATH build setting, which defaults to a "modules" subdirectory
+of the data directory (DPATH), so it follows DPATH into a chroot.  That is
+the directory the server loads from, so an installed module needs no
+further configuration to be found.
 
 To check what a module needs from the core:
 
@@ -118,9 +149,13 @@ LOADING
 
 A module is always named, never pathed.  The name is the file name of the
 shared object without its directory and without the ".so" suffix; the
-server resolves it against the module directory it was built with (MOD_PATH
-in config.h, from IRCU_MPATH).  A name containing a "/" is refused, so a
-configuration file cannot reach a shared object outside that directory.
+server looks for it in every type directory of the module directory it
+was built with (MOD_PATH in config.h, from IRCU_MPATH), as either
+<type>/<name>.so or <type>/<name>/<name>.so.  A name containing a "/" is
+refused, so a configuration file cannot reach a shared object outside that
+directory; a shared object dropped directly into the module directory,
+outside any type, is not found either.  A name that matches under two
+types is refused rather than resolved to whichever came first.
 
 From the configuration file:
 
@@ -148,7 +183,10 @@ disconnecting, and it does not follow a later nick change.
 All four take the module's name, the same one the configuration file uses.
 That is the file name, which need not be the name the module declares in
 its ModuleInfo; /MODULE LIST prints the file name first, then the declared
-name in parentheses.
+name in parentheses, then where the module was found as a path relative to
+the module directory -- "modules/hooks/nocaps.so" -- and never the absolute
+path, which says where the server keeps its files on the host and is not
+something to hand out over IRC.  /STATS M shows the same relative path.
 
 Everything except LIST also requires the CONFIG_OPERCMDS feature, since it
 changes what code the server is running.
@@ -213,7 +251,7 @@ Read and write it on a client with the same macros the core uses:
 Registering the letter is half of a mode.  The server will accept /MODE
 +P, show it in /MODE and in RPL_MYINFO, and send it to the other servers,
 but it means nothing until a hook reads the flag and acts on it -- see
-modules/umode_nopm.c, which registers +P and then refuses private messages
+modules/modes/umode_nopm.c, which registers +P and then refuses private messages
 to a user who has it.
 
 A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
@@ -291,7 +329,7 @@ Registering the letter is half of a mode.  The server will accept /MODE
 #channel +G from a chanop, show it in /MODE and in RPL_MYINFO, advertise
 it in the CHANMODES token of RPL_ISUPPORT and send it to the other
 servers, but it means nothing until a hook reads the flag and acts on it
--- see modules/cmode_nocaps.c, which registers +G and then refuses shouted
+-- see modules/modes/cmode_nocaps.c, which registers +G and then refuses shouted
 messages to a channel that has it.
 
 A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
@@ -507,31 +545,37 @@ somewhere else entirely.
 THE EXAMPLES
 ============
 
-  modules/example_cmd.c    adds a command; the minimal reference
-  modules/trace_events.c   logs every notification hook; noisy, for
-                           debugging a hook point
-  modules/nickpolicy.c     refuses nicknames; a worked veto
-  modules/nocaps.c         refuses shouted channel messages and lowercases
-                           shouted private ones; a veto and a rewrite
-  modules/umode_nopm.c     adds user mode +P and gives it a meaning; the
-                           reference for registering a user mode
-  modules/cmode_nocaps.c   adds channel mode +G and gives it a meaning; the
-                           reference for registering a channel mode, and
-                           nocaps.c's rule made asked-for instead of
-                           always-on
-  modules/worker_demo.c    hashes a password in a worker thread; the
-                           reference for module_submit_work() and for
-                           referring to a client that may have left
-  modules/worker_ticker.c  runs a thread with a loop of its own; the
-                           reference for module_spawn_worker()
-  modules/m_botmode.c      adds user mode +B, a bot of the network, and
-                           refuses to let anyone set it by hand; the
-                           reference for guarding a mode with
-                           HOOK_CLIENT_PRE_UMODE
-  modules/m_bot.c          adds /BOT, virtual bots operators create on
-                           demand; the reference for a module that
-                           introduces clients of its own (see VIRTUAL
-                           CLIENTS below)
+  commands/example_cmd/  adds a command; the minimal reference, and the
+                         reference for a module built from a directory:
+                         two sources, a private header and a resource
+                         (hello.txt) it reads through module_dir()
+  hooks/trace_events.c   logs every notification hook; noisy, for
+                         debugging a hook point
+  hooks/nickpolicy.c     refuses nicknames; a worked veto
+  hooks/nocaps.c         refuses shouted channel messages and lowercases
+                         shouted private ones; a veto and a rewrite
+  modes/umode_nopm.c     adds user mode +P and gives it a meaning; the
+                         reference for registering a user mode
+  modes/cmode_nocaps.c   adds channel mode +G and gives it a meaning; the
+                         reference for registering a channel mode, and
+                         nocaps.c's rule made asked-for instead of
+                         always-on
+  workers/worker_demo.c  hashes a password in a worker thread; the
+                         reference for module_submit_work() and for
+                         referring to a client that may have left
+  workers/worker_ticker.c
+                         runs a thread with a loop of its own; the
+                         reference for module_spawn_worker()
+  modes/m_botmode.c      adds user mode +B, a bot of the network, and
+                         refuses to let anyone set it by hand; the
+                         reference for guarding a mode with
+                         HOOK_CLIENT_PRE_UMODE
+  commands/m_bot.c       adds /BOT, virtual bots operators create on
+                         demand; the reference for a module that
+                         introduces clients of its own (see VIRTUAL
+                         CLIENTS below)
+
+All paths are under modules/.
 
 
 VIRTUAL CLIENTS
@@ -572,7 +616,7 @@ The server may take the client away without asking: a /KILL, a nick
 collision it loses.  A module that keeps a pointer to a client it
 introduced attaches to HOOK_CLIENT_EXITING and drops the pointer there,
 and it destroys what it introduced from mi_fini, since the code that
-introduced them is about to be unmapped.  modules/m_bot.c does both.
+introduced them is about to be unmapped.  modules/commands/m_bot.c does both.
 
 
 DIAGNOSTICS

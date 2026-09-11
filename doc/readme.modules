@@ -524,6 +524,55 @@ THE EXAMPLES
                            referring to a client that may have left
   modules/worker_ticker.c  runs a thread with a loop of its own; the
                            reference for module_spawn_worker()
+  modules/m_botmode.c      adds user mode +B, a bot of the network, and
+                           refuses to let anyone set it by hand; the
+                           reference for guarding a mode with
+                           HOOK_CLIENT_PRE_UMODE
+  modules/m_bot.c          adds /BOT, virtual bots operators create on
+                           demand; the reference for a module that
+                           introduces clients of its own (see VIRTUAL
+                           CLIENTS below)
+
+
+VIRTUAL CLIENTS
+===============
+
+A module can bring a user into existence that has no connection behind
+it -- a bot, a pseudo-service -- by introducing it the way the core
+introduces a user from another server, with the server itself as the
+introducer:
+
+  bot = make_client(&me, STAT_UNKNOWN);
+  cli_user(bot) = make_user(bot);
+  cli_user(bot)->server = &me;
+  ...fill in nick, user, host, info...
+  SetLocalNumNick(bot);
+  add_client_to_list(bot);
+  hAddClient(bot);
+  Count_newremoteclient(UserStats, &me);
+  register_user(&me, bot);       /* sends the NICK, runs the hooks */
+
+Passing &me to make_client() makes the client share the server's own
+Connection, which has no descriptor, so cli_from() of the bot is &me and
+everything sent to it is dropped in can_send() before anything is queued.
+Its server is &me, so it takes a numnick from this server's own range and
+the network sees a user of this server.  It is not MyConnect(), so the
+socket paths in exit_client() are never taken; a plain exit_client() on
+it sends the QUIT and frees it.  From then on set_nick_name(), the JoinBuf
+and the ModeBuf treat it like any other client, and the module never has
+to speak P10 itself.
+
+Two things follow from sharing &me's Connection.  Never write a
+per-connection field of such a client -- cli_handler(), cli_snomask(),
+cli_privs() and the like all belong to &me -- and send what it says
+through send.c directly rather than the relay layer, whose flood limits
+assert on a client that is not local.
+
+The server may take the client away without asking: a /KILL, a nick
+collision it loses.  A module that keeps a pointer to a client it
+introduced attaches to HOOK_CLIENT_EXITING and drops the pointer there,
+and it destroys what it introduced from mi_fini, since the code that
+introduced them is about to be unmapped.  modules/m_bot.c does both.
 
 
 DIAGNOSTICS

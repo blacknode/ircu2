@@ -222,6 +222,45 @@ static void test_remove_clears_the_mode_from_users(void)
   printf("Passed: removing a mode takes it off the users that carry it\n");
 }
 
+/** A client the server introduced on its own behalf, as modules/m_bot.c
+ * does: its server is &me but its connection is &me's, so it is not
+ * MyUser().  Nobody else will announce its modes, so this server must.
+ */
+static struct Client virtual_user;
+static struct User virtual_user_user;
+static struct Connection me_con;
+
+static void test_remove_announces_virtual_users(void)
+{
+  assert(UMODE_APPEND_OK == client_append_user_mode('Q', TEST_FLAG_ONE));
+
+  cli_connect(&me) = &me_con;
+  cli_from(&me) = &me;
+
+  cli_connect(&virtual_user) = &me_con;      /* shares &me's connection */
+  cli_status(&virtual_user) = STAT_USER;
+  cli_user(&virtual_user) = &virtual_user_user;
+  virtual_user_user.server = &me;
+  assert(!MyUser(&virtual_user));
+
+  GlobalClientList = &virtual_user;
+  cli_next(&virtual_user) = NULL;
+
+  SetUFlag(&virtual_user, TEST_FLAG_ONE);
+
+  stub_umode_out_calls = 0;
+  assert(UMODE_REMOVE_OK == client_remove_user_mode('Q'));
+
+  assert(!HasUFlag(&virtual_user, TEST_FLAG_ONE));
+  assert(1 == stub_umode_out_calls);
+  assert(&virtual_user == stub_umode_out_client);
+
+  GlobalClientList = NULL;
+
+  printf("Passed: removing a mode announces it for users this server "
+         "introduced\n");
+}
+
 /* --- The flag macros -------------------------------------------------- */
 
 static void test_flag_macros(void)
@@ -272,6 +311,7 @@ int main(int argc, char* argv[])
   test_remove_rejects_core_and_unknown();
   test_remove_frees_the_slot();
   test_remove_clears_the_mode_from_users();
+  test_remove_announces_virtual_users();
   test_flag_macros();
 
   printf("Done.\n");

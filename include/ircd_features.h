@@ -196,6 +196,9 @@ enum Feature {
   FEAT_URL_CLIENTS,
   FEAT_URLREG,
 
+  /* Network bots (modules/m_bot.c) */
+  FEAT_BOT_HOSTNAME,
+
   FEAT_LAST_F
 };
 

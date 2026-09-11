@@ -675,6 +675,13 @@ int main(int argc, char **argv) {
   umask(077);                   /* better safe than sorry --SRB */
   memset(&me, 0, sizeof(me));
   memset(&me_con, 0, sizeof(me_con));
+  /* The magic makes me_con a Connection make_client() will accept as a
+   * parent: a module introducing a client on the server's own behalf
+   * (modules/m_bot.c) passes &me the way a server link is passed for a
+   * remote user, and the client then shares this descriptor-less
+   * connection, so anything sent to it is dropped in can_send().
+   */
+  con_magic(&me_con) = CONNECTION_MAGIC;
   cli_connect(&me) = &me_con;
   cli_fd(&me) = -1;
 

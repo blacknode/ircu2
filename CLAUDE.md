@@ -107,7 +107,12 @@ sub-structs), `ircd/channel.c` (the largest file: channels, modes, bans, ops),
 `ircd/send.c` is the outbound path; `ircd/msgq.c`/`ircd/dbuf.c` the queues.
 
 **Configuration.** `ircd/ircd_parser.y` + `ircd/ircd_lexer.c` parse `ircd.conf`
-into the structures in `ircd/s_conf.c`. Runtime-settable knobs are "features"
+into the structures in `ircd/s_conf.c`. The lexer expands `${NAME}` references
+from the process environment (`include/ircd_env.h`, `ircd/ircd_env.c`,
+`doc/readme.env`, proposal 004) inside quoted strings and, as a number, where
+the grammar wants one; a missing variable is a config error, not an empty
+string. The same file has the typed accessors (`env_str()`, `env_int()`,
+`env_bool()`) for code that reads one variable directly. Runtime-settable knobs are "features"
 (`ircd/ircd_features.c`, `doc/readme.features`), reachable via `/GET` and `/SET`.
 Access control lives in `gline.c`, `sline.c`, `jupe.c`, `crule.c`, `IPcheck.c`.
 

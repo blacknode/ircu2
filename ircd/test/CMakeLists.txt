@@ -41,6 +41,10 @@ add_ircu_test(cidr_lookups_t
 add_ircu_test(ircd_chattr_t
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
+add_ircu_test(ircd_env_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_env.c")
+
 add_ircu_test(ircd_in_addr_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"

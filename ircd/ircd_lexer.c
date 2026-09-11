@@ -9,6 +9,7 @@
 #include "config.h"
 #include "ircd.h"  /* configfile */
 #include "ircd_alloc.h"
+#include "ircd_env.h"
 #include "ircd_log.h"
 #include "ircd_string.h" /* ircd_strcmp() */
 #include "s_conf.h"
@@ -298,6 +299,33 @@ static int token_compare(const void *key, const void *ptok)
   return tolower(word[ii]) - tok->string[ii];
 }
 
+/** Hand a quoted string to the parser, expanding any ${NAME} in it first.
+ * Expansion happens here, on the contents of a string the lexer has already
+ * recognised, so whatever a variable holds stays one string: it cannot open
+ * a block or end a statement.
+ * @param[in] text The string, without its quotes.
+ * @return QSTRING, or TOKERR if a variable was missing or malformed.
+ */
+static int lexer_qstring(const char *text)
+{
+  struct EnvError err;
+  char *expanded;
+
+  if (!env_has_ref(text)) {
+    DupString(yylval.text, text);
+    return QSTRING;
+  }
+
+  expanded = env_expand(text, 0, &err);
+  if (!expanded) {
+    yyerror(err.text);
+    return TOKERR;
+  }
+
+  yylval.text = expanded;
+  return QSTRING;
+}
+
 static int find_token(char *token)
 {
   struct lexer_token *tok;
@@ -352,9 +380,55 @@ int yylex(void)
           yy_in->lineno, yy_in->name);
       }
       *pos++ = '\0';
-      DupString(yylval.text, start + 1);
       yy_in->tok_ofs = pos - yy_in->buf;
-      return QSTRING;
+      return lexer_qstring(start + 1);
+    }
+
+    /* Are we looking at an unquoted ${NAME} reference?  Unquoted, the only
+     * thing the grammar can want here is a number, so that is the only thing
+     * the reference is allowed to expand to.
+     */
+    if ((pos < stop) && (*pos == '$') && (pos + 1 == stop))
+      goto grab_more;
+    if ((pos < stop) && (*pos == '$') && (pos[1] == '{')) {
+      char ref[256];
+      struct EnvError err;
+      int braces = 1;
+      int num;
+
+      /* Find the brace that closes this reference, which is not always the
+       * first one: ${A:-${B:-1}} is legal.
+       */
+      start = pos;
+      pos += 2;
+      while ((pos < stop) && braces) {
+        if (*pos == '\n') {
+          log_write(LS_CONFIG, L_CRIT, 0, "newline in ${...} at line %d of %s",
+            yy_in->lineno, yy_in->name);
+          break;
+        }
+        if (*pos == '{')
+          ++braces;
+        else if (*pos == '}')
+          --braces;
+        ++pos;
+      }
+      if (braces && (pos == stop))
+        goto grab_more;
+
+      yy_in->tok_ofs = pos - yy_in->buf;
+      if ((size_t)(pos - start) >= sizeof(ref)) {
+        yyerror("${...} reference too long");
+        return TOKERR;
+      }
+      memcpy(ref, start, pos - start);
+      ref[pos - start] = '\0';
+      if (!env_expand_number(ref, 0, &num, &err)) {
+        yyerror(err.text);
+        return TOKERR;
+      }
+      yylval.num = num;
+      return NUMBER;
     }
 
     /* Are we looking at a number? */

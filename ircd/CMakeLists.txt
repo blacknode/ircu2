@@ -108,6 +108,7 @@ set(IRCU_SOURCES
   ircd_crypt_native.c
   ircd_crypt_plain.c
   ircd_crypt_smd5.c
+  ircd_env.c
   ircd_events.c
   ircd_features.c
   ircd_lexer.c

@@ -28,6 +28,7 @@
 
 #include "s_user.h"
 #include "IPcheck.h"
+#include "bot.h"
 #include "channel.h"
 #include "class.h"
 #include "client.h"
@@ -822,6 +823,14 @@ int whisper(struct Client* source, const char* nick, const char* channel,
   if (is_silenced(source, dest))
     return 0;
 
+  /* A service bot of this server has no connection; its module gets the
+   * message, the same as for a PRIVMSG (see ircd_relay.c).
+   */
+  if (IsLocalServiceBot(dest)) {
+    bot_deliver_private(source, dest, is_notice, text);
+    return 0;
+  }
+
   if (is_notice)
     sendcmdto_one(source, CMD_NOTICE, dest, "%C :%s", dest, text);
   else
@@ -1050,11 +1059,11 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
     *m++ = '+';
     for (um = client_user_modes(); um; um = um->next)
     {
-      if (HasUFlag(sptr, um->flag) && um->flag != FLAG_ACCOUNT)
+      if (HasUFlag(sptr, um->flag))
         *m++ = um->c;
     }
     *m = '\0';
-    send_reply(sptr, RPL_UMODEIS, buf);
+    send_reply(sptr, RPL_UMODEIS, cli_name(sptr), buf);
     if (SendServNotice(sptr) && MyConnect(sptr)
         && cli_snomask(sptr) !=
         (unsigned int)(IsOper(sptr) ? SNO_OPERDEFAULT : SNO_DEFAULT))
@@ -1167,6 +1176,18 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         else
           ClearChannelService(sptr);
         break;
+      case 'S':
+        if (what == UMODE_ADD)
+          SetServiceBot(sptr);
+        else
+          ClearServiceBot(sptr);
+        break;
+      case 'B':
+        if (what == UMODE_ADD)
+          SetBot(sptr);
+        else
+          ClearBot(sptr);
+        break;
       case 'g':
         if (what == UMODE_ADD)
           SetDebug(sptr);
@@ -1246,6 +1267,19 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
      */
     if (!WasChannelService(setflags))
       ClearChannelService(sptr);
+    /*
+     * +B and +S name a bot the server itself introduced.  Nobody sets or
+     * clears them by hand -- not the user, not an operator -- so both
+     * directions are undone; only a server is believed.
+     */
+    if (!WasBot(setflags))
+      ClearBot(sptr);
+    else if (!IsBot(sptr))
+      SetBot(sptr);
+    if (!WasServiceBot(setflags))
+      ClearServiceBot(sptr);
+    else if (!IsServiceBot(sptr))
+      SetServiceBot(sptr);
     /*
      * only send wallops to opers
      */
@@ -1368,8 +1402,14 @@ char *umode_str(struct Client *cptr)
 
   for (um = client_user_modes(); um; um = um->next)
   {
-    /* An oper that does not propagate its status is not announced as +o. */
-    if (um->flag == FLAG_OPER && !HasPriv(cptr, PRIV_PROPAGATE))
+    /* A local oper that does not propagate its status is not announced
+     * as +o.  Only a local one: the privileges live in the connection,
+     * and a remote user's connection is its uplink's, a bot's the
+     * server's own -- neither says anything about the user.  Their +o
+     * was put there by a server and is announced as it stands.
+     */
+    if (um->flag == FLAG_OPER && MyConnect(cptr)
+        && !HasPriv(cptr, PRIV_PROPAGATE))
       continue;
     if (HasUFlag(cptr, um->flag) && (um->flag & FLAG_GLOBAL_UMODES))
       *m++ = um->c;

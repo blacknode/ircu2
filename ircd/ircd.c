@@ -841,6 +841,13 @@ int main(int argc, char **argv) {
   Debug((DEBUG_NOTICE, "Server ready..."));
   log_write(LS_SYSTEM, L_NOTICE, 0, "Server Ready");
 
+  /* The configuration was read long ago, but a module loaded from it ran
+   * its mi_init in the middle of the parse, with the blocks after its own
+   * still unread and &me not yet a server.  This is the first moment both
+   * are true; the same hook fires again after every rehash.
+   */
+  hook_notify(HOOK_CONFIG_LOADED, NULL, NULL, NULL, NULL);
+
   event_loop();
 
   /* The event loop has returned, so nothing else is running: unload every

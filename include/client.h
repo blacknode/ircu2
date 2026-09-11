@@ -636,6 +636,15 @@ struct Client {
 #define IsBurstOrBurstAck(x)    (HasFlag(x, FLAG_BURST) || HasFlag(x, FLAG_BURST_ACK))
 /** Return non-zero if the client has set mode +k (channel service). */
 #define IsChannelService(x)     HasUFlag(x, FLAG_CHSERV)
+/** Return non-zero if the client has mode +B (a bot run by the network). */
+#define IsBot(x)                HasUFlag(x, FLAG_BOT)
+/** Return non-zero if the client has mode +S (a service bot of the network). */
+#define IsServiceBot(x)         HasUFlag(x, FLAG_SERVBOT)
+/** Return non-zero if the client is a service bot this server introduced:
+ * the one whose messages this server hands to a module.  A +S user seen
+ * from another server belongs to that server. */
+#define IsLocalServiceBot(x)    (IsServiceBot(x) && cli_user(x) \
+                                 && cli_user(x)->server == &me)
 /** Return non-zero if the client's socket is disconnected. */
 #define IsDead(x)               HasFlag(x, FLAG_DEADSOCKET)
 /** Return non-zero if the client has set mode +d (deaf). */
@@ -704,6 +713,10 @@ struct Client {
 #define SetBurstAck(x)          SetFlag(x, FLAG_BURST_ACK)
 /** Mark a client as having mode +k (channel service). */
 #define SetChannelService(x)    SetUFlag(x, FLAG_CHSERV)
+/** Mark a client as having mode +B (bot). */
+#define SetBot(x)               SetUFlag(x, FLAG_BOT)
+/** Mark a client as having mode +S (service bot). */
+#define SetServiceBot(x)        SetUFlag(x, FLAG_SERVBOT)
 /** Mark a client as having mode +d (deaf). */
 #define SetDeaf(x)              SetUFlag(x, FLAG_DEAF)
 /** Mark a client as having mode +R (block unauthed users). */
@@ -754,8 +767,12 @@ struct Client {
 #define SetExemptThrottle(x)    SetFlag(x, FLAG_EXEMPT_THROTTLE)
 
 /** Return non-zero if \a sptr sees \a acptr as an operator. */
+/* A service bot's privileges live in the server's own connection, so
+ * PRIV_DISPLAY says nothing about it; a service is an operator by
+ * definition and is shown as one. */
 #define SeeOper(sptr,acptr) (IsAnOper(acptr) && (HasPriv(acptr, PRIV_DISPLAY) \
-                            || HasPriv(sptr, PRIV_SEE_OPERS)))
+                            || HasPriv(sptr, PRIV_SEE_OPERS) \
+                            || IsServiceBot(acptr)))
 
 /** Clear the client's net.burst in-progress flag. */
 #define ClearBurst(x)            ClrFlag(x, FLAG_BURST)
@@ -763,6 +780,10 @@ struct Client {
 #define ClearBurstAck(x)         ClrFlag(x, FLAG_BURST_ACK)
 /** Remove mode +k (channel service) from the client. */
 #define ClearChannelService(x)   ClrUFlag(x, FLAG_CHSERV)
+/** Remove mode +B (bot) from the client. */
+#define ClearBot(x)              ClrUFlag(x, FLAG_BOT)
+/** Remove mode +S (service bot) from the client. */
+#define ClearServiceBot(x)       ClrUFlag(x, FLAG_SERVBOT)
 /** Remove mode +d (deaf) from the client. */
 #define ClearDeaf(x)             ClrUFlag(x, FLAG_DEAF)
 /** Remove mode +R (block unauthenticated users) from the client. */
@@ -831,6 +852,10 @@ struct Client {
 #define WasDeaf(old)             (((old) & FLAG_DEAF) != 0)
 /** Return non-zero if \a old had mode +k (channel service). */
 #define WasChannelService(old)   (((old) & FLAG_CHSERV) != 0)
+/** Return non-zero if \a old had mode +B (bot). */
+#define WasBot(old)              (((old) & FLAG_BOT) != 0)
+/** Return non-zero if \a old had mode +S (service bot). */
+#define WasServiceBot(old)       (((old) & FLAG_SERVBOT) != 0)
 /** Return non-zero if \a old had mode +g (debugging). */
 #define WasDebug(old)            (((old) & FLAG_DEBUG) != 0)
 /** Return non-zero if \a old had mode +r (account stamp). */

@@ -21,6 +21,7 @@
 #include "config.h"
 
 #include "channel.h"
+#include "bot.h"
 #include "client.h"
 #include "db.h"
 #include "hooks.h"
@@ -1087,6 +1088,11 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    */
   module_drop_commands(mod);
   hook_del_module(mod);
+  /* Bots after hooks: a module that forgot to destroy its own loses them
+   * here, without its HOOK_CLIENT_EXITING running for clients it no
+   * longer knows how to handle.
+   */
+  bot_drop_module(mod);
   /* Pending database calls this module made are forgotten, and a database
    * driver it registered is withdrawn -- with whatever is still in flight
    * failed, rather than answered into code that is about to be unmapped.

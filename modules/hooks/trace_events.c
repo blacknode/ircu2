@@ -65,7 +65,9 @@ static const enum HookType traced[] = {
   HOOK_CLIENT_EXITING,
   HOOK_CHANNEL_JOINED,
   HOOK_CHANNEL_PARTED,
-  HOOK_SERVER_LINKED
+  HOOK_MESSAGE_RECEIVED,
+  HOOK_SERVER_LINKED,
+  HOOK_CONFIG_LOADED
 };
 
 /** Attach to each traced hook.

@@ -407,9 +407,28 @@ The hook points, and what each one gets:
   CHANNEL_PARTED          the client     -           the channel channel name
   MESSAGE_PRE_CHANNEL *+  the sender     the sender  the channel message text
   MESSAGE_PRE_PRIVATE *+  the recipient  the sender  -           message text
+  MESSAGE_RECEIVED        the service    the sender  the channel message text
+                          bot                        (NULL if
+                                                     private)
   SERVER_LINKED           the server     -           -           server name
+  CONFIG_LOADED           -              -           -           -
 
   * can veto        + can rewrite
+
+MESSAGE_RECEIVED fires for a PRIVMSG or NOTICE sent to a service bot of
+this server -- a client with user mode +S that this server introduced
+(see include/bot.h and doc/readme.services) -- and, for every service
+bot on a channel, for each message to that channel.  The sender may be
+on any server.  hc_notice says which of the two it was.  The message is
+not delivered anywhere else: a bot has no connection to deliver to, so
+the hook is how its module hears it.
+
+CONFIG_LOADED fires once at start-up, after the configuration has been
+read and the server is ready to introduce clients, and again at the end
+of every rehash.  It is the point for a module that keeps state derived
+from the configuration: mi_init and mi_rehash both run in the middle of
+the parse, when the blocks after the module's own Module{} block have
+not been read yet.
 
 Hooks marked as vetoing run before the server acts, so refusing leaves
 nothing to undo.  The rest are notifications: their return value is
@@ -647,14 +666,16 @@ THE EXAMPLES
                          for a module with libraries of its own
                          (module.cmake), and for one whose worker threads
                          outlive a single task
-  modes/m_botmode.c      adds user mode +B, a bot of the network, and
-                         refuses to let anyone set it by hand; the
-                         reference for guarding a mode with
-                         HOOK_CLIENT_PRE_UMODE
   commands/m_bot.c       adds /BOT, virtual bots operators create on
-                         demand; the reference for a module that
-                         introduces clients of its own (see VIRTUAL
-                         CLIENTS below)
+                         demand; the reference for using the bot API
+                         (see VIRTUAL CLIENTS below)
+  services/irc_services/ network services -- NickServ, ChanServ --
+                         embedded in the server: service bots from
+                         Service{} blocks, answering users through
+                         HOOK_MESSAGE_RECEIVED; the reference for
+                         service bots, for HOOK_CONFIG_LOADED, and for
+                         a module that brings a client back when the
+                         network takes it away (doc/readme.services)
 
 All paths are under modules/.
 
@@ -663,41 +684,50 @@ VIRTUAL CLIENTS
 ===============
 
 A module can bring a user into existence that has no connection behind
-it -- a bot, a pseudo-service -- by introducing it the way the core
-introduces a user from another server, with the server itself as the
-introducer:
+it -- a bot, a service -- through include/bot.h:
 
-  bot = make_client(&me, STAT_UNKNOWN);
-  cli_user(bot) = make_user(bot);
-  cli_user(bot)->server = &me;
-  ...fill in nick, user, host, info...
-  SetLocalNumNick(bot);
-  add_client_to_list(bot);
-  hAddClient(bot);
-  Count_newremoteclient(UserStats, &me);
-  register_user(&me, bot);       /* sends the NICK, runs the hooks */
+  if (bot_check_nick(nick, NULL) == 0)
+    bot = bot_create(mod, nick, NULL, NULL, NULL, 0);
+  bot_join(bot, "#channel");                 /* with ops, creating it */
+  bot_send_user(bot, acptr, 1, "hello");     /* 1: NOTICE, 0: PRIVMSG */
+  bot_send_channel(bot, chptr, 0, "hello");
+  bot_destroy(bot, &me, "reason");
 
-Passing &me to make_client() makes the client share the server's own
-Connection, which has no descriptor, so cli_from() of the bot is &me and
-everything sent to it is dropped in can_send() before anything is queued.
-Its server is &me, so it takes a numnick from this server's own range and
-the network sees a user of this server.  It is not MyConnect(), so the
-socket paths in exit_client() are never taken; a plain exit_client() on
-it sends the QUIT and frees it.  From then on set_nick_name(), the JoinBuf
-and the ModeBuf treat it like any other client, and the module never has
-to speak P10 itself.
+The bot is a struct Client made with make_client(&me, ...), so it shares
+the server's own Connection, which has no descriptor: cli_from() of it
+is &me and everything sent to it is dropped in can_send() before
+anything is queued.  Its server is &me, so it takes a numnick from this
+server's own range and the network sees a user of this server.  It is
+not MyConnect(), so the socket paths in exit_client() are never taken.
+From then on set_nick_name(), the JoinBuf and the ModeBuf treat it like
+any other client, and neither bot.c nor the module speaks P10 itself.
 
-Two things follow from sharing &me's Connection.  Never write a
-per-connection field of such a client -- cli_handler(), cli_snomask(),
-cli_privs() and the like all belong to &me -- and send what it says
-through send.c directly rather than the relay layer, whose flood limits
-assert on a client that is not local.
+Two things follow from sharing &me's Connection, and bot.c respects
+both.  Never write a per-connection field of such a client --
+cli_handler(), cli_snomask(), cli_privs() and the like all belong to
+&me -- and send what it says through send.c (bot_send_*) rather than
+the relay layer, whose flood limits assert on a client that is not
+local.
 
-The server may take the client away without asking: a /KILL, a nick
-collision it loses.  A module that keeps a pointer to a client it
-introduced attaches to HOOK_CLIENT_EXITING and drops the pointer there,
-and it destroys what it introduced from mi_fini, since the code that
-introduced them is about to be unmapped.  modules/commands/m_bot.c does both.
+The first argument to bot_create() is the owner.  Unloading a module
+destroys the bots it owns, so no bot outlives the code that answers for
+it; a module that wants a quit reason of its own destroys them from
+mi_fini first, as m_bot does.  The server may also take a bot away
+without asking -- a /KILL from another server, a nick collision it
+loses -- and a module that keeps a pointer attaches to
+HOOK_CLIENT_EXITING, where bot_find() still answers for the client on
+its way out, and drops the pointer there.
+
+Every bot carries user mode +B, a bot of the network.  Pass BOT_SERVICE
+in the flags for a bot that is a service of the network -- a NickServ --
+and it is introduced with +S, +k and +o as well: +k for everything the
+server already grants a channel service (no KICK, no deop, no local
+KILL, no target limits), +o because a service acts with an operator's
+standing, +S so that messages sent to it reach its module through
+HOOK_MESSAGE_RECEIVED and so that /BOT will neither rename nor destroy
+it.  +B and +S are the server's alone: a user cannot set or clear them,
+and neither can an operator; only a MODE from another server is
+believed.  A bot with +S is what doc/readme.services is about.
 
 
 DIAGNOSTICS

@@ -681,6 +681,8 @@ void migration_core_start(void)
             "migration: bringing the core schema up to date");
 
   migration_ask_applied(0, MIGRATION_CORE, MIGRATION_WANT_APPLY, 0);
+
+  Debug((DEBUG_NOTICE, "Migrations core is ready."));
 }
 
 /* ------------------------------------------------------------------------

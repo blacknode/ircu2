@@ -114,7 +114,7 @@ extern const struct Numeric* get_error_numeric(int err);
  	RPL_STATSELINE	     225	   unreal
  	RPL_STATSCOUNT	     226	   Dalnet
 	RPL_STATSNLINE	     226	   unreal
-	RPL_STATSGLINE	     227	   Dalnet 
+	RPL_STATSGLINE	     227	   Dalnet
 	RPL_STATSVLINE	     227	   unreal */
 #define RPL_STATSALINE       226        /* Hybrid, Undernet */
 #define RPL_STATSQLINE       228        /* Undernet extension */
@@ -255,6 +255,7 @@ extern const struct Numeric* get_error_numeric(int err);
 #define RPL_LISTUSAGE        334        /* Undernet extension */
 /*	RPL_COMMANDSYNTAX    334	   Dalnet */
 /*	RPL_LISTSYNTAX	     334	   unreal */
+#define RPL_WHOISBOT         335 /* bot */
 /*      RPL_CHANPASSOK       338           IRCnet extension (?)*/
 #define	RPL_WHOISACTUALLY    338	/* Undernet extension, dalnet */
 /*	RPL_BADCHANPASS	     339           IRCnet extension (?) */
@@ -295,7 +296,7 @@ extern const struct Numeric* get_error_numeric(int err);
 /*      RPL_KICKEXPIRED      377   aircd */
 /*	RPL_SPAM	     377   austnet */
 /*      RPL_BANEXPIRED       378   aircd */
-/*      RPL_KICKLINKED       379   aircd */
+#define RPL_WHOISMODES       379
 /*      RPL_BANLINKED        380   aircd */
 
 #define RPL_YOUREOPER        381

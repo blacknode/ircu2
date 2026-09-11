@@ -34,6 +34,7 @@
 #include "fileio.h"
 #include "gline.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
@@ -1085,6 +1086,72 @@ static void close_mappings(void)
   GlobalServiceMapList = NULL;
 }
 
+/** Service{} blocks of the current configuration, in file order. */
+static struct ServiceConf* serviceConfList;
+
+/** Tail of #serviceConfList, so that file order is kept cheaply. */
+static struct ServiceConf** serviceConfTail = &serviceConfList;
+
+void conf_free_service(struct ServiceConf *svc)
+{
+  struct SLink *lp, *next;
+
+  if (!svc)
+    return;
+
+  for (lp = svc->channels; lp; lp = next) {
+    next = lp->next;
+    MyFree(lp->value.cp);
+    free_link(lp);
+  }
+  MyFree(svc->name);
+  MyFree(svc->type);
+  MyFree(svc->username);
+  MyFree(svc->host);
+  MyFree(svc->description);
+  MyFree(svc);
+}
+
+void conf_add_service(struct ServiceConf *svc)
+{
+  assert(0 != svc);
+  assert(0 != svc->name);
+  assert(0 != svc->type);
+
+  svc->next = NULL;
+  *serviceConfTail = svc;
+  serviceConfTail = &svc->next;
+}
+
+const struct ServiceConf *conf_service_list(void)
+{
+  return serviceConfList;
+}
+
+const struct ServiceConf *conf_find_service(const char *nick)
+{
+  const struct ServiceConf *svc;
+
+  for (svc = serviceConfList; svc; svc = svc->next)
+    if (0 == ircd_strcmp(svc->name, nick))
+      return svc;
+
+  return NULL;
+}
+
+/** Forget every Service{} block, before the file is read again. */
+static void conf_clear_services(void)
+{
+  struct ServiceConf *svc, *next;
+
+  for (svc = serviceConfList; svc; svc = next) {
+    next = svc->next;
+    conf_free_service(svc);
+  }
+  serviceConfList = NULL;
+  serviceConfTail = &serviceConfList;
+}
+
 /** Load, keep or reload a module named by the configuration.
  *
  * Called for each Module block as the configuration is read.  A module
@@ -1196,6 +1263,7 @@ int rehash(struct Client *cptr, int sig)
   auth_mark_closing();
   webirc_mark_stale();
   close_mappings();
+  conf_clear_services();
   module_unmark_all();
   DoIdentLookups = 0;
 
@@ -1274,6 +1342,13 @@ int rehash(struct Client *cptr, int sig)
 
   attach_conf_uworld(&me);
   webirc_remove_stale();
+
+  /* Last, with the file read in full and the modules it no longer names
+   * gone: a module that keeps state derived from the configuration -- the
+   * service bots of a Service{} block, say -- reconciles here rather than
+   * in mi_rehash, which runs in the middle of the parse.
+   */
+  hook_notify(HOOK_CONFIG_LOADED, NULL, NULL, NULL, NULL);
 
   return ret;
 }

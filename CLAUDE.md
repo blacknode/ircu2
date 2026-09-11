@@ -137,7 +137,7 @@ own declares it in its own fragment — `modules/<type>/<name>/module.cmake`, or
 `IRCU_MODULE_LINK_LIBRARIES`, `IRCU_MODULE_INCLUDE_DIRECTORIES`,
 `IRCU_MODULE_COMPILE_{DEFINITIONS,OPTIONS}`, or `IRCU_MODULE_SKIP` to opt out
 when a dependency is missing; the core's build files never learn about it. Sources live in `modules/<type>/` (`commands`,
-`modes`, `hooks`, `workers`; a type is just a directory) as either
+`modes`, `hooks`, `workers`, `services`; a type is just a directory) as either
 `<name>.c` or a `<name>/` directory whose `*.c` are compiled in, `*.h` are
 private and everything else is a resource copied beside the `.so`; the build
 and install trees mirror that layout (`<type>/<name>.so` or
@@ -194,6 +194,23 @@ one exception is the core set (`ircd/migrations/`), which creates the
 may take. Each migration is one transaction (script + its `migrations` row),
 runs on its own connection off the pool, and gets `migration_timeout` rather
 than the 5s query cap.
+
+**Bots and services** (`include/bot.h`, `ircd/bot.c`, `doc/readme.services`).
+A bot is a `struct Client` the server introduces on its own behalf
+(`make_client(&me, ...)`, no connection); `bot_create()` takes the owning
+module, and unloading a module destroys its bots. `BOT_SERVICE` makes a
+*service bot*: user modes `+S` (`IsServiceBot()`, `IsLocalServiceBot()`),
+`+k`, `+o` and `+B`; `+B` and `+S` are core modes only a server may set —
+`set_user_mode()` undoes both directions for any local client, opers included. The relay layer (`ircd/ircd_relay.c`)
+never delivers to a local service bot; it calls `bot_deliver_private()` /
+`bot_deliver_channel()`, which run `HOOK_MESSAGE_RECEIVED` (sender local or
+remote, PRIVMSG or NOTICE, `hc_notice` says which; channel messages once per
+service bot on the channel). `Service{}` blocks (`struct ServiceConf`,
+`conf_service_list()`) declare the bots; `modules/services/irc_services/`
+creates them on `HOOK_CONFIG_LOADED` (fires after start-up and after each
+rehash — `mi_init`/`mi_rehash` run mid-parse and must not read config
+lists), reconciles them on rehash, and brings one back after a KILL or
+collision. `modules/commands/m_bot.c` is only the `/BOT` front end.
 
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may

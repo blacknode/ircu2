@@ -5,10 +5,16 @@
 
 /**< User flags */
 
+#define FLAG_BOT (BITSET << 1)      /**< Bot run by the network (+B); only \
+                                        the server sets it */
 #define FLAG_HIDEIDLE (BITSET << 8) /**< Hide idle time from non-opers */
 #define FLAG_LOCOP (BITSET << 14)   /**< Local operator */
 #define FLAG_BLOCK_UNAUTH_USERS                                                \
   (BITSET << 17) /**< Block msgs from unauthenticated users */
+#define FLAG_SERVBOT                                                           \
+  (BITSET << 18) /**< Service bot this network runs (NickServ and the like); \
+                    messages to it are handed to a module, never delivered; \
+                    only the server sets it */
 #define FLAG_COMMONCHANS                                                       \
   (BITSET << 28) /**< only accepts messages from users in common channels */
 #define FLAG_DEAF (BITSET << 29)      /**< Makes user deaf */

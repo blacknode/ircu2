@@ -23,6 +23,7 @@
 
 #include "config.h"
 #include "s_conf.h"
+#include "channel.h"
 #include "class.h"
 #include "client.h"
 #include "crule.h"
@@ -90,6 +91,7 @@
   struct DenyConf *dconf;
   struct ServerConf *sconf;
   struct s_map *smap;
+  struct ServiceConf *svc;
   struct Privs privs;
   struct Privs privs_dirty;
 
@@ -116,6 +118,7 @@ enum ConfigBlock
   BLOCK_WEBIRC,
   BLOCK_IPCHECK,
   BLOCK_DATABASE,
+  BLOCK_SERVICE,
   BLOCK_LAST_BLOCK
 };
 
@@ -136,7 +139,7 @@ permitted(enum ConfigBlock type)
     "Admin", "Class", "Client", "Connect", "CRule", "Features",
     "General", "IAuth", "Include", "Jupe", "Kill", "Module", "Motd",
     "Oper", "Port", "Pseudo", "Quarantine", "UWorld", "WebIRC", "IPCheck",
-    "Database",
+    "Database", "Service",
     NULL
   };
 
@@ -234,6 +237,9 @@ static void free_slist(struct SLink **link) {
 %token IPCHECK
 %token EXCEPT
 %token DATABASE
+%token SERVICE
+%token TYPE
+%token CHANNEL
 %token DSN
 %token READ
 %token WRITE
@@ -287,7 +293,7 @@ block: adminblock | generalblock | classblock | connectblock |
        uworldblock | operblock | portblock | jupeblock | clientblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
-       moduleblock | databaseblock | includeblock |
+       moduleblock | databaseblock | serviceblock | includeblock |
        error '}' ';' { yyerrok; };
 
 /* The timespec, sizespec and expr was ripped straight from
@@ -1434,6 +1440,98 @@ modulefile: TFILE '=' QSTRING ';'
   pass = $3;
 };
 
+/* A Service{} block describes one service bot of the network -- a
+ * NickServ, a ChanServ -- for the irc_services module to introduce.  The
+ * server records it and checks what it can: the nick is a nick, the
+ * type is given, no two blocks share a name.  What the type means, and
+ * whether the module knows it, is the module's business; it reads the
+ * list on HOOK_CONFIG_LOADED.  See doc/readme.services.
+ */
+serviceblock: SERVICE {
+  if (!permitted(BLOCK_SERVICE)) YYERROR;
+  svc = MyCalloc(1, sizeof(*svc));
+} '{' serviceitems '}' ';'
+{
+  const char *p;
+  int valid = 1;
+
+  if (!svc->name) {
+    parse_error("Missing name in Service block");
+    valid = 0;
+  } else if (!svc->type) {
+    parse_error("Missing type in Service %s block", svc->name);
+    valid = 0;
+  } else if (conf_find_service(svc->name)) {
+    parse_error("Duplicate Service %s block", svc->name);
+    valid = 0;
+  } else if (*svc->name == '-' || IsDigit(*svc->name)
+             || strlen(svc->name) > NICKLEN) {
+    parse_error("Service name %s is not a valid nick", svc->name);
+    valid = 0;
+  } else {
+    for (p = svc->name; *p; p++)
+      if (!IsNickChar(*p)) {
+        parse_error("Service name %s is not a valid nick", svc->name);
+        valid = 0;
+        break;
+      }
+  }
+
+  if (valid)
+    conf_add_service(svc);
+  else
+    conf_free_service(svc);
+  svc = NULL;
+};
+
+serviceitems: serviceitem serviceitems | serviceitem;
+serviceitem: servicename | servicetype | serviceusername | servicehost |
+  servicedescription | servicechannel;
+servicename: NAME '=' QSTRING ';'
+{
+  MyFree(svc->name);
+  svc->name = $3;
+};
+servicetype: TYPE '=' QSTRING ';'
+{
+  MyFree(svc->type);
+  svc->type = $3;
+};
+serviceusername: USERNAME '=' QSTRING ';'
+{
+  MyFree(svc->username);
+  svc->username = $3;
+};
+servicehost: HOST '=' QSTRING ';'
+{
+  MyFree(svc->host);
+  svc->host = $3;
+};
+servicedescription: DESCRIPTION '=' QSTRING ';'
+{
+  MyFree(svc->description);
+  svc->description = $3;
+};
+/* Repeatable: one line per channel.  Kept in file order so the bot joins
+ * them in the order the operator wrote them.
+ */
+servicechannel: CHANNEL '=' QSTRING ';'
+{
+  struct SLink *link, **tail;
+
+  if (!IsChannelName($3) || !strIsIrcCh($3)) {
+    parse_error("Service channel %s is not a channel name", $3);
+    MyFree($3);
+  } else {
+    link = make_link();
+    link->value.cp = $3;
+    link->next = NULL;
+    for (tail = &svc->channels; *tail; tail = &(*tail)->next)
+      ;
+    *tail = link;
+  }
+};
+
 iauthblock: IAUTH {
   if (!permitted(BLOCK_IAUTH)) YYERROR;
 } '{' iauthitems '}' ';' {
@@ -1636,4 +1734,5 @@ blocktype: ALL { $$ = ~0; }
   | WEBIRC { $$ = 1 << BLOCK_WEBIRC; }
   | IPCHECK { $$ = 1 << BLOCK_IPCHECK; }
   | DATABASE { $$ = 1 << BLOCK_DATABASE; }
+  | SERVICE { $$ = 1 << BLOCK_SERVICE; }
   ;

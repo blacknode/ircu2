@@ -16,12 +16,12 @@
 #include <string.h>
 
 /** Core modes seeded by client_init_user_modes(), in no particular order. */
-static const char core_modes[] = "oOiwsdkgrRxzIc";
+static const char core_modes[] = "oOiwsdkgrRxzIcBS";
 
 /** A bit no core mode uses, free for the tests to hand out. */
-#define TEST_FLAG_ONE  (BITSET << 1)
+#define TEST_FLAG_ONE  (BITSET << 2)
 /** A second free bit. */
-#define TEST_FLAG_TWO  (BITSET << 2)
+#define TEST_FLAG_TWO  (BITSET << 3)
 
 /** Number of modes currently registered. */
 static unsigned int mode_count(void)

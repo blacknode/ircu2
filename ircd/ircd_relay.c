@@ -46,6 +46,7 @@
 #include "config.h"
 
 #include "ircd_relay.h"
+#include "bot.h"
 #include "channel.h"
 #include "client.h"
 #include "hash.h"
@@ -167,6 +168,7 @@ void relay_channel_message(struct Client* sptr, const char* name, const char* te
   RevealDelayedJoinIfNeeded(sptr, chptr);
   sendcmdto_channel_butone(sptr, CMD_PRIVATE, chptr, cli_from(sptr),
 			   SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+  bot_deliver_channel(sptr, chptr, 0, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%H :%s", chptr, text);
@@ -228,6 +230,7 @@ void relay_channel_notice(struct Client* sptr, const char* name, const char* tex
   RevealDelayedJoinIfNeeded(sptr, chptr);
   sendcmdto_channel_butone(sptr, CMD_NOTICE, chptr, cli_from(sptr),
 			   SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+  bot_deliver_channel(sptr, chptr, 1, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%H :%s", chptr, text);
@@ -258,6 +261,7 @@ void server_relay_channel_message(struct Client* sptr, const char* name, const c
   if (client_can_send_to_channel(sptr, chptr, 1) || IsChannelService(sptr)) {
     sendcmdto_channel_butone(sptr, CMD_PRIVATE, chptr, cli_from(sptr),
 			     SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+    bot_deliver_channel(sptr, chptr, 0, text);
   }
   else
     send_reply(sptr, ERR_CANNOTSENDTOCHAN, chptr->chname);
@@ -286,6 +290,7 @@ void server_relay_channel_notice(struct Client* sptr, const char* name, const ch
   if (client_can_send_to_channel(sptr, chptr, 1) || IsChannelService(sptr)) {
     sendcmdto_channel_butone(sptr, CMD_NOTICE, chptr, cli_from(sptr),
 			     SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+    bot_deliver_channel(sptr, chptr, 1, text);
   }
 }
 
@@ -308,7 +313,13 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
   assert(0 != text);
   assert(0 != server);
 
-  if ((acptr = FindServer(server + 1)) == NULL || !IsService(acptr))
+  /* A server that is not a service may still be addressed this way for
+   * a service bot of its own.  Only this server can know that of itself,
+   * so nick@server for another server's bots still needs that server to
+   * be a service.
+   */
+  if ((acptr = FindServer(server + 1)) == NULL
+      || (!IsService(acptr) && !(IsMe(acptr) && bot_service_count() > 0)))
   {
     send_reply(sptr, ERR_NOSUCHNICK, name);
     return;
@@ -341,9 +352,10 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
    * Argh, /ping nick@server, disallow messages to non +k clients :/  I hate
    * this. -- Isomer 2001-09-16
    */
-  if (!(acptr = FindUser(name)) || !MyUser(acptr) ||
-      !IsChannelService(acptr) ||
-      (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
+  if (!(acptr = FindUser(name))
+      || !(MyUser(acptr) || IsLocalServiceBot(acptr))
+      || !IsChannelService(acptr)
+      || (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
   {
     /*
      * By this stage we might as well not bother because they will
@@ -369,7 +381,10 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
 
   if (!(is_silenced(sptr, acptr)))
   {
-    sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
+    if (IsLocalServiceBot(acptr))
+      bot_deliver_private(sptr, acptr, 0, text);
+    else
+      sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
 
     if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
       sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%s :%s", name, text);
@@ -395,7 +410,13 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const 
   assert(0 != text);
   assert(0 != server);
 
-  if ((acptr = FindServer(server + 1)) == NULL || !IsService(acptr))
+  /* A server that is not a service may still be addressed this way for
+   * a service bot of its own.  Only this server can know that of itself,
+   * so nick@server for another server's bots still needs that server to
+   * be a service.
+   */
+  if ((acptr = FindServer(server + 1)) == NULL
+      || (!IsService(acptr) && !(IsMe(acptr) && bot_service_count() > 0)))
   {
     send_reply(sptr, ERR_NOSUCHNICK, name);
     return;
@@ -420,16 +441,15 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const 
   if ((host = strchr(name, '%')))
     *host++ = '\0';
 
-  if (!(acptr = FindUser(name)) || !MyUser(acptr) ||
-      (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
+  if (!(acptr = FindUser(name))
+      || !(MyUser(acptr) || IsLocalServiceBot(acptr))
+      || (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
     return;
 
   /* Apply the same logic to NOTICE that is applied to PRIVMSG: only
    * allow services to receive /notice nick@server.undernet.org notices.
   */
-  if (!(acptr = FindUser(name)) || !MyUser(acptr) ||
-      !IsChannelService(acptr) ||
-      (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
+  if (!IsChannelService(acptr))
   {
     send_reply(sptr, ERR_NOSUCHNICK, name);
     return;
@@ -449,7 +469,10 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const 
 
   if (!(is_silenced(sptr, acptr)))
   {
-    sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
+    if (IsLocalServiceBot(acptr))
+      bot_deliver_private(sptr, acptr, 1, text);
+    else
+      sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
 
     if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
       sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%s :%s", name, text);
@@ -573,7 +596,13 @@ void relay_private_message(struct Client* sptr, const char* name, const char* te
     }
   }
 
-  sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
+  /* A service bot of this server has no connection to deliver to; the
+   * module that owns it gets the message instead.
+   */
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 0, text);
+  else
+    sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%C :%s", acptr, text);
@@ -621,7 +650,10 @@ void relay_private_notice(struct Client* sptr, const char* name, const char* tex
   if (MyUser(acptr))
     add_target(acptr, sptr);
 
-  sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 1, text);
+  else
+    sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%C :%s", acptr, text);
@@ -666,7 +698,13 @@ void server_relay_private_message(struct Client* sptr, const char* name, const c
   if (MyUser(acptr))
     add_target(acptr, sptr);
 
-  sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
+  /* A service bot serves the whole network, so a message from a remote
+   * user reaches its module the same way a local user's does.
+   */
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 0, text);
+  else
+    sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
 }
 
 
@@ -704,7 +742,10 @@ void server_relay_private_notice(struct Client* sptr, const char* name, const ch
   if (MyUser(acptr))
     add_target(acptr, sptr);
 
-  sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 1, text);
+  else
+    sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
 }
 
 /** Relay a masked message from a local user.

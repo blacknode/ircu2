@@ -57,7 +57,8 @@ static const struct UserDefaultMode {
                     {FLAG_CHSERV, 'k'},     {FLAG_DEBUG, 'g'},
                     {FLAG_ACCOUNT, 'r'},    {FLAG_BLOCK_UNAUTH_USERS, 'R'},
                     {FLAG_HIDDENHOST, 'x'}, {FLAG_TLS, 'z'},
-                    {FLAG_HIDEIDLE, 'I'},   {FLAG_COMMONCHANS, 'c'}};
+                    {FLAG_HIDEIDLE, 'I'},   {FLAG_COMMONCHANS, 'c'},
+                    {FLAG_BOT, 'B'},        {FLAG_SERVBOT, 'S'}};
 
 /** Length of #userModeList. */
 #define USERMODELIST_SIZE sizeof(userModeList) / sizeof(struct UserDefaultMode)

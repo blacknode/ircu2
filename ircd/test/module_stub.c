@@ -12,6 +12,7 @@
  */
 
 struct Client;
+struct ModuleHandle;
 
 #include "msg.h"
 #include "parse.h"
@@ -161,4 +162,14 @@ const char* visible_username(const struct Client* cptr)
 {
   (void) cptr;
   return "";
+}
+
+/** Stub for the bot list module.c empties on unload.
+ *
+ * bot.c introduces clients to the network, which is the whole server; no
+ * fixture module creates a bot, so there is never anything to drop.
+ */
+void bot_drop_module(struct ModuleHandle* mod)
+{
+  (void) mod;
 }

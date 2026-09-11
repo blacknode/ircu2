@@ -78,8 +78,10 @@ static const char* hook_names[HOOK_LAST] = {
   "CHANNEL_DESTROYED",
   "MESSAGE_PRE_CHANNEL",
   "MESSAGE_PRE_PRIVATE",
+  "MESSAGE_RECEIVED",
   "SERVER_LINKED",
-  "SERVER_SPLIT"
+  "SERVER_SPLIT",
+  "CONFIG_LOADED"
 };
 
 /** Get the name of a hook type.

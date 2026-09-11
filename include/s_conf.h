@@ -180,6 +180,23 @@ struct s_map {
 };
 
 
+/** One Service{} block: a service bot for a module to introduce.
+ *
+ * The server only records it.  A module -- irc_services -- walks the list
+ * on HOOK_CONFIG_LOADED and creates a bot for each block whose type it
+ * knows; see doc/readme.services.  Fields not given are NULL, and the
+ * module applies the bot_create() defaults.
+ */
+struct ServiceConf {
+  struct ServiceConf* next;    /**< Next block, in file order. */
+  char*               name;    /**< Nick.  Required, unique. */
+  char*               type;    /**< Which service this is, e.g. "nickserv". */
+  char*               username; /**< Ident, or NULL. */
+  char*               host;    /**< Host, or NULL. */
+  char*               description; /**< Real name, or NULL. */
+  struct SLink*       channels; /**< Channels to sit on, value.cp each. */
+};
+
 /*
  * GLOBALS
  */
@@ -221,6 +238,15 @@ extern void conf_parse_userhost(struct ConfItem *aconf, char *host);
 extern struct ConfItem *conf_debug_iline(const char *client);
 extern void conf_add_module(const char *name);
 extern void free_mapping(struct s_map *smap);
+
+/** Take ownership of a parsed Service{} block; \a svc must be complete. */
+extern void conf_add_service(struct ServiceConf *svc);
+/** Release a Service{} block that was not added. */
+extern void conf_free_service(struct ServiceConf *svc);
+/** The Service{} blocks of the current configuration, in file order. */
+extern const struct ServiceConf *conf_service_list(void);
+/** The Service{} block whose name is \a nick, or NULL. */
+extern const struct ServiceConf *conf_find_service(const char *nick);
 
 extern void yyerror(const char *msg);
 

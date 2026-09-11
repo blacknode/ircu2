@@ -28,6 +28,7 @@
 
 #include "s_misc.h"
 #include "IPcheck.h"
+#include "bot.h"
 #include "channel.h"
 #include "client.h"
 #include "hash.h"
@@ -393,8 +394,11 @@ int exit_client(struct Client *cptr,
 
   /* Fired before anything is torn down, so the hook still sees a whole
    * client: its channels, account and modes are all still in place.
+   * The bot list is told afterwards, so that a hook can still ask
+   * bot_find() whether the client leaving was a bot.
    */
   hook_notify(HOOK_CLIENT_EXITING, victim, killer, NULL, comment);
+  bot_client_exiting(victim);
 
   if (MyConnect(victim))
   {

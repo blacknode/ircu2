@@ -68,10 +68,17 @@ enum HookType {
   /* --- messaging --- */
   HOOK_MESSAGE_PRE_CHANNEL,   /**< Veto or rewrite a message to a channel. */
   HOOK_MESSAGE_PRE_PRIVATE,   /**< Veto or rewrite a message to a user. */
+  HOOK_MESSAGE_RECEIVED,      /**< A service bot (+S) of this server was sent
+                                   a message; see include/bot.h. */
 
   /* --- network --- */
   HOOK_SERVER_LINKED,         /**< A server finished linking. */
   HOOK_SERVER_SPLIT,          /**< A server left the network. */
+
+  /* --- the server itself --- */
+  HOOK_CONFIG_LOADED,         /**< The configuration file was read in full:
+                                   once at start-up, with the server ready,
+                                   and again after every rehash. */
 
   HOOK_LAST                   /**< Number of hook types. */
 };
@@ -103,6 +110,8 @@ struct HookContext {
   struct Channel* hc_channel;   /**< Channel involved, if any. */
 
   const char*     hc_arg;       /**< Proposed nick, text, mode string, ... */
+  int             hc_notice;    /**< For a message: non-zero if it is a NOTICE
+                                     rather than a PRIVMSG. */
 
   /** Buffer for a rewritten value, or NULL if this hook does not rewrite.
    *

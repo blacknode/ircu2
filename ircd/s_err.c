@@ -702,7 +702,7 @@ static Numeric replyTable[] = {
 /* 334 */
   { RPL_LISTUSAGE, ":%s", "334" },
 /* 335 */
-  { 0 },
+  { RPL_WHOISBOT, "%s :%s", "335" },
 /* 336 */
   { 0 },
 /* 337 */
@@ -790,7 +790,7 @@ static Numeric replyTable[] = {
 /* 378 */
   { 0 },
 /* 379 */
-  { 0 },
+  { RPL_WHOISMODES, "%s :using modes [%s]", "379" },
 /* 380 */
   { 0 },
 /* 381 */
@@ -2070,4 +2070,3 @@ char* rpl_str(int n)
 
   return numbuff;
 }
-

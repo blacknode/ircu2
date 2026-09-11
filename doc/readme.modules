@@ -542,6 +542,56 @@ allowed is short, and breaking the rule produces corruption that surfaces
 somewhere else entirely.
 
 
+A DATABASE
+==========
+
+A module that wants a database does not need a worker thread of its own.
+Load a database driver -- modules/workers/postgres is the one that ships --
+and call the API in include/db.h:
+
+  #include "db.h"
+
+  struct DbParam  nick  = { DB_TYPE_TEXT, cli_name(sptr), DB_FORMAT_TEXT };
+  struct DbParam* args[] = { &nick, NULL };
+  struct DbQuery  query = { "select score from accounts where nick = $1",
+                            args };
+
+  if (db_query(mod, &query, account_loaded, numnick) != DB_OK)
+    /* refused here and now; account_loaded will not run */;
+
+account_loaded runs in the main thread, up to five seconds later, with the
+rows as a json_t array.  The statement is prepared and the values are
+bound, so a parameter can never be read as SQL; the driver's own types
+never appear; and unloading the module drops its pending callbacks instead
+of calling into code that is no longer mapped, so a module with queries in
+flight is still safe to unload.
+
+The driver is configured by a Database{} block in ircd.conf, which the
+server keeps whether or not any driver is loaded.  See doc/readme.database.
+
+
+A LIBRARY OF ITS OWN
+====================
+
+A module links against nothing by default: its symbols resolve against the
+ircd.  One that needs more than that -- a client library, a header outside
+the tree -- says so in a CMake fragment beside its sources rather than in
+the core's build files:
+
+  modules/<type>/<name>/module.cmake      a module built from a directory
+  modules/<type>/<name>.cmake             a single-file module
+
+The fragment is read with IRCU_MODULE_NAME, IRCU_MODULE_TYPE and
+IRCU_MODULE_DIR set, and answers by setting IRCU_MODULE_LINK_LIBRARIES,
+IRCU_MODULE_INCLUDE_DIRECTORIES, IRCU_MODULE_COMPILE_DEFINITIONS or
+IRCU_MODULE_COMPILE_OPTIONS -- or IRCU_MODULE_SKIP, with a reason, to bow
+out when an optional dependency is not installed.  A skipped module is
+reported at configure time and stops nothing else from building.
+
+modules/workers/postgres/module.cmake is the worked example: it looks for
+libpq and jansson, and skips the module when either is missing.
+
+
 THE EXAMPLES
 ============
 
@@ -566,6 +616,11 @@ THE EXAMPLES
   workers/worker_ticker.c
                          runs a thread with a loop of its own; the
                          reference for module_spawn_worker()
+  workers/postgres/      the database driver behind include/db.h; the
+                         reference for a module with a connection pool,
+                         for a module with libraries of its own
+                         (module.cmake), and for one whose worker threads
+                         outlive a single task
   modes/m_botmode.c      adds user mode +B, a bot of the network, and
                          refuses to let anyone set it by hand; the
                          reference for guarding a mode with

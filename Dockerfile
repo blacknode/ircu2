@@ -17,6 +17,9 @@ FROM debian:trixie-slim AS builder-tree
 ARG TLS_BACKEND=openssl
 ARG SANITIZE=
 
+# libpq-dev and libjansson-dev are for modules/workers/postgres, which
+# declares them in its own module.cmake.  Without them that one module is
+# skipped and everything else builds exactly the same.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   gcc \
   make \
@@ -24,6 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   bison \
   libc6-dev \
   pkg-config \
+  libpq-dev \
+  libjansson-dev \
   $(if [ "$TLS_BACKEND" = "openssl" ]; then echo libssl-dev; \
   elif [ "$TLS_BACKEND" = "gnutls" ]; then echo libgnutls28-dev; \
   elif [ "$TLS_BACKEND" = "libtls" ]; then echo libtls-dev; fi) \
@@ -86,10 +91,14 @@ FROM debian:trixie-slim AS runtime-base
 ARG TLS_BACKEND=openssl
 ARG SANITIZE=
 
+# libpq5 and libjansson4 are what the postgres module links against at run
+# time; harmless on an image that never loads it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   perl \
   gdb \
   valgrind \
+  libpq5 \
+  libjansson4 \
   $(if [ "$TLS_BACKEND" = "openssl" ]; then echo libssl3t64; \
   elif [ "$TLS_BACKEND" = "gnutls" ]; then echo libgnutls30t64; \
   elif [ "$TLS_BACKEND" = "libtls" ]; then echo libtls28t64; fi) \

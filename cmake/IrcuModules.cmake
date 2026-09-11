@@ -15,6 +15,29 @@
 #                                  headers, and anything else is a resource
 #                                  copied next to the shared object
 #
+# A module that needs something the core knows nothing about -- a client
+# library, a header outside the tree, a definition of its own -- says so in
+# its own CMake fragment rather than in the core's build files:
+#
+#   modules/<type>/<name>/module.cmake    for a module built from a directory
+#   modules/<type>/<name>.cmake           for a single-file module
+#
+# The fragment is read before the module is built, with IRCU_MODULE_NAME,
+# IRCU_MODULE_TYPE and IRCU_MODULE_DIR set, and it answers by setting any of:
+#
+#   IRCU_MODULE_SKIP                  a reason not to build this module at
+#                                     all -- a missing optional dependency,
+#                                     say.  The rest of the tree still
+#                                     builds, and the reason is printed.
+#   IRCU_MODULE_LINK_LIBRARIES        libraries or imported targets to link
+#   IRCU_MODULE_INCLUDE_DIRECTORIES   extra include directories
+#   IRCU_MODULE_COMPILE_DEFINITIONS   extra -D definitions
+#   IRCU_MODULE_COMPILE_OPTIONS       extra compiler flags
+#
+# That keeps the dependency where the module is: nothing in cmake/ or in the
+# ircd's own build has to learn about a module's libraries, and a tree with
+# no libpq simply builds one module fewer.
+#
 # <type> is any directory name -- commands, modes, hooks, workers, or one
 # of your own -- and only organises the tree: the module is still named,
 # loaded and unloaded by <name> alone, so a name may appear under one type
@@ -40,7 +63,9 @@
 # ircu_add_module(<name>
 #                 SUBDIR <type>[/<name>]
 #                 SOURCES <source>...
-#                 [DIRECTORY <dir> [RESOURCES <file>...]])
+#                 [DIRECTORY <dir> [RESOURCES <file>...]]
+#                 [LINK_LIBRARIES <lib>...] [INCLUDE_DIRECTORIES <dir>...]
+#                 [COMPILE_DEFINITIONS <def>...] [COMPILE_OPTIONS <opt>...])
 #
 # Builds <name>.so from SOURCES into modules/<SUBDIR>/ of the build tree
 # and installs it into <IRCU_MPATH>/<SUBDIR>/.  DIRECTORY is the module's
@@ -50,7 +75,8 @@
 # its path relative to DIRECTORY, so a resource in a subdirectory keeps
 # that subdirectory.
 function(ircu_add_module name)
-  cmake_parse_arguments(arg "" "SUBDIR;DIRECTORY" "SOURCES;RESOURCES"
+  cmake_parse_arguments(arg "" "SUBDIR;DIRECTORY"
+    "SOURCES;RESOURCES;LINK_LIBRARIES;INCLUDE_DIRECTORIES;COMPILE_DEFINITIONS;COMPILE_OPTIONS"
     ${ARGN})
   if(arg_UNPARSED_ARGUMENTS)
     message(FATAL_ERROR
@@ -84,6 +110,22 @@ function(ircu_add_module name)
   # that keeps sources in a subdirectory of it.
   if(arg_DIRECTORY)
     target_include_directories(${name} PRIVATE "${arg_DIRECTORY}")
+  endif()
+
+  # Whatever the module's own fragment asked for.  A module still resolves
+  # the core's symbols against the ircd executable; this is only for the
+  # libraries the core does not have.
+  if(arg_LINK_LIBRARIES)
+    target_link_libraries(${name} PRIVATE ${arg_LINK_LIBRARIES})
+  endif()
+  if(arg_INCLUDE_DIRECTORIES)
+    target_include_directories(${name} PRIVATE ${arg_INCLUDE_DIRECTORIES})
+  endif()
+  if(arg_COMPILE_DEFINITIONS)
+    target_compile_definitions(${name} PRIVATE ${arg_COMPILE_DEFINITIONS})
+  endif()
+  if(arg_COMPILE_OPTIONS)
+    target_compile_options(${name} PRIVATE ${arg_COMPILE_OPTIONS})
   endif()
 
   # "nocaps.so", not "libnocaps.so": the loader appends ".so" to the name.
@@ -143,6 +185,8 @@ function(ircu_add_modules)
 
   set(names "")
   set(origins "")
+  set(built "")
+  set(skipped "")
   foreach(typedir IN LISTS types)
     get_filename_component(type "${typedir}" NAME)
     if(type MATCHES "^\\.")
@@ -171,6 +215,8 @@ function(ircu_add_modules)
       if(IS_DIRECTORY "${entry}")
         set(name "${leaf}")
         set(subdir "${type}/${name}")
+        set(fragment "${entry}/module.cmake")
+        set(directory "${entry}")
         _ircu_module_directory_contents("${entry}" sources resources)
         if(NOT sources)
           message(FATAL_ERROR
@@ -179,6 +225,8 @@ function(ircu_add_modules)
       elseif(leaf MATCHES "\\.c$")
         string(REGEX REPLACE "\\.c$" "" name "${leaf}")
         set(subdir "${type}")
+        set(fragment "${typedir}/${name}.cmake")
+        set(directory "")
         set(sources "${entry}")
         set(resources "")
       else()
@@ -198,19 +246,56 @@ function(ircu_add_modules)
       list(APPEND names "${name}")
       list(APPEND origins "${entry}")
 
-      if(IS_DIRECTORY "${entry}")
-        ircu_add_module(${name} SUBDIR "${subdir}" SOURCES ${sources}
-          DIRECTORY "${entry}" RESOURCES ${resources})
-      else()
-        ircu_add_module(${name} SUBDIR "${subdir}" SOURCES ${sources})
+      # The module's own CMake fragment, if it has one: its chance to find
+      # the libraries it needs, or to bow out when they are not there.
+      set(IRCU_MODULE_NAME "${name}")
+      set(IRCU_MODULE_TYPE "${type}")
+      set(IRCU_MODULE_DIR "${directory}")
+      set(IRCU_MODULE_SKIP "")
+      set(IRCU_MODULE_LINK_LIBRARIES "")
+      set(IRCU_MODULE_INCLUDE_DIRECTORIES "")
+      set(IRCU_MODULE_COMPILE_DEFINITIONS "")
+      set(IRCU_MODULE_COMPILE_OPTIONS "")
+
+      if(EXISTS "${fragment}")
+        # Re-run the configure step when the fragment changes, the same way
+        # the globs above do.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+          "${fragment}")
+        include("${fragment}")
       endif()
+
+      if(IRCU_MODULE_SKIP)
+        message(STATUS "Module ${name}: not built (${IRCU_MODULE_SKIP})")
+        list(APPEND skipped "${name}")
+        continue()
+      endif()
+
+      if(directory)
+        ircu_add_module(${name} SUBDIR "${subdir}" SOURCES ${sources}
+          DIRECTORY "${directory}" RESOURCES ${resources}
+          LINK_LIBRARIES ${IRCU_MODULE_LINK_LIBRARIES}
+          INCLUDE_DIRECTORIES ${IRCU_MODULE_INCLUDE_DIRECTORIES}
+          COMPILE_DEFINITIONS ${IRCU_MODULE_COMPILE_DEFINITIONS}
+          COMPILE_OPTIONS ${IRCU_MODULE_COMPILE_OPTIONS})
+      else()
+        ircu_add_module(${name} SUBDIR "${subdir}" SOURCES ${sources}
+          LINK_LIBRARIES ${IRCU_MODULE_LINK_LIBRARIES}
+          INCLUDE_DIRECTORIES ${IRCU_MODULE_INCLUDE_DIRECTORIES}
+          COMPILE_DEFINITIONS ${IRCU_MODULE_COMPILE_DEFINITIONS}
+          COMPILE_OPTIONS ${IRCU_MODULE_COMPILE_OPTIONS})
+      endif()
+      list(APPEND built "${name}")
     endforeach()
   endforeach()
 
-  if(names)
-    message(STATUS "Modules: ${names}")
+  if(built)
+    message(STATUS "Modules: ${built}")
   else()
     message(STATUS "Modules: none")
+  endif()
+  if(skipped)
+    message(STATUS "Modules not built: ${skipped}")
   endif()
 endfunction()
 
@@ -218,8 +303,9 @@ endfunction()
 #
 # Sorts everything below a module directory into what gets compiled and
 # what gets copied.  Headers are neither: they are included, not shipped.
-# Hidden files and directories are skipped, and so is a CMakeLists.txt,
-# which is not a resource whatever else it might be.
+# Hidden files and directories are skipped, and so are CMakeLists.txt and
+# the module's own .cmake fragment, which are build files rather than
+# resources whatever else they might be.
 function(_ircu_module_directory_contents dir sources_var resources_var)
   file(GLOB_RECURSE files CONFIGURE_DEPENDS "${dir}/*")
   list(SORT files)
@@ -232,7 +318,8 @@ function(_ircu_module_directory_contents dir sources_var resources_var)
       continue()
     elseif(relative MATCHES "\\.c$")
       list(APPEND sources "${file}")
-    elseif(relative MATCHES "\\.h$" OR relative STREQUAL "CMakeLists.txt")
+    elseif(relative MATCHES "\\.h$" OR relative STREQUAL "CMakeLists.txt"
+           OR relative MATCHES "\\.cmake$")
       continue()
     else()
       list(APPEND resources "${file}")

@@ -29,6 +29,7 @@
 #include "class.h"
 #include "client.h"
 #include "crule.h"
+#include "db.h"
 #include "ircd_features.h"
 #include "fileio.h"
 #include "gline.h"
@@ -1011,12 +1012,14 @@ int read_configuration_file(void)
 {
   conf_error = 0;
   feature_unmark(); /* unmark all features for resetting later */
+  db_conf_unmark(); /* the Database block is dropped if it is gone */
   clear_nameservers(); /* clear previous list of DNS servers */
   if (!init_lexer())
     return 0;
   yyparse();
   deinit_lexer();
   feature_mark(); /* reset unmarked features */
+  db_conf_sweep(); /* ... which is decided here, once the file is read */
   conf_already_read = 1;
   return 1;
 }

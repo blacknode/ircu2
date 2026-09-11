@@ -22,6 +22,7 @@
 
 #include "channel.h"
 #include "client.h"
+#include "db.h"
 #include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
@@ -1039,6 +1040,11 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    */
   module_drop_commands(mod);
   hook_del_module(mod);
+  /* Pending database calls this module made are forgotten, and a database
+   * driver it registered is withdrawn -- with whatever is still in flight
+   * failed, rather than answered into code that is about to be unmapped.
+   */
+  db_drop_module(mod);
   /* Modes last: taking a mode off a user or a channel announces a MODE
    * change, and the module's own hooks are already detached by then, so
    * none of its code runs on the way out.

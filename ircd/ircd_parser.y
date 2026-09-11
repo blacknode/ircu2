@@ -26,6 +26,7 @@
 #include "class.h"
 #include "client.h"
 #include "crule.h"
+#include "db.h"
 #include "fileio.h"
 #include "gline.h"
 #include "hash.h"
@@ -114,6 +115,7 @@ enum ConfigBlock
   BLOCK_UWORLD,
   BLOCK_WEBIRC,
   BLOCK_IPCHECK,
+  BLOCK_DATABASE,
   BLOCK_LAST_BLOCK
 };
 
@@ -134,6 +136,7 @@ permitted(enum ConfigBlock type)
     "Admin", "Class", "Client", "Connect", "CRule", "Features",
     "General", "IAuth", "Include", "Jupe", "Kill", "Module", "Motd",
     "Oper", "Port", "Pseudo", "Quarantine", "UWorld", "WebIRC", "IPCheck",
+    "Database",
     NULL
   };
 
@@ -230,6 +233,15 @@ static void free_slist(struct SLink **link) {
 %token CLOUDFLARE
 %token IPCHECK
 %token EXCEPT
+%token DATABASE
+%token DSN
+%token READ
+%token WRITE
+%token POOL
+%token READ_POOL
+%token WRITE_POOL
+%token TIMEOUT
+%token TIMEOUT_MS
 %token INCLUDE
 %token FROM
 %token TEOF
@@ -274,7 +286,8 @@ block: adminblock | generalblock | classblock | connectblock |
        uworldblock | operblock | portblock | jupeblock | clientblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
-       moduleblock | includeblock | error '}' ';' { yyerrok; };
+       moduleblock | databaseblock | includeblock |
+       error '}' ';' { yyerrok; };
 
 /* The timespec, sizespec and expr was ripped straight from
  * ircd-hybrid-7. */
@@ -1518,6 +1531,68 @@ ipcheck_except_ip_mask: QSTRING
   MyFree($1);
 };
 
+/* The Database block.  The server does not use any of this itself: it keeps
+ * it so that a database module -- loaded before or after this block, or not
+ * at all -- can ask for it.  See include/db.h.
+ *
+ * Only "dsn" is required.  "read" and "write" name replicas and fall back to
+ * "dsn" when they are absent, and the timeout is clamped to five seconds
+ * whatever it says here.
+ */
+databaseblock: DATABASE
+{
+  if (!permitted(BLOCK_DATABASE)) YYERROR;
+  db_conf_clear();
+} '{' databaseitems '}' ';'
+{
+  const char *err = 0;
+
+  if (!db_conf_commit(&err))
+    parse_error("%s", err ? err : "Database: block is incomplete");
+};
+
+databaseitems: databaseitem databaseitems | databaseitem;
+databaseitem: databasedsn | databaseread | databasewrite | databasepool |
+  databasereadpool | databasewritepool | databasetimeout |
+  databasetimeoutms;
+
+databasedsn: DSN '=' QSTRING ';'
+{
+  db_conf_set_dsn(-1, $3);
+};
+databaseread: READ '=' QSTRING ';'
+{
+  db_conf_set_dsn(DB_ROLE_READ, $3);
+};
+databasewrite: WRITE '=' QSTRING ';'
+{
+  db_conf_set_dsn(DB_ROLE_WRITE, $3);
+};
+databasepool: POOL '=' expr ';'
+{
+  db_conf_set_pool(-1, $3);
+};
+databasereadpool: READ_POOL '=' expr ';'
+{
+  db_conf_set_pool(DB_ROLE_READ, $3);
+};
+databasewritepool: WRITE_POOL '=' expr ';'
+{
+  db_conf_set_pool(DB_ROLE_WRITE, $3);
+};
+/* Two spellings of one knob: seconds for a configuration that thinks in
+ * seconds, milliseconds for one that wants a fraction of one.  Both are
+ * clamped to DB_TIMEOUT_MAX_MS on commit.
+ */
+databasetimeout: TIMEOUT '=' timespec ';'
+{
+  db_conf_set_timeout($3 * 1000);
+};
+databasetimeoutms: TIMEOUT_MS '=' expr ';'
+{
+  db_conf_set_timeout($3);
+};
+
 includeblock: INCLUDE {
   if (!permitted(BLOCK_INCLUDE)) YYERROR;
   flags = 0;
@@ -1551,4 +1626,5 @@ blocktype: ALL { $$ = ~0; }
   | UWORLD { $$ = 1 << BLOCK_UWORLD; }
   | WEBIRC { $$ = 1 << BLOCK_WEBIRC; }
   | IPCHECK { $$ = 1 << BLOCK_IPCHECK; }
+  | DATABASE { $$ = 1 << BLOCK_DATABASE; }
   ;

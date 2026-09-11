@@ -96,6 +96,7 @@ set(IRCU_SOURCES
   class.c
   client.c
   crule.c
+  db.c
   dbuf.c
   destruct_event.c
   fileio.c

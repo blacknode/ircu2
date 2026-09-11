@@ -38,6 +38,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build bison pkg-config
+          # libpq and jansson are not the ircd's dependencies; they belong to
+          # modules/workers/postgres, which declares them in its own CMake
+          # fragment and is skipped when they are missing.  Installed here so
+          # that CI compiles it rather than silently skipping it.
+          sudo apt-get install -y libpq-dev libjansson-dev
           if [ "${{ matrix.tls }}" = "openssl" ]; then
             sudo apt-get install -y libssl-dev
           elif [ "${{ matrix.tls }}" = "gnutls" ]; then
@@ -68,15 +73,39 @@ jobs:
           # Modules mirror the source tree: build/modules/<type>/<name>.so,
           # or <type>/<name>/<name>.so for one built from a directory.
           test -n "$(find build/modules -mindepth 2 -name '*.so')"
+
+          # The postgres module needs libpq and jansson, which were installed
+          # above; a skipped module here means its dependencies went missing.
+          test -f build/modules/workers/postgres/postgres.so
+
+          missing=0
           for so in $(find build/modules -mindepth 2 -name '*.so' | sort); do
             echo "== $so"
             test -f "$so"
-            # Anything a module needs that the ircd does not export would
-            # fail at dlopen with RTLD_NOW, so catch it here instead.
-            undefined=$(nm -u "$so" | awk '{print $NF}' | grep -v '^_' || true)
-            for sym in $undefined; do
-              if ! nm -D build/ircd/ircd | awk '{print $NF}' | grep -qx "$sym"                  && ! nm -D --undefined-only build/ircd/ircd | awk '{print $NF}' | grep -qx "$sym"; then
-                echo "  $sym is not exported by the ircd or its libraries"
+
+            # What the module may resolve against: the ircd's own exports,
+            # the symbols the ircd itself imports from its libraries, and --
+            # for a module with dependencies of its own, declared in its
+            # module.cmake -- whatever those libraries define.  Symbol
+            # versions ("@GLIBC_2.17") are not part of the name.
+            allowed=$(mktemp)
+            nm -D build/ircd/ircd | awk '{print $NF}' > "$allowed"
+            nm -D --undefined-only build/ircd/ircd | awk '{print $NF}' >> "$allowed"
+            for lib in $(ldd "$so" | awk '/=>/ && $3 ~ /^\// {print $3}'); do
+              nm -D --defined-only "$lib" 2>/dev/null | awk '{print $NF}' >> "$allowed"
+            done
+            sed -i 's/@.*//' "$allowed"
+            sort -u -o "$allowed" "$allowed"
+
+            # Anything left over would fail at dlopen with RTLD_NOW, so catch
+            # it here instead.
+            for sym in $(nm -u "$so" | awk '{print $NF}' | sed 's/@.*//' | grep -v '^_' || true); do
+              if ! grep -qx "$sym" "$allowed"; then
+                echo "  $sym is not exported by the ircd and not provided by"
+                echo "  any library the module links against"
+                missing=1
               fi
             done
+            rm -f "$allowed"
           done
+          test "$missing" -eq 0

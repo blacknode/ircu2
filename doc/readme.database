@@ -1,0 +1,314 @@
+DATABASE documentation, last updated on 11 Sep 2026
+
+A module that needs a database asks the server for one.  It does not link
+against libpq, it does not learn what a PGresult is, and it does not get a
+thread of its own: it calls db_query(), and some time later its callback
+runs in the main thread with the rows as JSON.
+
+This is the implementation of that idea.  The API is include/db.h; the
+dispatcher behind it is ircd/db.c; the thing that actually opens a socket
+to PostgreSQL is modules/workers/postgres/, which is a module like any
+other and is loaded, unloaded and reloaded like any other.
+
+
+READ THIS FIRST
+===============
+
+Three things are true of every query, and everything else follows:
+
+  A QUERY NEVER BLOCKS THE SERVER.
+
+db_query() hands the work to a connection thread and returns immediately.
+The answer arrives later -- a different pass through the event loop, and up
+to the configured timeout later.  Nothing in the API waits, because the
+core is single-threaded and a core that waits on a database is a core that
+has stopped serving its users.
+
+  A QUERY NEVER OUTLIVES FIVE SECONDS.
+
+The timeout is configurable and it is capped at five seconds, in the
+configuration parser and again in the driver.  A configuration asking for
+thirty is corrected to five, with a warning.  The cap holds even when the
+database stops answering entirely: the driver waits on poll() against its
+own deadline, not on libpq, so a TCP connection to a machine that has gone
+away is cut off on time rather than minutes later.
+
+  A VALUE NEVER BECOMES SQL.
+
+Statements are prepared, values are bound.  There is no entry point in this
+API that takes an assembled statement and no code path in the driver that
+concatenates a value into one.  A parameter containing "'; drop table
+accounts; --" is a string that matches nothing.
+
+
+THE SHAPE OF IT
+===============
+
+    a module                 the ircd                  the postgres module
+    --------                 --------                  -------------------
+    db_query(mod, q, cb, u)
+                          -> remembers the call
+                             as an id, hands the
+                             id to the driver
+                                                    -> copies the query into
+                                                       worker memory, queues
+                                                       it on the read pool
+
+                                                       ... connection thread:
+                                                       prepare, execute, wait
+                                                       on a deadline, build
+                                                       the rows as JSON ...
+
+                                                    <- worker_post()
+                          <- db_complete(id, ...)
+    cb(result, u)         <- ... unless the module
+                             was unloaded meanwhile
+
+The ircd in the middle is not ceremony.  Modules are opened with
+RTLD_LOCAL, so a database API living in the driver module would have no
+callers at all -- no other module could resolve its symbols.  Putting the
+API in the ircd, which exports its own, is what makes it reachable.  And
+holding the callbacks there is what makes it safe to unload a module with
+queries in flight: the calls are forgotten, and the answer that arrives two
+seconds later finds nothing to call.
+
+
+USING IT
+========
+
+Read:
+
+    static void account_loaded(const struct DbResult* res, void* user)
+    {
+      struct Client* sptr;
+      json_t* row;
+
+      if (res->err.dberr_code != DB_OK) {
+        log_write(LS_SYSTEM, L_ERROR, 0, "lookup failed: %s",
+                  res->err.dberr_message);
+        return;
+      }
+
+      if (!(sptr = findNUser((const char*) user)))
+        return;                 /* they left while we were asking */
+
+      if (!(row = json_array_get(res->data, 0)))
+        return;                 /* no such account */
+
+      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :score %lld", sptr,
+                    (long long) json_integer_value(json_object_get(row,
+                                                                   "score")));
+    }
+
+    struct DbParam  nick  = { DB_TYPE_TEXT, cli_name(sptr), DB_FORMAT_TEXT };
+    struct DbParam* args[] = { &nick, NULL };
+    struct DbQuery  query = { "select score from accounts where nick = $1",
+                              args };
+
+    if (db_query(mod, &query, account_loaded, numnick) != DB_OK)
+      send_reply(sptr, ERR_UNAVAILRESOURCE, "accounts", "try again later");
+
+Write, which is the same call on the other pool:
+
+    struct DbParam  nick  = { DB_TYPE_TEXT, cli_name(sptr), DB_FORMAT_TEXT };
+    struct DbParam  score = { DB_TYPE_INT, "1", DB_FORMAT_TEXT };
+    struct DbParam* args[] = { &nick, &score, NULL };
+    struct DbQuery  query = { "update accounts set score = score + $2"
+                              " where nick = $1", args };
+
+    db_exec(mod, &query, NULL, NULL);    /* nobody needs the answer */
+
+Four rules for the caller, and they are all about time passing:
+
+  - THE QUERY IS COPIED, THE RESULT IS NOT.  Everything in the DbQuery may
+    be a local variable; it is copied before db_query() returns.  The
+    DbResult is the driver's and is released as soon as the callback
+    returns: keep the rows with json_incref() if they are needed later.
+
+  - DO NOT CAPTURE A struct Client*.  Seconds pass.  A client that quits is
+    returned to a free list and its memory handed to somebody else, so a
+    pointer held across a query is a use-after-free waiting for a slow
+    database.  Store the numnick and look it up again, exactly as a worker
+    task does; see include/worker.h.
+
+  - CHECK THE RETURN VALUE.  DB_OK means the query was accepted and the
+    callback will run.  Anything else is a refusal here and now -- no
+    driver loaded, no configuration, workers off, pool busy, malformed
+    parameters -- and the callback will never run.
+
+  - THE CALLBACK MAY NOT RUN.  If the module is unloaded first, its
+    callbacks are dropped.  That is deliberate, and it is why a module does
+    not have to drain the database before it can be unloaded.
+
+
+WHAT COMES BACK
+===============
+
+DbResult::data is a JSON array with one object per row, mapping column name
+to value.  A statement that returns nothing -- an INSERT, an UPDATE -- gets
+an empty array rather than NULL, so nothing needs a special case, and
+DbResult::rows carries how many rows it touched.
+
+The type mapping is deliberately conservative:
+
+    integers (int2/int4/int8)     JSON integer
+    float4, float8, numeric       JSON number
+    bool                          JSON true/false
+    json, jsonb                   the document itself, embedded
+    NULL                          JSON null
+    everything else               JSON string
+
+"Everything else" is timestamps, UUIDs, inet, arrays, the \x form of a
+bytea, and any type nobody has thought about.  A string is never wrong;
+guessing at a structure would be.  Values the server prints in a form JSON
+has no spelling for -- a numeric NaN or Infinity -- stay strings too.
+
+
+WHAT GOES WRONG
+===============
+
+DbErrDetails carries a code from a closed enum and a message.  Neither is
+PostgreSQL's: there is no SQLSTATE in the code and no libpq text in the
+message.  The codes are in include/db.h; the ones worth handling
+individually are
+
+    DB_ERR_UNIQUE        a record with that value already exists
+    DB_ERR_FOREIGN_KEY   a referenced record does not exist
+    DB_ERR_NOT_NULL      a required value was missing
+    DB_ERR_RETRY         deadlock or serialization failure; running the
+                         same statement again is the correct response
+    DB_ERR_TIMEOUT       it took longer than the configured timeout
+    DB_ERR_BUSY          every connection is busy and the queue is full
+    DB_ERR_UNAVAILABLE   no driver, or no worker threads
+
+The message is the driver's own wording and is safe to show a user.  That
+is the reason it is not the database's: a PostgreSQL error string names
+tables, columns, constraints and often a fragment of the statement, and a
+module that put it in a NOTICE would be handing the schema to whoever asked
+for it.  The database's own account is not lost -- it goes to the server
+log, where the operator can read it and nobody else can.
+
+
+CONFIGURING IT
+==============
+
+    Database {
+      dsn   = "host=db.example.org dbname=ircu user=ircu password=secret";
+      read  = "host=replica.example.org dbname=ircu user=ircu";
+      write = "host=db.example.org dbname=ircu user=ircu password=secret";
+      pool = 4;
+      read_pool = 8;
+      write_pool = 2;
+      timeout = 2 seconds;      # or timeout_ms = 1500;
+    };
+
+    Module { name = "postgres"; };
+
+Only "dsn" is required, and it is the fallback for both roles: a server
+with no replica sets it and nothing else.  db_query() goes to the read
+role, db_exec() to the write role, and each role has its own pool.
+
+The block is read and kept whether or not a driver is loaded, which is what
+lets the Module block appear before it, after it, or not at all.
+
+The timeout is capped at DB_TIMEOUT_MAX_MS -- five seconds -- and so is
+everything derived from it, including the connect.  "timeout" takes the
+usual time units; "timeout_ms" is the same knob in milliseconds, for a
+deadline shorter than a second.
+
+The driver needs worker threads, because that is where all of its waiting
+happens.  WORKER_THREADS is zero by default and every query is refused
+until it is set; set it to at least the total size of the pools.  See
+doc/readme.workers.
+
+
+BUILDING IT
+===========
+
+The ircd itself has no new dependencies.  libpq and jansson are needed only
+by modules/workers/postgres, which declares them in its own CMake fragment
+(modules/workers/postgres/module.cmake) rather than in the core's build
+files, and which is simply not built where they are missing:
+
+    -- Module postgres: not built (libpq and jansson not found)
+
+Install them and configure again:
+
+    Debian, Ubuntu     apt install libpq-dev libjansson-dev
+    Red Hat, Fedora    dnf install libpq-devel jansson-devel
+    FreeBSD            pkg install postgresql16-client jansson
+
+That fragment is also the pattern for any other module with dependencies of
+its own; cmake/IrcuModules.cmake documents what it may set.
+
+
+INSIDE THE DRIVER
+=================
+
+modules/workers/postgres/ is one module in six files, and postgres.h says
+which thread each of them runs in.
+
+    postgres.c    the module: registers the driver, and nothing else
+    pg_pool.c     the queue, the pools, and all of the copying
+    pg_conn.c     one connection, its statement cache, and its deadline
+    pg_json.c     PGresult -> json_t
+    pg_error.c    SQLSTATE -> enum DbError, and the wording
+    pg_types.c    enum DbType -> PostgreSQL OID
+
+One pooled connection is one dedicated worker thread (worker_spawn(), via
+module_spawn_worker()).  It owns its PGconn outright -- no connection is
+ever touched by two threads -- and it obeys the rule in doc/readme.workers
+without exception: worker_alloc() for memory, worker_log() for logging,
+worker_post() to hand the answer back, and nothing else from the core at
+all.  The pools start the first time a query needs one, so a server that
+never runs a query never opens a connection.
+
+Every statement is prepared before it is run, and the prepared statement is
+cached per connection under the text and the parameter types it was
+prepared with.  The cache is not evicted one entry at a time: when it fills
+(128 statements), the connection is closed and remade, which discards every
+statement prepared on it at once.  That is deliberate, and the reason is
+that emptying it any other way would mean sending a DEALLOCATE -- one
+statement that cannot itself go through the prepared path.  A module that
+fills the cache is generating statement text per call and should not be;
+the log says so when it happens.
+
+The deadline is enforced twice.  The driver arms its own, on the monotonic
+clock, and every wait it does is a poll() against it: a connect that does
+not complete, a result that does not arrive, a send buffer that does not
+drain.  When it passes, the query is cancelled, the connection is drained,
+and the caller is told DB_ERR_TIMEOUT.  The server is told the same figure
+at connect time, as statement_timeout, so a query that survives a lost
+cancel still ends on its own.
+
+For that to be possible the round trip uses libpq's non-blocking entry
+points -- PQsendPrepare and PQsendQueryPrepared, which are PQprepare and
+PQexecPrepared with the waiting left to the caller -- rather than the
+blocking ones.  Nothing else about the prepared-statement path changes;
+PQexec, which takes a statement as a string, is not used anywhere and has
+no way into this driver.
+
+
+UNLOADING IT
+============
+
+/MODULE UNLOAD postgres stops every connection thread, waits for whatever
+they are in the middle of -- bounded by the timeout, so at most five
+seconds -- fails everything still queued with DB_ERR_UNAVAILABLE, and
+withdraws the driver.  Queries submitted afterwards are refused with the
+same code until a driver is loaded again.
+
+/REHASH with a changed Database block stops the pools; the next query
+builds them again from the new configuration.  An unchanged block changes
+nothing and costs nothing.
+
+
+WRITING ANOTHER DRIVER
+======================
+
+Nothing in include/db.h is about PostgreSQL.  A driver is a module that
+fills in a struct DbDriver -- a name, a submit and a release -- registers it
+with db_register_driver() from its mi_init, and calls db_complete() when it
+has an answer.  There is one driver at a time: a second registration is
+refused rather than replacing the first, so two database modules in
+ircd.conf produce an error in the log instead of a coin flip.

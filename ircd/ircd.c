@@ -29,6 +29,7 @@
 #include "class.h"
 #include "client.h"
 #include "crule.h"
+#include "db.h"
 #include "destruct_event.h"
 #include "hash.h"
 #include "ircd_alloc.h"
@@ -837,6 +838,7 @@ int main(int argc, char **argv) {
    */
   module_close();
   worker_shutdown();
+  db_shutdown();
 
   return 0;
 }

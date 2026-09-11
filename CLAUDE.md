@@ -129,7 +129,12 @@ the ABI changes mean recompiling modules.  A module registers commands
 registers is reverted on unload. Modules run in-process with no sandbox.
 They are built by the same CMake run via `ircu_add_modules()` (`cmake/IrcuModules.cmake`)
 and link against nothing: symbols resolve against the ircd executable, which is
-built with `ENABLE_EXPORTS`. Sources live in `modules/<type>/` (`commands`,
+built with `ENABLE_EXPORTS`. A module that needs a library of its own declares it
+in its own fragment — `modules/<type>/<name>/module.cmake`, or
+`modules/<type>/<name>.cmake` for a single-file module — which may set
+`IRCU_MODULE_LINK_LIBRARIES`, `IRCU_MODULE_INCLUDE_DIRECTORIES`,
+`IRCU_MODULE_COMPILE_{DEFINITIONS,OPTIONS}`, or `IRCU_MODULE_SKIP` to opt out
+when a dependency is missing; the core's build files never learn about it. Sources live in `modules/<type>/` (`commands`,
 `modes`, `hooks`, `workers`; a type is just a directory) as either
 `<name>.c` or a `<name>/` directory whose `*.c` are compiled in, `*.h` are
 private and everything else is a resource copied beside the `.so`; the build
@@ -159,6 +164,19 @@ unloading a module cancels its queued work and waits for what is running, which
 blocks the server. Run `ctest --preset tsan -R worker_t` after touching
 `worker.c`.
 
+**Database** (`include/db.h`, `ircd/db.c`, `doc/readme.database`). The core holds
+the `Database{}` block and a table of queries in flight, and dispatches to one
+registered *driver* — a module. `db_query()`/`db_exec()` take a `struct DbQuery`
+(SQL with `$n` placeholders plus a NULL-terminated `struct DbParam**`) and call
+back in the main thread with a `struct DbResult` whose rows are `json_t` and
+whose errors are the closed `enum DbError`; no driver type ever escapes. The API
+lives in the core because modules are `RTLD_LOCAL` and could not resolve each
+other's symbols, and because holding the callbacks there is what lets a module
+be unloaded with queries outstanding. `modules/workers/postgres/` is the libpq
+driver: one dedicated worker per pooled connection, always `PQsendPrepare` +
+`PQsendQueryPrepared` (never `PQexec`), with a hard deadline capped at
+`DB_TIMEOUT_MAX_MS` (5s) enforced by `poll()` rather than by libpq.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact
@@ -169,7 +187,7 @@ notifications whose return value is ignored. All hooks run inline on the main th
 `ircd/worker.c` implements) and the channel modes by module (003, in Spanish);
 read the relevant one before changing either subsystem. Other useful docs:
 `doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
-`doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root generates reference docs).
+`doc/readme.database`, `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root generates reference docs).
 
 ## Conventions
 

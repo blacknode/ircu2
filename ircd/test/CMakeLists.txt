@@ -69,6 +69,11 @@ add_ircu_test(hooks_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
+add_ircu_test(db_t
+  "${IRCU_IRCD_DIR}/db.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
 add_ircu_test(user_modes_t
   user_modes_stub.c
   "${IRCU_IRCD_DIR}/client.c"
@@ -99,6 +104,7 @@ add_ircu_test(module_t
   worker_stub.c
   "${IRCU_IRCD_DIR}/chan_modes.c"
   "${IRCU_IRCD_DIR}/client.c"
+  "${IRCU_IRCD_DIR}/db.c"
   "${IRCU_IRCD_DIR}/hooks.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"

@@ -646,7 +646,7 @@ static Numeric replyTable[] = {
 /* 306 */
   { RPL_NOWAWAY, ":You have been marked as being away", "306" },
 /* 307 */
-  { 0 },
+  { RPL_WHOISREGNICK, "%s :is a registered user", "307" },
 /* 308 */
   { 0 },
 /* 309 */
@@ -692,7 +692,7 @@ static Numeric replyTable[] = {
 /* 329 */
   { RPL_CREATIONTIME, "%s %Tu", "329" },
 /* 330 */
-  { RPL_WHOISACCOUNT, "%s %s :is logged in as", "330" },
+  { 0 },
 /* 331 */
   { RPL_NOTOPIC, "%s :No topic is set.", "331" },
 /* 332 */
@@ -1832,23 +1832,23 @@ static Numeric replyTable[] = {
 /* 899 */
   { 0 },
 /* 900 */
-  { RPL_LOGGEDIN, "%s!%s@%s %s :You are now logged in as %s", "900" },
+  { 0 },
 /* 901 */
   { 0 },
 /* 902 */
   { 0 },
 /* 903 */
-  { RPL_SASLSUCCESS, ":SASL authentication successful", "903" },
+  { 0 },
 /* 904 */
-  { ERR_SASLFAIL, ":%s", "904" },
+  { 0 },
 /* 905 */
-  { ERR_SASLTOOLONG, ":SASL message too long", "905" },
+  { 0 },
 /* 906 */
-  { ERR_SASLABORTED, ":SASL authentication aborted", "906" },
+  { 0 },
 /* 907 */
-  { ERR_SASLALREADY, ":You have already authenticated using SASL", "907" },
+  { 0 },
 /* 908 */
-  { RPL_SASLMECHS, "%s :are available SASL mechanisms", "908" },
+  { 0 },
 /* 909 */
   { 0 },
 /* 910 */

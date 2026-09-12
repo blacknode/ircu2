@@ -11,16 +11,13 @@ from irc_client import IRCClient
 pytestmark = pytest.mark.single_server
 
 STANDARD_CAPS = [
-    "account-notify",
     "away-notify",
     "chghost",
     "echo-message",
-    "extended-join",
     "invite-notify",
     "userhost-in-names",
     "message-tags",
     "server-time",
-    "account-tag",
 ]
 
 
@@ -38,7 +35,7 @@ async def _rapid_req_list(host: str, port: int, nick: str, rounds: int = 40) -> 
     """Stress REQ/LIST after registration (avoids CAP-pending auth timeouts)."""
     from cap_helpers import make_cap_client
 
-    client = await make_cap_client(host, port, nick, caps=["account-notify"])
+    client = await make_cap_client(host, port, nick, caps=["invite-notify"])
     try:
         await client.send("CAP LS 302")
         offered = {
@@ -116,12 +113,12 @@ async def test_oversized_req_line_with_junk_caps(ircd_hub):
         await _collect_cap_ls(client)
         # Stay under ~512 IRC line length while packing many unknown tokens
         junk = " ".join(f"fc{i}" for i in range(40))
-        line = f"CAP REQ :account-notify {junk}"
+        line = f"CAP REQ :invite-notify {junk}"
         assert len(line) < 500, len(line)
         await client.send(line)
         msg = await client.wait_for("CAP", timeout=5.0)
         assert msg.params[1] == "NAK"
-        await client.send("CAP REQ :account-notify")
+        await client.send("CAP REQ :invite-notify")
         ack = await client.wait_for("CAP", timeout=5.0)
         assert ack.params[1] == "ACK"
     finally:

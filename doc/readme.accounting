@@ -1,0 +1,201 @@
+ACCOUNTING documentation, last updated on 11 Sep 2026
+
+"Accounting" is what the server knows about who a user is: whether it
+is identified to the nick it uses, and what host it is shown under.
+This file describes how that works now that the server no longer
+carries account names, ids or flags of its own, and no longer takes an
+ACCOUNT message.  The short version:
+
+  - Every user's host is hidden from the moment it is registered, as a
+    cipher of its real address under a key every server shares.  There
+    is no opting out, for the user or for the operator.
+
+  - User mode +r means "identified to the nick in use".  The account is
+    the nick itself.  A server, a service bot or a net burst puts +r on
+    a user and takes it off; the user never does, and a nick change
+    takes it off by itself.
+
+  - WHOIS says "is a registered user" (307) about a +r user and nothing
+    else; nothing tells an account name because there is none to tell.
+
+
+THE HIDDEN HOST
+===============
+
+register_user() calls hide_hostmask() for every user it introduces --
+a client of this server or one another server told it about -- before
+the user is announced to the network.  The user gets mode +x, and its
+visible host (cli_user()->host) becomes
+
+    xxxxxx.yyyyyy.v4        for an IPv4 address
+    xxxxxx.yyyyyy.v6        for an IPv6 address
+
+where xxxxxx.yyyyyy are two 32-bit words rendered in the P10 base64
+alphabet (A-Z a-z 0-9, never "[" or "]").  The real host stays in
+cli_user()->realhost and the real address in cli_ip(); both are what
+G-lines match, what operators are shown in WHOIS (338) and WHO %i, and
+what the log records (USERIP shows HIDDEN_IP to everyone but the user
+itself, operators included, as it always has).  A client without the
+chghost capability is told the host in RPL_HOSTHIDDEN (396) right
+after the MOTD.
+
+The cipher is TEA, 32 rounds, over the IPv4 address (with a retry
+counter in the first input word so that no output ever carries a
+bracket) or over the first 64 bits of the IPv6 address (retrying with
+the attempt number as initialisation vector).  The key is the
+Security block's virtual_host_key, twelve characters of the same
+alphabet, split into two 32-bit words.  ircd/ircd_vhost.c is the
+implementation, ircd/test/vhost_t.c the vectors it must reproduce,
+tests/vhost.py a Python port for the integration tests.  The scheme
+and the derivation are those of IRC-Hispano's ircd (crypt/ipvirtual),
+so an operator can reproduce a user's host from its address with an
+external tool and the same key; only the outputs that tool could not
+have used (a bracket in them) differ.
+
+Two users on the same IPv4 address, or on the same IPv6 /64, hide alike;
+so the host is still a handle for a ban.  The IPv4 address is spread
+over the whole output, not just the second word: the first word carries
+half the key and the retry counter, so nothing about the address can
+be read off either half without the key.
+
+Because the host is derived rather than carried, every server derives
+it.  The NICK that introduces a user on the wire names the real host
+and the real address, as it always did; the receiving server hides it
+on its own.  This is why the key is a network-wide setting: two servers
+with different keys would show the same user under two hosts, and a
+ban set on one would not match on the other.
+
+Bots the server introduces itself (+B, and services +S) keep the host
+they were configured with; hide_hostmask() leaves them alone and they
+do not carry +x.
+
+The former HOST_HIDING and HIDDEN_HOST features are gone.  HIDDEN_IP
+(the address USERIP and WHO %i show for a hidden user, that is, for
+every user) and TRUST_USERNAME (drop the ~ from the visible username
+of a hidden user, that is, of every user) remain and are described in
+readme.features.  What a ban or SILENCE mask can match is unchanged:
+the two complete identities ~user@realhost and user@hiddenhost, never
+a mix; the account.hiddenhost form is gone with the account.
+
+
+THE SECURITY BLOCK
+==================
+
+    Security {
+            virtual_host_key = "AbCdEfGhIjKl";
+    };
+
+The block is mandatory.  A configuration without it, or with a key that
+is not exactly twelve characters of A-Z a-z 0-9 [ ], is an error: at
+start-up the server reports it and refuses to run; on a rehash it
+reports it and keeps the key already in force, since a running server
+cannot stop hiding hosts.  A new key on a rehash applies to users who
+register afterwards; users already on line keep the host they have.
+Nothing shows the key: /STATS does not print it and no numeric carries
+it.
+
+The same block, with the same key, goes on every server of the network
+(see above).  Generate it once -- twelve random characters of the
+alphabet -- and treat it as a secret: with it, anyone can turn a host
+back into an address by trying addresses, and the address space is
+small.
+
+
+USER MODE +r
+============
+
++r is the mark of a user identified to the nick it is using.  With it
+the server keeps cli_user()->account, which is the nick that was
+current when +r was granted and nothing else; IsAccount() tests the
+flag and cli_account() reads the string, and every place that used to
+key on "has an account" -- channel modes +r and +M, user mode +R, the
++R sender exemption -- keys on it still.
+
+Who may set it:
+
+  - A server, with a MODE for the user on its own authority:
+
+        <servernum> M <nick> :+r
+
+    A services package that has verified a password sends this; it is
+    what the ACCOUNT message used to be for.  -r the same way.
+
+  - A service bot (+S), local through bot_set_user_mode() or remote
+    through the same MODE from the bot's numnick, on any user but an
+    operator.  The user sees the MODE as coming from the bot.
+
+  - A net burst: NICK introduces a user with r among its modes.  The
+    letter takes no parameter -- the account being the nick, there is
+    nothing to say -- and this is a change in the wire format: an
+    older ircu reads the token after r as the account name and would
+    misparse the rest of the NICK.  A network that identifies users
+    cannot keep such a server in it.
+
+Nobody else.  A MODE +r or -r from a user, on itself or on anyone
+else, is silently put back the way it was; a user asking to change
+another user's modes gets ERR_USERSDONTMATCH as before, and a MODE for
+another user from a remote client that is neither a server nor a +S
+bot is reported in WALLOPS as a peer misbehaving, as before.
+
+A nick change takes +r away.  set_nick_name() clears the flag and the
+account and tells the user with a MODE -r; every server applies the
+rule to the NICK it sees, so nothing is put on the wire for it.  A
+change of case alone (Foo to FOO) keeps +r and respells the account.
+Services that want the new nick identified put +r back.
+
+Set_user_mode() is where all of this is enforced (ircd/s_user.c,
+do_user_mode()); set_user_mode_on() is its entry point for a change to
+somebody else's modes, and m_mode.c decides who may reach it.
+
+
+WHAT A SERVICE BOT MAY DO
+=========================
+
+bot_set_user_mode(bot, target, "+r") -- include/bot.h.  A +S bot may
+change the modes of any user who is not an operator (IsAnOper(): global
+or local), and is held to what a user may set on itself plus +r and
+-r: +o, +O, +k, +S, +B, +z and -x are dropped from the string, the rest
+applies.  That rule is enforced on every server the change passes
+through, not only the bot's own, so a peer that claims a bot did more
+is not believed.  A server itself (a MODE from a server numeric) is
+not held to it: it may change anyone's modes to anything, as one server
+trusts another about the users it introduces.
+
+A remote +S bot is one a NICK burst introduced with S among its modes;
+only a server puts +S on a user, as before.
+
+
+WHAT IS GONE
+============
+
+  ACCOUNT (AC)            No longer a command.  Received, it is unknown.
+  acc_id, acc_flags       Gone from struct User; account[] holds a nick.
+  330 RPL_WHOISACCOUNT    Replaced by 307 RPL_WHOISREGNICK, "<nick> :is a
+                          registered user", sent for a +r user.
+  WHOX %a and the a flag  The field and the match flag are gone; "n"
+                          already covers what "a" would say.
+  account-notify,         Not advertised, and a CAP REQ for them NAKs.
+  account-tag,            JOIN is always the plain form; no @account=
+  extended-join           is ever attached.
+  SASL                    The sasl capability, AUTHENTICATE, numerics
+                          900-908 and the sasl.* netconf keys are gone.
+  IAuth R                 Accepted for older iauth programs and treated
+                          as D, the account ignored, with a warning to
+                          operators (readme.iauth).
+  OPMODE +x               Nothing to grant; every user is +x.
+  HOST_HIDING,            Removed.  HIDDEN_IP and TRUST_USERNAME stay.
+  HIDDEN_HOST
+
+
+TESTS
+=====
+
+  ircd/test/vhost_t.c           the cipher against IRC-Hispano vectors,
+                                key validation, the configuration glue
+  tests/accounting/             +r from server, bot and burst; nick
+                                change; who may change whose modes;
+                                the hidden host on hub and leaf; 307
+  tests/trust_username/         visible vs. real identity in WHOIS,
+                                USERHOST, NAMES, WHO, bans, SILENCE,
+                                G-lines
+  tests/vhost.py                predicts a client's hidden host

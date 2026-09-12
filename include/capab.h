@@ -40,18 +40,14 @@
 #define CAPFL_UNAVAILABLE 	(CAPFL_HIDDEN | CAPFL_PROHIBIT)
 
 #define CAPLIST	\
-	_CAP(ACCOUNTNOTIFY, FEAT_CAP_ACCOUNTNOTIFY, 0, "account-notify"), \
 	_CAP(AWAYNOTIFY, FEAT_CAP_AWAYNOTIFY, 0 , "away-notify"), \
 	_CAP(CHGHOST, FEAT_CAP_CHGHOST, 0, "chghost"), \
 	_CAP(ECHOMESSAGE, FEAT_CAP_ECHOMESSAGE, 0, "echo-message"), \
-	_CAP(EXTJOIN, FEAT_CAP_EXTJOIN, 0, "extended-join"), \
 	_CAP(INVITENOTIFY, FEAT_CAP_INVITENOTIFY, 0, "invite-notify"), \
 	_CAP(UHNAMES, FEAT_CAP_UHNAMES, 0, "userhost-in-names"), \
 	_CAP(MESSAGE_TAGS, FEAT_CAP_MESSAGE_TAGS, 0, "message-tags"), \
 	_CAP(SERVER_TIME, FEAT_CAP_SERVER_TIME, 0, "server-time"), \
-	_CAP(ACCOUNT_TAG, FEAT_CAP_ACCOUNT_TAG, 0, "account-tag"), \
-	_CAP(CAPNOTIFY, 0, CAPFL_HIDDEN_302 | CAPFL_STICKY_302, "cap-notify"), \
-	_CAP(SASL, FEAT_CAP_SASL, CAPFL_UNAVAILABLE, "sasl")
+	_CAP(CAPNOTIFY, 0, CAPFL_HIDDEN_302 | CAPFL_STICKY_302, "cap-notify")
 
 /** Client capabilities, counting by index. */
 enum Capab {

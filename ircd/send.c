@@ -330,7 +330,7 @@ make_wire_msgbuf(struct Client *to, struct MsgBuf *body,
 
 /** Try to send a buffer to a client, queueing it if needed.
  * @param[in,out] to Client to send message to.
- * @param[in] from Message source (for account-tag; may be NULL).
+ * @param[in] from Message source (may be NULL).
  * @param[in] buf Message body (without tags).
  * @param[in] prio If non-zero, send as high priority.
  * @param[in] ctx Optional per-message tag context (may be NULL).  Ignored
@@ -847,10 +847,7 @@ void sendjointo_channel_butserv(struct Client *from, struct Channel *chptr,
 				capset_t forbid)
 {
   sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
-    0, require | CAP_EXTJOIN, forbid, "%H %s :%s", chptr,
-    IsAccount(from) ? cli_account(from) : "*", cli_info(from));
-  sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
-    0, require, forbid | CAP_EXTJOIN, "%H", chptr);
+    0, require, forbid, "%H", chptr);
 }
 
 /* Send JOIN to a single user.
@@ -862,11 +859,7 @@ void sendjointo_one(struct Client *from,
 		    struct Channel *chptr,
 		    struct Client *one)
 {
-  if (CapHas(cli_active(one), CAP_EXTJOIN))
-    sendcmdto_one(from, CMD_JOIN, one, "%H %s :%s", chptr,
-      IsAccount(from) ? cli_account(from) : "*", cli_info(from));
-  else
-    sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
+  sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
 }
 
 /** Send a (prefixed) command to all local users on a channel.

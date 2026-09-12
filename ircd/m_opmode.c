@@ -208,18 +208,14 @@ int ms_opmode(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       return 0;
     }
 
-    /* At the moment, we only support +o, -o and +x.  set_user_mode() does
-     * not support remote mode setting or setting +o.
+    /* At the moment, we only support +o and -o.  set_user_mode() does
+     * not support setting +o.  (+x used to be here as well: every user
+     * is +x now, so there is nothing for a services server to grant.)
      */
     if (!strcmp(parv[2], "+o") && !IsOper(dptr))
       make_oper(sptr, dptr);
     else if (!strcmp(parv[2], "-o") && IsOper(dptr))
       de_oper(dptr);
-    else if (!strcmp(parv[2], "+x") && IsAccount(dptr) && !HasHiddenHost(dptr)) {
-      flag_t old_mode = cli_uflags(dptr);
-      hide_hostmask(dptr, FLAG_HIDDENHOST);
-      send_umode_out(dptr, dptr, old_mode, HasPriv(dptr, PRIV_PROPAGATE));
-    }
 
     return 0;
   }

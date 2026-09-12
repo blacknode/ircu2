@@ -55,14 +55,12 @@
 #include "s_serv.h"
 #include "s_stats.h"
 #include "s_user.h"
-#include "sasl.h"
 #include "send.h"
 #include "sline.h"
 #include "struct.h"
 #include "sys.h"
 #include "uping.h"
 #include "userload.h"
-#include "sasl.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <fcntl.h>
@@ -193,11 +191,6 @@ static void exit_one_client(struct Client* bcptr, const char* comment)
   if (cli_serv(bcptr) && cli_serv(bcptr)->client_list)  /* Was SetServerYXX called ? */
     ClearServerYXX(bcptr);      /* Removes server from server_list[] */
 
-  /* Remove SASL session from hash table if present */
-  if (cli_sasl(bcptr)) {
-    sasl_session_remove(cli_sasl(bcptr));
-    cli_sasl(bcptr) = 0;
-  }
 
   if (IsUser(bcptr)) {
     /*
@@ -269,7 +262,6 @@ static void exit_one_client(struct Client* bcptr, const char* comment)
     else
       Count_remoteserverquits(UserStats);
 
-    sasl_check_capability();
   }
   else if (IsMe(bcptr))
   {
@@ -426,7 +418,7 @@ int exit_client(struct Client *cptr,
 		cli_firsttime(victim), on_for,
 		cli_user(victim)->username, cli_sockhost(victim),
                 ircd_ntoa(&cli_ip(victim)),
-                cli_account(victim),
+                IsAccount(victim) ? cli_account(victim) : "0",
                 NumNick(victim), /* two %s's */
                 cli_name(victim), cli_info(victim));
 

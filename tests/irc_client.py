@@ -273,10 +273,6 @@ class IRCClient:
         await self.send("CAP END")
         return acked
 
-    async def authenticate_sasl(self, mechanism: str, credentials: str):
-        """Authenticate via SASL."""
-        raise NotImplementedError("SASL support not yet implemented")
-
     async def wait_for(self, command: str, timeout: float = 5.0) -> Message:
         """Consume messages until one matching command is found.
 

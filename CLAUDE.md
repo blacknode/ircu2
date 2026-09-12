@@ -90,6 +90,23 @@ also be registered at runtime via `parse_add_command()`.
 registered in a run-time list in `ircd/client.c` (`client_user_modes()` and friends)
 so modules can add their own; test them with the named `Is*`/`Send*` macros in
 `include/client.h`, and a saved pre-change snapshot with the matching `Was*` ones.
+All changes go through `do_user_mode()` in `ircd/s_user.c` (`set_user_mode()`
+for a user's own modes, `set_user_mode_on()` for a server or `+S` bot changing
+somebody else's — `m_mode.c` decides who may reach it).
+
+**Accounting** (`doc/readme.accounting`). There are no account names, ids or
+flags and no `ACCOUNT` command. Umode `+r` means "identified to the nick in
+use", `cli_user()->account` is that nick, and only a server, a `+S` service bot
+(`bot_set_user_mode()`, never on an oper) or a NICK burst sets or clears it;
+a nick change clears it on every server without anything on the wire, and the
+`+r` letter takes no parameter in P10. WHOIS reports it as 307. Every user is
+`+x` from `register_user()` on and cannot remove it: `hide_hostmask()` derives
+the visible host from the IP with the TEA cipher in `ircd/ircd_vhost.c`
+(`xxxxxx.yyyyyy.v4|v6`, unit-tested against IRC-Hispano vectors in
+`vhost_t`) under the mandatory `Security { virtual_host_key = "<12 base64
+chars>"; }` block, which must be identical on every server; bots (`+B`/`+S`)
+keep their configured host. SASL, account-notify, account-tag, extended-join,
+WHOX `%a` and the HOST_HIDING/HIDDEN_HOST features are gone.
 
 **Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
 (`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`
@@ -201,7 +218,9 @@ A bot is a `struct Client` the server introduces on its own behalf
 module, and unloading a module destroys its bots. `BOT_SERVICE` makes a
 *service bot*: user modes `+S` (`IsServiceBot()`, `IsLocalServiceBot()`),
 `+k`, `+o` and `+B`; `+B` and `+S` are core modes only a server may set —
-`set_user_mode()` undoes both directions for any local client, opers included. The relay layer (`ircd/ircd_relay.c`)
+`set_user_mode()` undoes both directions for any local client, opers included.
+A service bot may change any non-oper's modes through `bot_set_user_mode()`
+(what a user may set on itself, plus `+r`/`-r`). The relay layer (`ircd/ircd_relay.c`)
 never delivers to a local service bot; it calls `bot_deliver_private()` /
 `bot_deliver_channel()`, which run `HOOK_MESSAGE_RECEIVED` (sender local or
 remote, PRIVMSG or NOTICE, `hc_notice` says which; channel messages once per

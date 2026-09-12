@@ -31,7 +31,6 @@ struct MsgTag {
 enum MsgTagProfile {
   TAGP_NONE    = 0,
   TAGP_TIME    = 0x01,
-  TAGP_ACCOUNT = 0x02,
 };
 
 /** Parse IRCv3 tags from a wire section (without leading '@').
@@ -87,7 +86,7 @@ unsigned int msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
  * @param[out] buf Output buffer.
  * @param[in] buflen Size of \a buf.
  * @param[in] to Recipient (for capability checks).
- * @param[in] from Message source (for account-tag; may be NULL).
+ * @param[in] from Message source (may be NULL).
  * @param[in] tags Upstream tag list from parse (may be NULL).
  * @param[in] local_time Time to use when no upstream \a time tag is present.
  * @return Length of formatted prefix excluding trailing space, or 0 if no tags.

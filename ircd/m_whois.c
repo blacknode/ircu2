@@ -235,7 +235,7 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
        send_reply(sptr, RPL_WHOISOPERATOR, name);
 
     if (IsAccount(acptr))
-      send_reply(sptr, RPL_WHOISACCOUNT, name, user->account);
+      send_reply(sptr, RPL_WHOISREGNICK, name);
 
     if (HasHiddenHost(acptr) && (IsAnOper(sptr) || acptr == sptr))
       send_reply(sptr, RPL_WHOISACTUALLY, name, user->username,

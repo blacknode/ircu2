@@ -92,12 +92,16 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
   pr61_uhnames/
     test_fix.py
     test_edge_cases.py
-  pr62_remote_x/
-    test_fix.py              # S2S tests using P10Server for OPMODE +x and ACCOUNT
-    test_edge_cases.py
-    test_privilege_check.py  # U:line privilege tiers (CONF_UWORLD vs CONF_UWORLD_OPER)
-    test_umode_ordering.py   # send_umode_out() / hide_hostmask() ordering
+  accounting/
+    test_accounting.py       # umode +r (server / +S bot / burst), the hidden host
+                             # every user carries, who may change whose modes
+  trust_username/            # visible vs. real identity: WHOIS, bans, SILENCE, G-lines
+vhost.py               # Python port of the hidden-host cipher (ircd/ircd_vhost.c)
 ```
+
+Every `ircd*.conf` under `tests/` carries the same `Security { virtual_host_key
+= "AbCdEfGhIjKl"; }` block; `vhost.vhost(ip)` predicts the host a client
+connecting from `ip` will be given, so tests can assert on it.
 
 - **test_fix.py** — focused tests that reproduce the bug or verify the feature claimed by the PR. These fail on the base branch and pass with the PR applied.
 - **test_edge_cases.py** — adversarial tests that exercise boundary conditions, invalid inputs, and feature interactions. Tests that depend on the PR feature use `pytest.skip()` when it's not available.
@@ -208,8 +212,9 @@ await srv.handshake()
 numnick = await srv.wait_for_user("somenick")
 
 # Send S2S commands
-await srv.send_account(numnick, "AccountName")
-await srv.send_opmode(numnick, "+x")
+await srv.send_register("somenick")          # MODE somenick :+r, on the server's authority
+await srv.send_user_mode("somenick", "-r")   # or any mode, optionally from_numnick=<a +S bot>
+await srv.send_opmode(numnick, "+o")
 
 # Read server responses
 await srv.drain_messages()

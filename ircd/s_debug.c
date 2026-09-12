@@ -316,8 +316,8 @@ void count_memory(struct Client *cptr, const struct StatDesc *sd,
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
 	     ":Clients %d(%zu) Connections %d(%zu)", c, cm, cn, cnm);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Users %zu(%zu) Accounts %d(%zu) Invites %d(%zu)",
-             us, usm, acc, acc * (ACCOUNTLEN + 1),
+	     ":Users %zu(%zu) Registered %d Invites %d(%zu)",
+             us, usm, acc,
 	     usi, usi * sizeof(struct SLink));
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
 	     ":User channels %d(%zu) Aways %d(%zu)", memberships,

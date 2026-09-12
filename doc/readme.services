@@ -194,9 +194,12 @@ WHAT IS NOT HERE YET
     migrations (readme.database, readme.migrations) are what the real
     ones are built on.
 
-  - No SVSNICK, no forced login (+r), no channel modes set by a service:
-    a service sets modes the way any operator's bot would, through the
-    ModeBuf, and irc_services does not yet do it.
+  - No SVSNICK and no channel modes set by a service: a service sets
+    channel modes the way any operator's bot would, through the
+    ModeBuf, and irc_services does not yet do it.  User modes it can
+    set: bot_set_user_mode() lets a service bot put +r on (or take it
+    off) any user but an operator -- see readme.accounting -- and
+    irc_services does not yet call it either.
 
   - One server runs a given service.  Two servers with the same
     Service{} block will each try to introduce the same nick; the

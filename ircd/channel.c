@@ -491,7 +491,6 @@ struct Ban *find_ban(struct Client *cptr, struct Ban *banlist)
 {
   char        nu[NICKLEN + USERLEN + 2];
   char        nuh_vis[NICKLEN + USERLEN + HOSTLEN + 3];
-  char        tmphost[HOSTLEN + 1];
   char        iphost[SOCKIPLEN + 1];
   char       *hostmask;
   char       *sr;
@@ -508,16 +507,9 @@ struct Ban *find_ban(struct Client *cptr, struct Ban *banlist)
   else
     nuh_vis[0] = '\0';
   ircd_ntoa_r(iphost, &cli_ip(cptr));
-  if (!IsAccount(cptr))
-    sr = NULL;
-  else if (HasHiddenHost(cptr))
-    sr = cli_user(cptr)->realhost;
-  else
-  {
-    ircd_snprintf(0, tmphost, HOSTLEN, "%s.%s",
-                  cli_user(cptr)->account, feature_str(FEAT_HIDDEN_HOST));
-    sr = tmphost;
-  }
+  /* A hidden user is also matched on its real host, so that a ban an
+   * operator placed on what WHOIS shows them still lands. */
+  sr = HasHiddenHost(cptr) ? cli_user(cptr)->realhost : NULL;
 
   /* Walk through ban list. */
   for (found = NULL; banlist; banlist = banlist->next) {

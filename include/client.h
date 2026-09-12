@@ -190,7 +190,6 @@ enum Flag
     FLAG_IAUTH_STATS,               /**< Wanted IAuth statistics */
     FLAG_NEGOTIATING_TLS,           /**< TLS negotation ongoing */
     FLAG_EXEMPT_THROTTLE,           /**< exempt from input throttling (raised-maxflood class) */
-    FLAG_SASL,                      /**< Authenticated using SASL */
     FLAG_CAP302,                    /**< client supports IRCv3.2 */
     FLAG_SPAMHOLD,                  /**< user is the sender or recipient of a message on hold */
     FLAG_LAST_FLAG,                 /**< number of flags */
@@ -271,8 +270,6 @@ struct Connection
   capset_t            con_active;    /**< Active capabilities (to us) */
   struct AuthRequest* con_auth;      /**< Auth request for client */
   const struct wline* con_wline;     /**< WebIRC authorization for client */
-  uint64_t            con_sasl;      /**< SASL session cookie */
-  struct Timer        con_sasl_timer; /**< SASL timeout timer */
   char*               con_rexmit;    /**< TLS retransmission data */
   size_t              con_rexmit_len; /**, TLS retransmission length */
 };
@@ -432,10 +429,6 @@ struct Client {
 #define cli_wline(cli)          con_wline(cli_connect(cli))
 /** Get sentalong marker for client. */
 #define cli_sentalong(cli)      con_sentalong(cli_connect(cli))
-/** Get SASL session cookie for client. */
-#define cli_sasl(cli)           con_sasl(cli_connect(cli))
-/** Get SASL timeout timer for client. */
-#define cli_sasl_timer(cli)     (&con_sasl_timer(cli_connect(cli)))
 /** Get the WebSocket mode for the client. */
 #define cli_ws_mode(cli)      con_ws_mode(cli_connect(cli))
 
@@ -521,10 +514,6 @@ struct Client {
 #define con_auth(con)		((con)->con_auth)
 /** Get the WebIRC block (if any) used by the connection. */
 #define con_wline(con)          ((con)->con_wline)
-/** Get the SASL session cookie for the connection. */
-#define con_sasl(con)           ((con)->con_sasl)
-/** Get the SASL timeout timer for the connection. */
-#define con_sasl_timer(con)     ((con)->con_sasl_timer)
 /** Get the WebSocket mode for the connection. */
 #define con_ws_mode(con)      ((con)->ws_mode)
 
@@ -704,8 +693,10 @@ struct Client {
 #define IsWebsocket(x)           (cli_ws_mode(x) != WS_NONE)
 /** Return non-zero if the client has operator or server privileges. */
 #define IsPrivileged(x)         (IsAnOper(x) || IsServer(x))
-/** Return non-zero if the client's host is hidden. */
-#define HasHiddenHost(x)        (IsHiddenHost(x) && IsAccount(x))
+/** Return non-zero if the client's host is hidden.  Every user is, from
+ * registration on; only bots the server introduced are not.
+ */
+#define HasHiddenHost(x)        IsHiddenHost(x)
 
 /** Mark a client as having an in-progress net.burst. */
 #define SetBurst(x)             SetFlag(x, FLAG_BURST)

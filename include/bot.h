@@ -186,6 +186,26 @@ extern void bot_send_user(struct Client* bot, struct Client* to, int notice,
 extern void bot_send_channel(struct Client* bot, struct Channel* chptr,
                              int notice, const char* text);
 
+/** Change a user's modes on behalf of a bot.
+ *
+ * A service bot (+S) may change the modes of any user but an operator;
+ * +r and -r -- identified to the nick in use, or no longer -- are the
+ * ones it exists to set, and the rest are what a user may set on itself
+ * (doc/readme.accounting).  Any bot may change its own modes within the
+ * same limits.  The change is announced to the network and to the user
+ * as coming from the bot.
+ *
+ * @param[in] bot The bot.
+ * @param[in] target User whose modes change; the bot itself is allowed.
+ * @param[in] modes Mode string, e.g. "+r" or "-r".
+ * @return Non-zero if the bot was entitled to make the change, zero if
+ * it was refused outright (target is an operator, bot is not +S).  A
+ * non-zero return does not promise every letter took: modes only a
+ * server may set are dropped silently.
+ */
+extern int bot_set_user_mode(struct Client* bot, struct Client* target,
+                             const char* modes);
+
 /*
  * Looking up.
  */

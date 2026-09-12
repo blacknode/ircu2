@@ -138,10 +138,10 @@ set(IRCU_SOURCES
   ircd_signal.c
   ircd_snprintf.c
   ircd_string.c
+  ircd_vhost.c
   jupe.c
   list.c
   listener.c
-  m_account.c
   m_admin.c
   m_asll.c
   m_away.c
@@ -195,7 +195,6 @@ set(IRCU_SOURCES
   m_restart.c
   m_rping.c
   m_rpong.c
-  m_sasl.c
   m_server.c
   m_set.c
   m_settime.c
@@ -247,7 +246,6 @@ set(IRCU_SOURCES
   s_serv.c
   s_stats.c
   s_user.c
-  sasl.c
   send.c
   sline.c
   uping.c

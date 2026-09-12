@@ -325,15 +325,6 @@ msg_tag_wants_time(struct Client *to)
     || CapHas(cli_active(to), CAP_MESSAGE_TAGS);
 }
 
-static int
-msg_tag_wants_account(struct Client *to)
-{
-  if (!to || IsServer(to))
-    return 0;
-  return CapHas(cli_active(to), CAP_ACCOUNT_TAG)
-    || CapHas(cli_active(to), CAP_MESSAGE_TAGS);
-}
-
 int
 msg_tag_key_federated(const char *key)
 {
@@ -470,8 +461,6 @@ msg_tag_profile(struct Client *to)
 
   if (msg_tag_wants_time(to))
     profile |= TAGP_TIME;
-  if (msg_tag_wants_account(to))
-    profile |= TAGP_ACCOUNT;
 
   return profile;
 }
@@ -504,17 +493,6 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
     tbuf[sizeof(tbuf) - 1] = '\0';
 
     pos = msg_tag_append(pos, end, &wrote, "time", tbuf);
-    if (!pos)
-      return 0;
-  }
-
-  /* account-tag (local edge only) */
-  if (msg_tag_wants_account(to)
-      && from && IsUser(from) && cli_user(from) && IsAccount(from)) {
-    char esc[ACCOUNTLEN * 2 + 16];
-
-    msg_tag_escape(cli_user(from)->account, esc, sizeof(esc));
-    pos = msg_tag_append(pos, end, &wrote, "account", esc);
     if (!pos)
       return 0;
   }

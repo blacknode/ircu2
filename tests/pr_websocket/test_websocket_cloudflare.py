@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from irc_client import IRCClient, parse_message
+from vhost import vhost
 
 pytestmark = pytest.mark.single_server
 
@@ -191,7 +192,12 @@ async def _ws_register_collect_notices(
 
 
 async def _whois_userhost(observer: IRCClient, nick: str) -> tuple[str, str]:
-    """Return (username, host) from RPL_WHOISUSER."""
+    """Return (username, host) from RPL_WHOISUSER -- what everyone sees.
+
+    Every user's host is hidden from registration on (doc/readme.accounting),
+    so the host here is the cipher of the address the server took for the
+    client, and with TRUST_USERNAME the username has no tilde.
+    """
     await observer.send(f"WHOIS {nick}")
     while True:
         msg = await observer.recv(timeout=10.0)
@@ -201,15 +207,47 @@ async def _whois_userhost(observer: IRCClient, nick: str) -> tuple[str, str]:
             raise AssertionError(f"WHOIS for {nick} failed: {msg}")
 
 
+async def _whois_actual(oper: IRCClient, nick: str) -> tuple[str, str, str]:
+    """Return (real username, real host, ip) from RPL_WHOISACTUALLY.
+
+    Only an operator (or the user itself) is shown the real identity.
+    """
+    await oper.send(f"WHOIS {nick}")
+    actual = None
+    while True:
+        msg = await oper.recv(timeout=10.0)
+        if msg.command == "338":
+            user, _, host = msg.params[2].partition("@")
+            actual = (user, host, msg.params[3])
+        if msg.command == "318":
+            if actual is None:
+                raise AssertionError(f"no 338 in WHOIS for {nick}; is the observer an oper?")
+            return actual
+        if msg.command == "401":
+            raise AssertionError(f"WHOIS for {nick} failed: {msg}")
+
+
 async def _whois_host(observer: IRCClient, nick: str) -> str:
+    """The host everyone sees for ``nick``."""
     _, host = await _whois_userhost(observer, nick)
     return host
+
+
+async def _whois_real_host(oper: IRCClient, nick: str) -> str:
+    _, host, _ = await _whois_actual(oper, nick)
+    return host
+
+
+async def _make_oper_observer(make_client, nick: str) -> IRCClient:
+    observer = await make_client(nick)
+    await _oper_up(observer)
+    return observer
 
 
 @pytest.mark.asyncio
 async def test_cloudflare_port_uses_cf_connecting_ip(ircd_hub, make_client):
     """CF-Connecting-IP becomes the client address on a cloudflare websocket port."""
-    observer = await make_client("cfwho")
+    observer = await _make_oper_observer(make_client, "cfwho")
     nick = f"cfok{random.randint(0, 999_999)}"
     headers = (b"CF-Connecting-IP: " + CF_CLIENT_IP.encode() + b"\r\n",)
     _, _, ws_writer = await _ws_register_collect_notices(
@@ -217,8 +255,15 @@ async def test_cloudflare_port_uses_cf_connecting_ip(ircd_hub, make_client):
     )
     assert ws_writer is not None
     try:
+        real_host = await _whois_real_host(observer, nick)
+        assert real_host == CF_CLIENT_IP, (
+            f"expected real host {CF_CLIENT_IP}, got {real_host!r}"
+        )
+        # ... and the host everyone sees is the cipher of that address.
         host = await _whois_host(observer, nick)
-        assert host == CF_CLIENT_IP, f"expected WHOIS host {CF_CLIENT_IP}, got {host!r}"
+        assert host == vhost(CF_CLIENT_IP), (
+            f"expected hidden host {vhost(CF_CLIENT_IP)} for {CF_CLIENT_IP}, got {host!r}"
+        )
     finally:
         ws_writer.write(_masked_text_frame("QUIT :done"))
         await ws_writer.drain()
@@ -229,7 +274,7 @@ async def test_cloudflare_port_uses_cf_connecting_ip(ircd_hub, make_client):
 @pytest.mark.asyncio
 async def test_plain_websocket_ignores_cf_connecting_ip(ircd_hub, make_client):
     """CF-Connecting-IP is ignored on websocket ports without cloudflare = yes."""
-    observer = await make_client("wswho")
+    observer = await _make_oper_observer(make_client, "wswho")
     nick = f"wsno{random.randint(0, 999_999)}"
     headers = (b"CF-Connecting-IP: " + SPOOF_IP.encode() + b"\r\n",)
     _, _, ws_writer = await _ws_register_collect_notices(
@@ -237,9 +282,12 @@ async def test_plain_websocket_ignores_cf_connecting_ip(ircd_hub, make_client):
     )
     assert ws_writer is not None
     try:
-        host = await _whois_host(observer, nick)
+        host = await _whois_real_host(observer, nick)
         assert host != SPOOF_IP, (
-            f"plain websocket port must not trust CF-Connecting-IP; WHOIS host was {host!r}"
+            f"plain websocket port must not trust CF-Connecting-IP; real host was {host!r}"
+        )
+        assert await _whois_host(observer, nick) != vhost(SPOOF_IP), (
+            "plain websocket port must not hide the client as the spoofed address"
         )
     finally:
         ws_writer.write(_masked_text_frame("QUIT :done"))
@@ -275,7 +323,7 @@ async def test_cloudflare_websocket_keeps_tilde_without_ident(ircd_hub, make_cli
     Clients still get a leading ~ unless iauth/WEBIRC explicitly trusts the
     name. Successful ident cannot run here; the query is skipped on CF ports.
     """
-    observer = await make_client("cftil")
+    observer = await _make_oper_observer(make_client, "cftil")
     nick = f"cftu{random.randint(0, 999_999)}"
     headers = (b"CF-Connecting-IP: " + CF_CLIENT_IP.encode() + b"\r\n",)
     _, _, ws_writer = await _ws_register_collect_notices(
@@ -283,12 +331,16 @@ async def test_cloudflare_websocket_keeps_tilde_without_ident(ircd_hub, make_cli
     )
     assert ws_writer is not None
     try:
-        username, host = await _whois_userhost(observer, nick)
+        # The real identity (338) keeps the tilde; the visible one (311)
+        # drops it because the host is hidden and TRUST_USERNAME is on.
+        username, host, _ = await _whois_actual(observer, nick)
         assert host == CF_CLIENT_IP, f"expected CF IP host, got {host!r}"
         assert username.startswith("~"), (
             f"cloudflare WS without trusted username must keep tilde, got {username!r}"
         )
         assert username == "~wsuser", f"unexpected username {username!r}"
+        visible, _ = await _whois_userhost(observer, nick)
+        assert visible == "wsuser", f"visible username should drop the tilde, got {visible!r}"
     finally:
         ws_writer.write(_masked_text_frame("QUIT :done"))
         await ws_writer.drain()
@@ -464,7 +516,7 @@ async def test_cloudflare_no_tilde_when_ident_lookups_disabled(
         _write_hub_config(patched)
         await _rehash_hub(oper)
 
-        observer = await make_client("cfnoidob")
+        observer = await _make_oper_observer(make_client, "cfnoidob")
         nick = f"cfnt{random.randint(0, 999_999)}"
         headers = (b"CF-Connecting-IP: " + CF_CLIENT_IP.encode() + b"\r\n",)
         notices, _, ws_writer = await _ws_register_collect_notices(
@@ -477,7 +529,7 @@ async def test_cloudflare_no_tilde_when_ident_lookups_disabled(
                 f"cloudflare WS must still skip ident with DoIdentLookups off, "
                 f"got notices: {blob!r}"
             )
-            username, host = await _whois_userhost(observer, nick)
+            username, host, _ = await _whois_actual(observer, nick)
             assert host == CF_CLIENT_IP, f"expected CF IP host, got {host!r}"
             assert username == "wsuser", (
                 f"with DoIdentLookups off, CF port must not force tilde, "

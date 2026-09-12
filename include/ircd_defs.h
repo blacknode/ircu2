@@ -64,11 +64,6 @@
  * are shorter. It is possible to have a valid FQDN longer than 63 characters.
  */
 #define HOSTLEN         63
-/** Maximum length for the account name, which can be set
- * with the ACCOUNT (AC) command.  This is used for keeping track of who's
- * logged into which account, for the benefit of irc services.
- */
-#define ACCOUNTLEN      12
 /** Maximum length for user supplied information about a client
  * connection (gcos). This information is set at client/server registration
  * time.

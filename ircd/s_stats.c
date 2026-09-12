@@ -55,7 +55,6 @@
 #include "s_serv.h"
 #include "s_stats.h"
 #include "s_user.h"
-#include "sasl.h"
 #include "send.h"
 #include "struct.h"
 #include "userload.h"
@@ -660,9 +659,6 @@ struct StatDesc statsinfo[] = {
     send_usage, 0,
     "System resource usage (Debug only)." },
 #endif
-  { 'S', "sasl", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_S,
-    sasl_stats, 0,
-    "SASL authentication statistics." },
   { 's', "slines", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_s,
     sline_stats, 0,
     "Regex pattern lines (S-lines)." },

@@ -24,7 +24,7 @@
   (BITSET << 36) /**< Disallow KICK or MODE -o on the user; don't display      \
                     channels in /whois */
 #define FLAG_OPER (BITSET << 40)       /**< Operator */
-#define FLAG_ACCOUNT (BITSET << 43)    /**< account name has been set */
+#define FLAG_ACCOUNT (BITSET << 43)    /**< +r: identified to the nick in use */
 #define FLAG_SERVNOTICE (BITSET << 44) /**< server notices such as kill */
 #define FLAG_WALLOP (BITSET << 48)     /**< send wallops to them */
 #define FLAG_HIDDENHOST (BITSET << 49) /**< user's host is hidden */

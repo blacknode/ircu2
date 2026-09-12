@@ -326,9 +326,7 @@ static struct FeatureDesc {
   F_N(RANDOM_SEED, FEAT_NODISP, random_seed_set, 0, 0, 0, 0, 0, 0),
   F_S(DEFAULT_LIST_PARAM, FEAT_NULL, 0, list_set_default),
   F_I(NICKNAMEHISTORYLENGTH, 0, 800, whowas_realloc),
-  F_B(HOST_HIDING, 0, 1, 0),
   F_B(TRUST_USERNAME, 0, 1, 0),
-  F_S(HIDDEN_HOST, FEAT_CASE, "users.undernet.org", 0),
   F_S(HIDDEN_IP, 0, "127.0.0.1", 0),
   F_B(CONNEXIT_NOTICES, 0, 0, 0),
   F_B(OPLEVELS, 0, 0, 0),
@@ -395,17 +393,13 @@ static struct FeatureDesc {
   F_B(CONFIG_OPERCMDS, 0, 0, 0),
 
   /* IRCv3 capabilities */
-  F_B(CAP_ACCOUNTNOTIFY, 0, 1, 0),
   F_B(CAP_AWAYNOTIFY, 0, 1, 0),
   F_B(CAP_CHGHOST, 0, 1, 0),
   F_B(CAP_ECHOMESSAGE, 0, 1, 0),
-  F_B(CAP_EXTJOIN, 0, 1, 0),
   F_B(CAP_INVITENOTIFY, 0, 1, 0),
   F_B(CAP_UHNAMES, 0, 1, 0),
   F_B(CAP_MESSAGE_TAGS, 0, 1, 0),
   F_B(CAP_SERVER_TIME, 0, 1, 0),
-  F_B(CAP_ACCOUNT_TAG, 0, 1, 0),
-  F_B(CAP_SASL, 0, 1, 0),
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags.
    * Default "*" denies all; empty (FEAT_NULL) allows all. Rebuilds via notify. */
@@ -440,7 +434,6 @@ static struct FeatureDesc {
   F_B(HIS_STATS_r, 0, 1, 0),
   F_B(HIS_STATS_R, 0, 1, 0),
   F_B(HIS_STATS_s, 0, 1, 0),
-  F_B(HIS_STATS_S, 0, 1, 0),
   F_B(HIS_STATS_t, 0, 1, 0),
   F_B(HIS_STATS_T, 0, 1, 0),
   F_B(HIS_STATS_u, 0, 0, 0),

@@ -33,8 +33,9 @@ async def services(ircd_network):
     await srv.disconnect()
 
 
-async def test_tagged_account_applied(ircd_network, services):
-    """ACCOUNT with a leading @tag section must still be applied."""
+async def test_tagged_user_mode_applied(ircd_network, services):
+    """A server MODE (+r for another user) with a leading @tag section must
+    still be applied."""
     hub = ircd_network["hub"]
 
     user = IRCClient()
@@ -46,17 +47,16 @@ async def test_tagged_account_applied(ircd_network, services):
     await observer.register("mtagobs", "testuser", "Tag Compat Obs")
 
     try:
-        numnick = await services.wait_for_user("mtagacct")
+        await services.wait_for_user("mtagacct")
         await services._send(
-            f"@msgid=compat1;account-notify {services._num} AC {numnick} TagAcct"
+            f"@msgid=compat1;label=x {services._num} M mtagacct :+r"
         )
         await asyncio.sleep(0.3)
 
         await observer.send("WHOIS mtagacct")
         whois = await observer.collect_until("318", timeout=5.0)
-        account_lines = [m for m in whois if m.command == "330"]
-        assert account_lines, f"expected 330 account line, got: {whois}"
-        assert "TagAcct" in account_lines[0].params
+        reg_lines = [m for m in whois if m.command == "307"]
+        assert reg_lines, f"expected 307 registered line, got: {whois}"
     finally:
         for c in (user, observer):
             try:

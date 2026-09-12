@@ -87,9 +87,11 @@ struct User {
   char               username[USERLEN + 1];
   char               host[HOSTLEN + 1];       /**< displayed hostname */
   char               realhost[HOSTLEN + 1];   /**< actual hostname */
-  char               account[ACCOUNTLEN + 1]; /**< IRC account name */
-  uint64_t	     acc_id;                  /**< IRC account id */
-  uint64_t           acc_flags;               /**< IRC account flags */
+  /** Registered nick the user is identified to, or an empty string.
+   * Set together with umode +r and always equal to the nick that was
+   * current when +r was granted; see doc/readme.accounting.
+   */
+  char               account[NICKLEN + 1];
 };
 
 #endif /* INCLUDED_struct_h */

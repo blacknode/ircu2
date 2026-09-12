@@ -42,6 +42,7 @@
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
+#include "ircd_vhost.h"
 #include "list.h"
 #include "match.h"
 #include "motd.h"
@@ -357,7 +358,7 @@ int register_user(struct Client *cptr, struct Client *sptr)
 
     /* Modules get the last word on whether this client is allowed in, at
      * the point where the server has everything it knows about them --
-     * nick, user, host, account, TLS state -- and before any of it is
+     * nick, user, host, TLS state -- and before any of it is
      * committed.  Only for locally connecting clients: sptr == cptr here,
      * and users arriving from other servers never reach this branch.
      */
@@ -457,12 +458,13 @@ int register_user(struct Client *cptr, struct Client *sptr)
     SetUser(sptr);
   }
 
-  /* If they get both +x and an account during registration, hide
-   * their hostmask here.  Calling hide_hostmask() from IAuth's
-   * account assignment causes a numeric reply during registration.
+  /* Every user hides its host from the moment it exists, local or
+   * remote: +x is not a choice and cannot be removed.  Only the bots a
+   * server introduces itself keep the host they were configured with;
+   * hide_hostmask() leaves those alone.  Before the NICK goes out, so
+   * that the network is told the hidden host and never the real one.
    */
-  if (HasHiddenHost(sptr))
-    hide_hostmask(sptr, FLAG_HIDDENHOST);
+  hide_hostmask(sptr);
   if (IsInvisible(sptr))
     ++UserStats.inv_clients;
   if (IsOper(sptr))
@@ -493,12 +495,8 @@ int register_user(struct Client *cptr, struct Client *sptr)
   /* Send user mode to client */
   if (MyUser(sptr))
   {
-    /* To avoid sending +r to the client due to auth-on-connect, the
-     * "old" FLAG_ACCOUNT bit matches the client's value.
-     */
-    flag_t flags = IsAccount(cptr) ? FLAG_ACCOUNT : 0;
     client_set_privs(sptr, NULL, 0);
-    send_umode(cptr, sptr, flags, ALL_UMODES);
+    send_umode(cptr, sptr, 0, ALL_UMODES);
     if ((cli_snomask(sptr) != SNO_DEFAULT) && SendServNotice(sptr))
       send_reply(sptr, RPL_SNOMASK, cli_snomask(sptr), cli_snomask(sptr));
   }
@@ -641,6 +639,24 @@ int set_nick_name(struct Client* cptr, struct Client* sptr,
       hRemClient(sptr);
     strcpy(cli_name(sptr), nick);
     hAddClient(sptr);
+
+    /* +r says "identified to the nick in use"; it does not survive the
+     * nick changing.  Every server applies this to the NICK it sees, so
+     * nothing is propagated -- only the user is told.  A change of case
+     * alone keeps the identification, with the account respelled.
+     */
+    if (IsUser(sptr) && IsAccount(sptr)) {
+      if (0 == ircd_strcmp(oldnick, nick))
+        ircd_strncpy(cli_user(sptr)->account, nick, NICKLEN);
+      else {
+        flag_t old = cli_uflags(sptr);
+
+        ClearAccount(sptr);
+        cli_user(sptr)->account[0] = '\0';
+        if (MyUser(sptr))
+          send_umode(sptr, sptr, old, ALL_UMODES);
+      }
+    }
 
     /* The hook gets the client already renamed, with the name it had in
      * hc_arg.  Fires for remote clients too: a notification cannot
@@ -869,14 +885,16 @@ int send_reply_blocked_unauth_user(struct Client *source, struct Client *dest)
     cli_name(dest), feature_str(FEAT_URLREG));
 }
 
-/** Send a user mode change for \a cptr to neighboring servers.
- * @param[in] cptr User whose mode is changing.
- * @param[in] sptr Client who sent us the mode change message.
+/** Send a user mode change made by \a from to neighboring servers.
+ * @param[in] cptr Link the change arrived on, which is not told again.
+ * @param[in] from Client that made the change: \a sptr itself, a
+ * service bot or a server.
+ * @param[in] sptr User whose mode has changed.
  * @param[in] old Prior set of user modes.
  * @param[in] prop If non-zero, also include FLAG_OPER.
  */
-void send_umode_out(struct Client *cptr, struct Client *sptr,
-                    flag_t old, int prop)
+void send_umode_out_by(struct Client *cptr, struct Client *from,
+                       struct Client *sptr, flag_t old, int prop)
 {
   int i;
   struct Client *acptr;
@@ -887,10 +905,25 @@ void send_umode_out(struct Client *cptr, struct Client *sptr,
   {
     if ((acptr = LocalClientArray[i]) && IsServer(acptr) &&
         (acptr != cptr) && (acptr != sptr) && *umodeBuf)
-      sendcmdto_one(sptr, CMD_MODE, acptr, "%s :%s", cli_name(sptr), umodeBuf);
+      sendcmdto_one(from, CMD_MODE, acptr, "%s :%s", cli_name(sptr), umodeBuf);
   }
-  if (cptr && MyUser(cptr))
-    send_umode(cptr, sptr, old, ALL_UMODES);
+  /* The user is told whoever made the change, so that one made by a
+   * service bot or a server shows up as coming from it.
+   */
+  if (sptr && MyUser(sptr))
+    send_umode_by(sptr, from, sptr, old, ALL_UMODES);
+}
+
+/** Send a user mode change \a sptr made to itself to neighboring servers.
+ * @param[in] cptr Link the change arrived on, which is not told again.
+ * @param[in] sptr User whose mode has changed.
+ * @param[in] old Prior set of user modes.
+ * @param[in] prop If non-zero, also include FLAG_OPER.
+ */
+void send_umode_out(struct Client *cptr, struct Client *sptr,
+                    flag_t old, int prop)
+{
+  send_umode_out_by(cptr, sptr, sptr, old, prop);
 }
 
 
@@ -937,106 +970,120 @@ visible_username(const struct Client *cptr)
 {
   const char *user = cli_user(cptr)->username;
 
-  if (feature_bool(FEAT_TRUST_USERNAME) && HasHiddenHost(cptr) && user[0] == '~')
+  if (feature_bool(FEAT_TRUST_USERNAME) && IsHiddenHost(cptr) && user[0] == '~')
     return user + 1;
   return user;
 }
 
-/** Set \a flag on \a cptr and possibly hide the client's hostmask.
- * @param[in,out] cptr User who is getting a new flag.
- * @param[in] flag Some flag that affects host-hiding (FLAG_HIDDENHOST, FLAG_ACCOUNT).
+/** Hide the client's hostmask.
+ *
+ * The visible host becomes the cipher of the client's address
+ * (ircd_vhost.h) and +x is set.  Called once, from register_user(),
+ * for every user the server learns of; bots the server introduced
+ * itself keep the host they were configured with.  The rejoin dance
+ * below only matters when a client that is already on channels is
+ * hidden, which nothing does any more, but it is what a host change
+ * needs and costs nothing when the channel list is empty.
+ *
+ * @param[in,out] cptr User whose host is being hidden.
  * @return Zero.
  */
 int
-hide_hostmask(struct Client *cptr, flag_t flag)
+hide_hostmask(struct Client *cptr)
 {
   struct Membership *chan;
   char new_host[HOSTLEN + 1];
   const char *new_user;
 
-  if (FLAG_HIDDENHOST == flag) {
-    /* Local users cannot set +x unless FEAT_HOST_HIDING is true. */
-    if (MyConnect(cptr) && !feature_bool(FEAT_HOST_HIDING))
-      return 0;
-  } else if (FLAG_ACCOUNT == flag) {
-    /* Invalidate all bans against the user so we check them again */
-    for (chan = (cli_user(cptr))->channel; chan;
-         chan = chan->next_channel)
-      ClearBanValid(chan);
-  } else
+  if (!cli_user(cptr) || IsBot(cptr) || IsServiceBot(cptr))
     return 0;
+
+  /* Without a key there is no host to switch to.  The server refuses to
+   * start without one, so this is a rehash that lost the Security block
+   * -- and the previous key stays in force through that.
+   */
+  if (!vhost_make(new_host, sizeof(new_host), &cli_ip(cptr)))
+    return 0;
+
+  /* Invalidate all bans against the user so we check them again */
+  for (chan = cli_user(cptr)->channel; chan; chan = chan->next_channel)
+    ClearBanValid(chan);
+
+  new_user = cli_user(cptr)->username;
+  if (feature_bool(FEAT_TRUST_USERNAME) && new_user[0] == '~')
+    new_user++;
 
   /*
-   * Fully hidden only once both +x and account are present.  Send
-   * QUIT/CHGHOST before applying the new flag so their prefixes still
-   * carry the old real user@host; clients with chghost then get the new
-   * identity in CHGHOST parameters, and others get a later JOIN under it.
+   * Send QUIT/CHGHOST before applying the new host so their prefixes
+   * still carry the old real user@host; clients with chghost then get
+   * the new identity in CHGHOST parameters, and others get a later JOIN
+   * under it.
    */
-  if ((flag == FLAG_HIDDENHOST && IsAccount(cptr)) ||
-      (flag == FLAG_ACCOUNT && IsHiddenHost(cptr))) {
-    new_user = cli_user(cptr)->username;
-    ircd_snprintf(0, new_host, sizeof(new_host), "%s.%s",
-                  cli_user(cptr)->account, feature_str(FEAT_HIDDEN_HOST));
-    if (feature_bool(FEAT_TRUST_USERNAME) && new_user[0] == '~')
-      new_user++;
+  sendcmdto_capflag_common_channels_butone(cptr, CMD_QUIT, cptr, 0, CAP_CHGHOST,
+                                           ":Registered");
+  sendcmdto_capflag_common_channels_butone(cptr, CMD_CHGHOST, NULL, CAP_CHGHOST, 0,
+                                           "%s %s", new_user, new_host);
 
-    sendcmdto_capflag_common_channels_butone(cptr, CMD_QUIT, cptr, 0, CAP_CHGHOST,
-                                             ":Registered");
-    sendcmdto_capflag_common_channels_butone(cptr, CMD_CHGHOST, NULL, CAP_CHGHOST, 0,
-                                             "%s %s", new_user, new_host);
+  SetHiddenHost(cptr);
+  ircd_strncpy(cli_user(cptr)->host, new_host, HOSTLEN);
 
-    SetUFlag(cptr, flag);
-    ircd_strncpy(cli_user(cptr)->host, new_host, HOSTLEN);
+  /* ok, the client is now fully hidden, so let them know -- hikari */
+  if (MyConnect(cptr) && !CapHas(cli_active(cptr), CAP_CHGHOST))
+    send_reply(cptr, RPL_HOSTHIDDEN, cli_user(cptr)->host);
 
-    /* ok, the client is now fully hidden, so let them know -- hikari */
-    if (MyConnect(cptr) && !CapHas(cli_active(cptr), CAP_CHGHOST))
-      send_reply(cptr, RPL_HOSTHIDDEN, cli_user(cptr)->host);
-
-    /*
-     * Go through all channels the client was on, rejoin him
-     * and set the modes, if any
-     */
-    for (chan = cli_user(cptr)->channel; chan; chan = chan->next_channel)
+  /*
+   * Go through all channels the client was on, rejoin him
+   * and set the modes, if any
+   */
+  for (chan = cli_user(cptr)->channel; chan; chan = chan->next_channel)
+  {
+    if (IsZombie(chan))
+      continue;
+    /* Send a JOIN unless the user's join has been delayed. */
+    if (!IsDelayedJoin(chan))
     {
-      if (IsZombie(chan))
-        continue;
-      /* Send a JOIN unless the user's join has been delayed. */
-      if (!IsDelayedJoin(chan))
-      {
-        sendjointo_channel_butserv(cptr, chan->channel, 0, CAP_CHGHOST);
-        if (cli_user(cptr)->away)
-          sendcmdto_capflag_channel_butserv_butone(cptr, CMD_AWAY, chan->channel,
-            NULL, 0, CAP_AWAYNOTIFY, CAP_CHGHOST, ":%s", cli_user(cptr)->away);
-      }
-      if (IsChanOp(chan) && HasVoice(chan))
-        sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
-                                         0, CAP_CHGHOST, "%H +ov %C %C", chan->channel, cptr,
-                                         cptr);
-      else if (IsChanOp(chan) || HasVoice(chan))
-        sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
-          0, CAP_CHGHOST, "%H +%c %C", chan->channel, IsChanOp(chan) ? 'o' : 'v', cptr);
+      sendjointo_channel_butserv(cptr, chan->channel, 0, CAP_CHGHOST);
+      if (cli_user(cptr)->away)
+        sendcmdto_capflag_channel_butserv_butone(cptr, CMD_AWAY, chan->channel,
+          NULL, 0, CAP_AWAYNOTIFY, CAP_CHGHOST, ":%s", cli_user(cptr)->away);
     }
-    return 0;
+    if (IsChanOp(chan) && HasVoice(chan))
+      sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
+                                       0, CAP_CHGHOST, "%H +ov %C %C", chan->channel, cptr,
+                                       cptr);
+    else if (IsChanOp(chan) || HasVoice(chan))
+      sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
+        0, CAP_CHGHOST, "%H +%c %C", chan->channel, IsChanOp(chan) ? 'o' : 'v', cptr);
   }
-
-  SetUFlag(cptr, flag);
   return 0;
 }
 
-/** Set a user's mode.  This function prevents local users from setting
- * unauthorized modes and applies any other side effects of
- * a successful mode change.
+/** Apply a user mode change.
+ *
+ * This is the one place user modes change.  It prevents a client from
+ * setting what it may not, applies the side effects of what it may, and
+ * tells the network.  \a sptr and \a acptr are the same client when a
+ * user changes its own modes; they differ when a server or a service bot
+ * changes somebody else's, and the caller has already decided that the
+ * setter may act on that target (see set_user_mode_on()).
+ *
+ * What a client may set depends on where the change came from, not on
+ * who it is: a change that arrived from another server (\a cptr is a
+ * server) was accepted there and is applied as it stands.  A change made
+ * here -- by a local user, or by a local service bot -- is checked.
  *
  * @param[in] cptr Neighbor that sent the mode change message.
- * @param[in] sptr Source (originator) of the mode change.
+ * @param[in] sptr Client making the change.
+ * @param[in] acptr Client whose modes are changing.
  * @param[in] parc Number of parameters in \a parv.
- * @param[in] parv Parameters to MODE.
+ * @param[in] parv Parameters to MODE; parv[2] is the first mode string.
  * @param[in] allow_modes ALLOWMODES_ANY for any mode, ALLOWMODES_DEFAULT for
  *                        only permitting legitimate default user modes.
  * @return Zero.
  */
-int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
-		char *parv[], int allow_modes)
+static int do_user_mode(struct Client *cptr, struct Client *sptr,
+                        struct Client *acptr, int parc, char *parv[],
+                        int allow_modes)
 {
   char** p;
   char*  m;
@@ -1047,9 +1094,13 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
   int snomask_given = 0;
   char buf[BUFSIZE];
   int prop = 0;
-  int do_host_hiding = 0;
-  char* account = NULL;
   char* tls_fingerprint = NULL;
+  /* +r may come from a server, from a service bot acting on somebody
+   * else, or in a burst; a user never grants it to itself.  A local bot
+   * acting on itself is a user like any other here.
+   */
+  int may_set_r = IsServer(cptr) || IsServer(sptr)
+    || (IsServiceBot(sptr) && sptr != acptr);
 
   what = UMODE_ADD;
 
@@ -1059,29 +1110,30 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
     *m++ = '+';
     for (um = client_user_modes(); um; um = um->next)
     {
-      if (HasUFlag(sptr, um->flag))
+      if (HasUFlag(acptr, um->flag))
         *m++ = um->c;
     }
     *m = '\0';
-    send_reply(sptr, RPL_UMODEIS, cli_name(sptr), buf);
-    if (SendServNotice(sptr) && MyConnect(sptr)
-        && cli_snomask(sptr) !=
-        (unsigned int)(IsOper(sptr) ? SNO_OPERDEFAULT : SNO_DEFAULT))
-      send_reply(sptr, RPL_SNOMASK, cli_snomask(sptr), cli_snomask(sptr));
+    send_reply(sptr, RPL_UMODEIS, buf);
+    if (SendServNotice(acptr) && MyConnect(acptr)
+        && cli_snomask(acptr) !=
+        (unsigned int)(IsOper(acptr) ? SNO_OPERDEFAULT : SNO_DEFAULT))
+      send_reply(sptr, RPL_SNOMASK, cli_snomask(acptr), cli_snomask(acptr));
     return 0;
   }
 
   /* Modules see the requested mode string before any of it is applied.
-   * Only for local clients: mode changes arriving from other servers have
-   * already been accepted network-wide, and refusing one here would leave
-   * this server's idea of a user's modes out of step with everyone else's.
+   * Only for changes made here: mode changes arriving from other servers
+   * have already been accepted network-wide, and refusing one here would
+   * leave this server's idea of a user's modes out of step with everyone
+   * else's.
    */
-  if (MyConnect(sptr) && hook_is_active(HOOK_CLIENT_PRE_UMODE)) {
+  if (!IsServer(cptr) && hook_is_active(HOOK_CLIENT_PRE_UMODE)) {
     struct HookContext hc;
 
     hook_context_init(&hc);
-    hc.hc_client = sptr;
-    hc.hc_source = cptr;
+    hc.hc_client = acptr;
+    hc.hc_source = sptr;
     hc.hc_arg = parv[2];
 
     if (hook_run(HOOK_CLIENT_PRE_UMODE, &hc) == HOOK_DENY) {
@@ -1094,10 +1146,10 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
    * find flags already set for user
    * why not just copy them?
    */
-  setflags = cli_uflags(sptr);
+  setflags = cli_uflags(acptr);
 
-  if (MyConnect(sptr))
-    tmpmask = cli_snomask(sptr);
+  if (MyConnect(acptr))
+    tmpmask = cli_snomask(acptr);
 
   /*
    * parse mode change string(s)
@@ -1115,99 +1167,104 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         if (*(p + 1) && is_snomask(*(p + 1))) {
           snomask_given = 1;
           tmpmask = umode_make_snomask(tmpmask, *++p, what);
-          tmpmask &= (IsAnOper(sptr) ? SNO_ALL : SNO_USER);
+          tmpmask &= (IsAnOper(acptr) ? SNO_ALL : SNO_USER);
         }
         else
           tmpmask = (what == UMODE_ADD) ?
-              (IsAnOper(sptr) ? SNO_OPERDEFAULT : SNO_DEFAULT) : 0;
+              (IsAnOper(acptr) ? SNO_OPERDEFAULT : SNO_DEFAULT) : 0;
         if (tmpmask)
-	  SetServNotice(sptr);
+	  SetServNotice(acptr);
         else
-	  ClearServNotice(sptr);
+	  ClearServNotice(acptr);
         break;
       case 'w':
         if (what == UMODE_ADD)
-          SetWallops(sptr);
+          SetWallops(acptr);
         else
-          ClearWallops(sptr);
+          ClearWallops(acptr);
         break;
       case 'o':
         if (what == UMODE_ADD)
-          SetOper(sptr);
+          SetOper(acptr);
         else {
-          ClearOper(sptr);
-          ClearLocOp(sptr);
-          if (MyConnect(sptr))
-            tmpmask = cli_snomask(sptr) & ~SNO_OPER;
+          ClearOper(acptr);
+          ClearLocOp(acptr);
+          if (MyConnect(acptr))
+            tmpmask = cli_snomask(acptr) & ~SNO_OPER;
         }
         break;
       case 'O':
         if (what == UMODE_ADD)
-          SetLocOp(sptr);
+          SetLocOp(acptr);
         else
         {
-          ClearOper(sptr);
-          ClearLocOp(sptr);
-          if (MyConnect(sptr))
-            tmpmask = cli_snomask(sptr) & ~SNO_OPER;
+          ClearOper(acptr);
+          ClearLocOp(acptr);
+          if (MyConnect(acptr))
+            tmpmask = cli_snomask(acptr) & ~SNO_OPER;
         }
         break;
       case 'i':
         if (what == UMODE_ADD)
-          SetInvisible(sptr);
+          SetInvisible(acptr);
         else
-          ClearInvisible(sptr);
+          ClearInvisible(acptr);
         break;
       case 'd':
         if (what == UMODE_ADD)
-          SetDeaf(sptr);
+          SetDeaf(acptr);
         else
-          ClearDeaf(sptr);
+          ClearDeaf(acptr);
         break;
       case 'R':
         if (what == UMODE_ADD)
-          SetBlockUnauthUsers(sptr);
+          SetBlockUnauthUsers(acptr);
         else
-          ClearBlockUnauthUsers(sptr);
+          ClearBlockUnauthUsers(acptr);
         break;
       case 'k':
         if (what == UMODE_ADD)
-          SetChannelService(sptr);
+          SetChannelService(acptr);
         else
-          ClearChannelService(sptr);
+          ClearChannelService(acptr);
         break;
       case 'S':
         if (what == UMODE_ADD)
-          SetServiceBot(sptr);
+          SetServiceBot(acptr);
         else
-          ClearServiceBot(sptr);
+          ClearServiceBot(acptr);
         break;
       case 'B':
         if (what == UMODE_ADD)
-          SetBot(sptr);
+          SetBot(acptr);
         else
-          ClearBot(sptr);
+          ClearBot(acptr);
         break;
       case 'g':
         if (what == UMODE_ADD)
-          SetDebug(sptr);
+          SetDebug(acptr);
         else
-          ClearDebug(sptr);
+          ClearDebug(acptr);
         break;
       case 'x':
-        if (what == UMODE_ADD)
-	  do_host_hiding = 1;
+        /* Every user is +x from registration on and stays that way; the
+         * letter is accepted in a burst for the sake of the mode string
+         * and means nothing anywhere else.  See hide_hostmask().
+         */
 	break;
       case 'r':
-	if (*(p + 1) && (what == UMODE_ADD)) {
-	  account = *(++p);
-	  SetAccount(sptr);
-	}
-	/* There is no -r */
+        /* +r: identified to the nick in use.  The account is the nick
+         * itself, so the letter takes no parameter.  Who may set it is
+         * settled below, once the whole string has been read.
+         */
+	if (what == UMODE_ADD)
+	  SetAccount(acptr);
+	else
+	  ClearAccount(acptr);
 	break;
       case 'z':
         if (what == UMODE_ADD) {
-          SetTLS(sptr);
+          SetTLS(acptr);
           if (feature_bool(FEAT_NETWORK_FEATURES) && *(p + 1))
             tls_fingerprint = *(++p);
         }
@@ -1215,15 +1272,15 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
         break;
       case 'I':
         if (what == UMODE_ADD)
-          SetHideIdle(sptr);
+          SetHideIdle(acptr);
         else
-          ClearHideIdle(sptr);
+          ClearHideIdle(acptr);
         break;
       case 'c':
         if (what == UMODE_ADD)
-          SetCommonChans(sptr);
+          SetCommonChans(acptr);
         else
-          ClearCommonChans(sptr);
+          ClearCommonChans(acptr);
         break;
       default:
         {
@@ -1237,9 +1294,9 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
           if (!mode)
             send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
           else if (what == UMODE_ADD)
-            SetUFlag(sptr, mode->flag);
+            SetUFlag(acptr, mode->flag);
           else
-            ClrUFlag(sptr, mode->flag);
+            ClrUFlag(acptr, mode->flag);
         }
         break;
       }
@@ -1247,147 +1304,184 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
   }
   /*
    * Evaluate rules for new user mode
-   * Stop users making themselves operators too easily:
+   * Stop users making themselves operators too easily.  A service bot
+   * changing somebody else's modes is held to the same rules wherever
+   * the change came from: its own server checked it already, and a peer
+   * that claims otherwise is not believed either -- a bot may identify
+   * users, not op them.
    */
-  if (!IsServer(cptr))
+  if (!IsServer(cptr) || (IsServiceBot(sptr) && sptr != acptr))
   {
-    if (!WasOper(setflags) && IsOper(sptr))
-      ClearOper(sptr);
-    if (!WasLocOp(setflags) && IsLocOp(sptr))
-      ClearLocOp(sptr);
-    if (!WasAccount(setflags) && IsAccount(sptr))
-      ClearAccount(sptr);
-    if (!WasTLS(setflags) && IsTLS(sptr))
-      ClearTLS(sptr);
-    else if (WasTLS(setflags) && !IsTLS(sptr))
-      SetTLS(sptr);
+    if (!WasOper(setflags) && IsOper(acptr))
+      ClearOper(acptr);
+    if (!WasLocOp(setflags) && IsLocOp(acptr))
+      ClearLocOp(acptr);
+    if (!WasTLS(setflags) && IsTLS(acptr))
+      ClearTLS(acptr);
+    else if (WasTLS(setflags) && !IsTLS(acptr))
+      SetTLS(acptr);
     /*
      * new umode; servers can set it, local users cannot;
      * prevents users from /kick'ing or /mode -o'ing
      */
     if (!WasChannelService(setflags))
-      ClearChannelService(sptr);
+      ClearChannelService(acptr);
     /*
      * +B and +S name a bot the server itself introduced.  Nobody sets or
      * clears them by hand -- not the user, not an operator -- so both
      * directions are undone; only a server is believed.
      */
     if (!WasBot(setflags))
-      ClearBot(sptr);
-    else if (!IsBot(sptr))
-      SetBot(sptr);
+      ClearBot(acptr);
+    else if (!IsBot(acptr))
+      SetBot(acptr);
     if (!WasServiceBot(setflags))
-      ClearServiceBot(sptr);
-    else if (!IsServiceBot(sptr))
-      SetServiceBot(sptr);
+      ClearServiceBot(acptr);
+    else if (!IsServiceBot(acptr))
+      SetServiceBot(acptr);
     /*
      * only send wallops to opers
      */
-    if (feature_bool(FEAT_WALLOPS_OPER_ONLY) && !IsAnOper(sptr) &&
+    if (feature_bool(FEAT_WALLOPS_OPER_ONLY) && !IsAnOper(acptr) &&
 	!WasWallops(setflags))
-      ClearWallops(sptr);
-    if (feature_bool(FEAT_HIS_SNOTICES_OPER_ONLY) && MyConnect(sptr) &&
-        !IsAnOper(sptr) && !WasServNotice(setflags))
+      ClearWallops(acptr);
+    if (feature_bool(FEAT_HIS_SNOTICES_OPER_ONLY) && MyConnect(acptr) &&
+        !IsAnOper(acptr) && !WasServNotice(setflags))
     {
-      ClearServNotice(sptr);
-      set_snomask(sptr, 0, SNO_SET);
+      ClearServNotice(acptr);
+      set_snomask(acptr, 0, SNO_SET);
     }
     if (feature_bool(FEAT_HIS_DEBUG_OPER_ONLY) &&
-        !IsAnOper(sptr) && !WasDebug(setflags))
-      ClearDebug(sptr);
+        !IsAnOper(acptr) && !WasDebug(setflags))
+      ClearDebug(acptr);
   }
-  if (MyConnect(sptr))
+  /* +r in either direction is a server's or a service bot's to give;
+   * anyone else asking for it is put back the way they were.
+   */
+  if (!may_set_r) {
+    if (WasAccount(setflags))
+      SetAccount(acptr);
+    else
+      ClearAccount(acptr);
+  }
+  if (MyConnect(acptr))
   {
-    if (WasAnOper(setflags) && !IsAnOper(sptr))
+    if (WasAnOper(setflags) && !IsAnOper(acptr))
     {
-      cli_handler(sptr) = CLIENT_HANDLER;
-      det_confs_butmask(sptr, CONF_CLIENT & ~CONF_OPERATOR);
+      cli_handler(acptr) = CLIENT_HANDLER;
+      det_confs_butmask(acptr, CONF_CLIENT & ~CONF_OPERATOR);
       /* Invalidate the cached sendq/maxflood so the ex-oper drops back to
        * its Client class limits (and loses the input-throttle exemption
        * derived from the oper class maxflood) instead of keeping the oper
        * limits until the next rehash.
        */
-      cli_max_sendq(sptr) = 0;
-      cli_max_flood(sptr) = 0;
+      cli_max_sendq(acptr) = 0;
+      cli_max_flood(acptr) = 0;
     }
 
-    if (SendServNotice(sptr))
+    if (SendServNotice(acptr))
     {
-      if (tmpmask != cli_snomask(sptr))
-	set_snomask(sptr, tmpmask, SNO_SET);
-      if (cli_snomask(sptr) && snomask_given)
-	send_reply(sptr, RPL_SNOMASK, cli_snomask(sptr), cli_snomask(sptr));
+      if (tmpmask != cli_snomask(acptr))
+	set_snomask(acptr, tmpmask, SNO_SET);
+      if (cli_snomask(acptr) && snomask_given)
+	send_reply(acptr, RPL_SNOMASK, cli_snomask(acptr), cli_snomask(acptr));
     }
     else
-      set_snomask(sptr, 0, SNO_SET);
+      set_snomask(acptr, 0, SNO_SET);
   }
   /*
-   * Compare new flags with old flags and send string which
-   * will cause servers to update correctly.
+   * The account follows the flag: the nick in use when +r was granted,
+   * nothing once it is taken away.
    */
-  if (!WasAccount(setflags) && IsAccount(sptr)) {
-      int len = ACCOUNTLEN;
-      char *id, *flags;
-      if ((id = strchr(account, ':'))) {
-        len = (id++) - account;
-	      cli_user(sptr)->acc_id = atoi(id);
-	      Debug((DEBUG_DEBUG, "Received account id in user mode; "
-	        "account \"%s\", id %qu", account,
-	        cli_user(sptr)->acc_id));
-
-        /* Check for account flags */
-        if ((flags = strchr(id, ':'))) {
-            // Parse the flags after the second colon.
-            cli_user(sptr)->acc_flags = atoi(flags + 1);
-            // Null-terminate the account string before flags.
-            *flags = '\0';
-            Debug((DEBUG_DEBUG, "Received account flags; account \"%s\", flags %qu",
-                    account, cli_user(sptr)->acc_flags));
-        }
-      }
-      ircd_strncpy(cli_user(sptr)->account, account, len);
-  }
-  if (!WasHiddenHost(setflags) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT)
-    hide_hostmask(sptr, FLAG_HIDDENHOST);
+  if (!WasAccount(setflags) && IsAccount(acptr))
+    ircd_strncpy(cli_user(acptr)->account, cli_name(acptr), NICKLEN);
+  else if (WasAccount(setflags) && !IsAccount(acptr))
+    cli_user(acptr)->account[0] = '\0';
 
   if (IsServer(cptr) && feature_bool(FEAT_NETWORK_FEATURES) &&
       tls_fingerprint && tls_fingerprint[0] != '_') {
-    ircd_strncpy(cli_tls_fingerprint(sptr), tls_fingerprint, 64);
+    ircd_strncpy(cli_tls_fingerprint(acptr), tls_fingerprint, 64);
     Debug((DEBUG_DEBUG, "Received TLS fingerprint in user mode; "
-          "fingerprint \"%s\"", cli_tls_fingerprint(sptr)));
+          "fingerprint \"%s\"", cli_tls_fingerprint(acptr)));
   }
 
-  if (IsRegistered(sptr)) {
-    if (!WasOper(setflags) && IsOper(sptr)) {
+  if (IsRegistered(acptr)) {
+    if (!WasOper(setflags) && IsOper(acptr)) {
       /* user now oper */
       ++UserStats.opers;
-      client_set_privs(sptr, NULL, 0); /* may set propagate privilege */
+      client_set_privs(acptr, NULL, 0); /* may set propagate privilege */
     }
     /* remember propagate privilege setting */
-    if (HasPriv(sptr, PRIV_PROPAGATE)) {
+    if (HasPriv(acptr, PRIV_PROPAGATE)) {
       prop = 1;
     }
-    if (WasAnOper(setflags) && !IsAnOper(sptr)) {
+    if (WasAnOper(setflags) && !IsAnOper(acptr)) {
       if (WasOper(setflags)) {
         /* user no longer (global) oper */
         assert(UserStats.opers > 0);
         --UserStats.opers;
       }
-      client_set_privs(sptr, NULL, 0); /* will clear propagate privilege */
+      client_set_privs(acptr, NULL, 0); /* will clear propagate privilege */
     }
-    if (WasInvisible(setflags) && !IsInvisible(sptr)) {
+    if (WasInvisible(setflags) && !IsInvisible(acptr)) {
       assert(UserStats.inv_clients > 0);
       --UserStats.inv_clients;
     }
-    if (!WasInvisible(setflags) && IsInvisible(sptr)) {
+    if (!WasInvisible(setflags) && IsInvisible(acptr)) {
       ++UserStats.inv_clients;
     }
     assert(UserStats.opers <= UserStats.clients + UserStats.unknowns);
     assert(UserStats.inv_clients <= UserStats.clients + UserStats.unknowns);
-    send_umode_out(cptr, sptr, setflags, prop);
+    send_umode_out_by(cptr, sptr, acptr, setflags, prop);
   }
 
   return 0;
+}
+
+/** Set a user's own mode.  See do_user_mode().
+ *
+ * @param[in] cptr Neighbor that sent the mode change message.
+ * @param[in] sptr Source (originator) of the mode change.
+ * @param[in] parc Number of parameters in \a parv.
+ * @param[in] parv Parameters to MODE.
+ * @param[in] allow_modes ALLOWMODES_ANY for any mode, ALLOWMODES_DEFAULT for
+ *                        only permitting legitimate default user modes.
+ * @return Zero.
+ */
+int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
+		char *parv[], int allow_modes)
+{
+  return do_user_mode(cptr, sptr, sptr, parc, parv, allow_modes);
+}
+
+/** Change another user's modes on behalf of a server or a service bot.
+ *
+ * The rule is the caller's to check and this function's to enforce: a
+ * server may change anyone's modes, a service bot (+S) anyone's but an
+ * operator's.  A change the setter may not make is not applied, and the
+ * setter is told nothing.  A service bot is held to the same modes a
+ * user may set on itself, plus +r and -r; what a server says goes.
+ *
+ * @param[in] cptr Neighbor that sent the mode change message; the setter
+ * itself for a local service bot.
+ * @param[in] sptr Server or service bot making the change.
+ * @param[in] acptr User whose modes are changing.
+ * @param[in] parc Number of parameters in \a parv.
+ * @param[in] parv Parameters to MODE; parv[2] is the first mode string.
+ * @return Zero.
+ */
+int set_user_mode_on(struct Client *cptr, struct Client *sptr,
+                     struct Client *acptr, int parc, char *parv[])
+{
+  assert(0 != cptr);
+  assert(0 != sptr);
+  assert(0 != acptr);
+
+  if (!IsUser(acptr) || parc < 3)
+    return 0;
+  if (!IsServer(sptr) && !(IsServiceBot(sptr) && !IsAnOper(acptr)))
+    return 0;
+  return do_user_mode(cptr, sptr, acptr, parc, parv, ALLOWMODES_ANY);
 }
 
 /** Build a mode string to describe modes for \a cptr.
@@ -1396,7 +1490,9 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
  */
 char *umode_str(struct Client *cptr)
 {
-  /* Maximum string size: "owidgrx\0" */
+  /* Maximum string size: "owidgrx\0"; +r carries no parameter, the
+   * account being the nick itself.
+   */
   char *m = umodeBuf;
   const struct UserMode *um;
 
@@ -1413,39 +1509,6 @@ char *umode_str(struct Client *cptr)
       continue;
     if (HasUFlag(cptr, um->flag) && (um->flag & FLAG_GLOBAL_UMODES))
       *m++ = um->c;
-  }
-
-  if (IsAccount(cptr))
-  {
-    char* t = cli_user(cptr)->account;
-
-    *m++ = ' ';
-    while ((*m++ = *t++))
-      ; /* Empty loop */
-
-    m--; /* back up over previous nul-termination */
-
-    if (cli_user(cptr)->acc_id) {
-      char nbuf[30];
-      Debug((DEBUG_DEBUG, "Sending account id in user mode for "
-	     "account \"%s\"; id %qu", cli_user(cptr)->account,
-	     cli_user(cptr)->acc_id));
-
-      if (cli_user(cptr)->acc_flags) {
-      Debug((DEBUG_DEBUG, "Sending account flags in user mode for "
-	     "account \"%s\"; flags %qu", cli_user(cptr)->account,
-	     cli_user(cptr)->acc_flags));
-
-        ircd_snprintf(0, t = nbuf, sizeof(nbuf), ":%qu:%qu",
-                      cli_user(cptr)->acc_id, cli_user(cptr)->acc_flags);
-      } else {
-        ircd_snprintf(0, t = nbuf, sizeof(nbuf), ":%qu",
-                      cli_user(cptr)->acc_id);
-      }
-      while ((*m++ = *t++))
-	; /* Empty loop */
-      m--; /* back up over previous nul-termination */
-    }
   }
 
   /** If the client is on a secure connection (umode +z) we append the fingerprint.
@@ -1470,15 +1533,16 @@ char *umode_str(struct Client *cptr)
                                    overwritten by send_umode() */
 }
 
-/** Send a mode change string for \a sptr to \a cptr.
+/** Send a mode change string for \a sptr, made by \a from, to \a cptr.
  * @param[in] cptr Destination of mode change message.
+ * @param[in] from Client the message is sent as.
  * @param[in] sptr User whose mode has changed.
  * @param[in] old Pre-change set of modes for \a sptr.
  * @param[in] sendset One of ALL_UMODES, SEND_UMODES_BUT_OPER,
  * SEND_UMODES, to select which changed user modes to send.
  */
-void send_umode(struct Client *cptr, struct Client *sptr, flag_t old,
-                int sendset)
+void send_umode_by(struct Client *cptr, struct Client *from,
+                   struct Client *sptr, flag_t old, int sendset)
 {
   const struct UserMode *um;
   flag_t flag;
@@ -1539,7 +1603,20 @@ void send_umode(struct Client *cptr, struct Client *sptr, flag_t old,
   }
   *m = '\0';
   if (*umodeBuf && cptr)
-    sendcmdto_one(sptr, CMD_MODE, cptr, "%s :%s", cli_name(sptr), umodeBuf);
+    sendcmdto_one(from, CMD_MODE, cptr, "%s :%s", cli_name(sptr), umodeBuf);
+}
+
+/** Send a mode change string for \a sptr to \a cptr, as \a sptr.
+ * @param[in] cptr Destination of mode change message.
+ * @param[in] sptr User whose mode has changed.
+ * @param[in] old Pre-change set of modes for \a sptr.
+ * @param[in] sendset One of ALL_UMODES, SEND_UMODES_BUT_OPER,
+ * SEND_UMODES, to select which changed user modes to send.
+ */
+void send_umode(struct Client *cptr, struct Client *sptr, flag_t old,
+                int sendset)
+{
+  send_umode_by(cptr, sptr, sptr, old, sendset);
 }
 
 /**

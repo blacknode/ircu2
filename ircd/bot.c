@@ -398,6 +398,42 @@ void bot_send_channel(struct Client* bot, struct Channel* chptr, int notice,
                              SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
 }
 
+int bot_set_user_mode(struct Client* bot, struct Client* target,
+                      const char* modes)
+{
+  char modebuf[BUFSIZE];
+  char* parv[4];
+
+  assert(0 != bot);
+  assert(0 != target);
+  assert(0 != modes);
+  assert(0 != bot_find(bot));
+
+  if (!IsUser(target) || EmptyString(modes))
+    return 0;
+
+  /* The mode parser writes into its arguments (a snomask parameter is
+   * consumed in place), so it gets a copy.
+   */
+  ircd_strncpy(modebuf, modes, sizeof(modebuf) - 1);
+  parv[0] = cli_name(bot);
+  parv[1] = cli_name(target);
+  parv[2] = modebuf;
+  parv[3] = NULL;
+
+  /* The bot is its own link: it is local, and it is what the restrictions
+   * on a locally made change apply to.
+   */
+  if (target == bot) {
+    set_user_mode(bot, bot, 3, parv, ALLOWMODES_ANY);
+    return 1;
+  }
+  if (!IsServiceBot(bot) || IsAnOper(target))
+    return 0;
+  set_user_mode_on(bot, bot, target, 3, parv);
+  return 1;
+}
+
 /** Run HOOK_MESSAGE_RECEIVED for one message to one bot.
  * @param[in] sptr Sender.
  * @param[in] bot Recipient.

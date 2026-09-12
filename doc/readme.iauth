@@ -93,9 +93,9 @@ username, IP address and hostname.  The same functions allow other
 clients to use iauth-assigned spoofs, for example to hide the IP
 addresses used by operators.
 
-This protocol allows login-on-connect, for example by clients that
-send their account name and password in PASS, through the R iauth
-message.
+The R iauth message, which other servers use for login-on-connect, is
+accepted but its account is ignored: this ircd grants +r only through a
+server or a service bot (see doc/readme.accounting).
 
 This protocol allows iauth to assign a client to a particular class by
 specifying a class name in the D or R iauth message.
@@ -491,8 +491,12 @@ Comments: Indicates that the iauth instance believes the specified
   client should be allowed onto the network, pre-authenticated to
   the account listed.  If a class parameter is given, the client
   should be assigned to that class.
-Compatibility: This is an Undernet extension and ircd does not support
-  this message.
+Compatibility: This is an Undernet extension.  This ircd accepts the
+  message for the sake of older iauth programs but ignores the account:
+  a user is identified (+r) only by a server or a service bot, after
+  registration (see doc/readme.accounting).  The message is treated
+  exactly as D with the account parameter removed, and operators with
+  +s snomask AUTH are warned.
 
 X - Extension Query
 Syntax: X <servername> <routing> :<query>

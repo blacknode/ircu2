@@ -99,8 +99,8 @@ async def test_silenced_authenticated_sender_dropped_silently(
     target = await make_client(f"tgtR{command[0]}c")
     await target.set_umode("+R")
 
-    fake = await ulined_server.introduce_user(f"acctsndR{command[0]}")
-    await ulined_server.send_account(fake, "someaccount")
+    # +r in the introducing NICK: identified from the moment it exists.
+    fake = await ulined_server.introduce_user(f"acctsndR{command[0]}", modes="+ir")
     target_num = await ulined_server.wait_for_user(target.nick)
     await asyncio.sleep(0.3)
 

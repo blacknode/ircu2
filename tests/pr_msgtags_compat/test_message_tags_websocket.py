@@ -71,14 +71,12 @@ async def _join(clients: list[IRCWebSocketClient], channel: str = CHANNEL):
 
 
 @pytest.mark.parametrize(
-    "caps,expect_time,expect_account,expect_client",
+    "caps,expect_time,expect_client",
     [
-        ([], False, False, False),
-        (["server-time"], True, False, False),
-        (["account-tag"], False, True, False),
-        (["message-tags"], True, True, True),
-        (["server-time", "account-tag"], True, True, False),
-        (["server-time", "message-tags"], True, True, True),
+        ([], False, False),
+        (["server-time"], True, False),
+        (["message-tags"], True, True),
+        (["server-time", "message-tags"], True, True),
     ],
 )
 async def test_ws_cap_matrix_delivery(
@@ -86,15 +84,14 @@ async def test_ws_cap_matrix_delivery(
     services,
     caps,
     expect_time,
-    expect_account,
     expect_client,
 ):
     """WebSocket observers receive the same tag subset as TCP for each CAP combo."""
     hub = ircd_network["hub"]
 
     sender = await _ws_client(hub["host"], "wscapsnd")
-    numnick = await services.wait_for_user("wscapsnd")
-    await services.send_account(numnick, "WsCapAcct")
+    await services.wait_for_user("wscapsnd")
+    await services.send_register("wscapsnd")
 
     observer = await _ws_client(
         hub["host"], f"wscap{len(caps)}", caps=caps or None
@@ -106,7 +103,7 @@ async def test_ws_cap_matrix_delivery(
         msg = await observer.wait_for("PRIVMSG", timeout=5.0)
         assert msg.params[-1] == "ws matrix", msg.raw
         assert tag_has(msg.tags, "time") == expect_time, msg.raw
-        assert tag_has(msg.tags, "account") == expect_account, msg.raw
+        assert not tag_has(msg.tags, "account"), msg.raw
         assert tag_has(msg.tags, "+example.com/foo") == expect_client, msg.raw
     finally:
         await _cleanup(sender, observer)
@@ -190,7 +187,7 @@ async def test_ws_cannot_forge_server_tags(ircd_network):
     observer = await _ws_client(
         hub["host"],
         "wsforgeobs",
-        ["message-tags", "server-time", "account-tag"],
+        ["message-tags", "server-time"],
     )
 
     try:
@@ -343,12 +340,12 @@ async def test_ws_binary_subprotocol_server_time(ircd_network):
         await _cleanup(sender, observer)
 
 
-async def test_ws_message_tags_alone_gets_time_and_account(ircd_network, services):
+async def test_ws_message_tags_alone_gets_time(ircd_network, services):
     hub = ircd_network["hub"]
 
     sender = await _ws_client(hub["host"], "wsmtagsnd")
-    numnick = await services.wait_for_user("wsmtagsnd")
-    await services.send_account(numnick, "WsOnlyAcct")
+    await services.wait_for_user("wsmtagsnd")
+    await services.send_register("wsmtagsnd")
 
     observer = await _ws_client(hub["host"], "wsmtagobs", ["message-tags"])
 
@@ -357,6 +354,6 @@ async def test_ws_message_tags_alone_gets_time_and_account(ircd_network, service
         await sender.send("PRIVMSG #wsmtagonly :catchall caps")
         msg = await observer.wait_for("PRIVMSG", timeout=5.0)
         assert "time=" in msg.tags, msg.raw
-        assert "account=WsOnlyAcct" in msg.tags, msg.raw
+        assert "account=" not in msg.tags, msg.raw
     finally:
         await _cleanup(sender, observer)

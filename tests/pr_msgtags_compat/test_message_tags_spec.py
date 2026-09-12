@@ -26,15 +26,16 @@ async def services(ircd_network):
     await srv.disconnect()
 
 
-async def test_message_tags_alone_gets_time_and_account(ircd_network, services):
-    """message-tags without server-time/account-tag still receives time+account."""
+async def test_message_tags_alone_gets_time(ircd_network, services):
+    """message-tags without server-time still receives time; never account
+    (the server does not speak account-tag; doc/readme.accounting)."""
     hub = ircd_network["hub"]
 
     sender = IRCClient()
     await sender.connect(hub["host"], hub["port"])
     await sender.register("mtagonly", "testuser", "Tag Only Sender")
-    numnick = await services.wait_for_user("mtagonly")
-    await services.send_account(numnick, "OnlyAcct")
+    await services.wait_for_user("mtagonly")
+    await services.send_register("mtagonly")
 
     observer = IRCClient()
     await observer.connect(hub["host"], hub["port"])
@@ -47,7 +48,7 @@ async def test_message_tags_alone_gets_time_and_account(ircd_network, services):
         await sender.send("PRIVMSG #mtagonly :catchall caps")
         msg = await observer.wait_for("PRIVMSG", timeout=15.0)
         assert "time=" in msg.tags, msg.raw
-        assert "account=OnlyAcct" in msg.tags, msg.raw
+        assert "account=" not in msg.tags, msg.raw
     finally:
         for c in (sender, observer):
             try:

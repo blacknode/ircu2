@@ -212,7 +212,7 @@ extern const struct Numeric* get_error_numeric(int err);
 #define RPL_UNAWAY           305
 #define RPL_NOWAWAY          306
                                         /* NotAway, aircd */
-/*	RPL_WHOISREGNICK     307 	Numeric List: Dalnet */
+#define RPL_WHOISREGNICK     307        /* Dalnet */
 /*	RPL_SUSERHOST	     307	austnet */
 /*      RPL_NOTIFYACTION     308         aircd */
 /*	RPL_WHOISADMIN	     308	Numeric List: Dalnet */
@@ -248,7 +248,7 @@ extern const struct Numeric* get_error_numeric(int err);
 /*      RPL_CHANNEL_URL      328           dalnet, anothernet */
 #define RPL_CREATIONTIME     329
 /*      RPL_WHOWAS_TIME      330               ? */
-#define RPL_WHOISACCOUNT     330
+/*      RPL_WHOISACCOUNT     330        no longer sent; see 307 */
 #define RPL_NOTOPIC          331
 #define RPL_TOPIC            332
 #define RPL_TOPICWHOTIME     333        /* Undernet extension */
@@ -497,17 +497,9 @@ extern const struct Numeric* get_error_numeric(int err);
 */
 
 /*
- * SASL replies and errors (starting at 900).
+ * 900-908 were the SASL replies; the server no longer speaks SASL
+ * (doc/readme.accounting).
  */
-#define RPL_LOGGEDIN         900    /* SASL */
-/* RPL_LOGGEDOUT        901    SASL */
-/* ERR_NICKLOCKED       902    SASL */
-#define RPL_SASLSUCCESS      903    /* SASL */
-#define ERR_SASLFAIL         904    /* SASL */
-#define ERR_SASLTOOLONG      905    /* SASL */
-#define ERR_SASLABORTED      906    /* SASL */
-#define ERR_SASLALREADY      907    /* SASL */
-#define RPL_SASLMECHS        908	/* SASL */
 
 #define ERR_LASTERROR        909
 

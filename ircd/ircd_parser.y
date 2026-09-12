@@ -42,6 +42,7 @@
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
 #include "ircd_tls.h"
+#include "ircd_vhost.h"
 #include "list.h"
 #include "listener.h"
 #include "match.h"
@@ -119,6 +120,7 @@ enum ConfigBlock
   BLOCK_IPCHECK,
   BLOCK_DATABASE,
   BLOCK_SERVICE,
+  BLOCK_SECURITY,
   BLOCK_LAST_BLOCK
 };
 
@@ -139,7 +141,7 @@ permitted(enum ConfigBlock type)
     "Admin", "Class", "Client", "Connect", "CRule", "Features",
     "General", "IAuth", "Include", "Jupe", "Kill", "Module", "Motd",
     "Oper", "Port", "Pseudo", "Quarantine", "UWorld", "WebIRC", "IPCheck",
-    "Database", "Service",
+    "Database", "Service", "Security",
     NULL
   };
 
@@ -249,6 +251,8 @@ static void free_slist(struct SLink **link) {
 %token TIMEOUT
 %token TIMEOUT_MS
 %token MIGRATION_TIMEOUT
+%token SECURITY
+%token VIRTUAL_HOST_KEY
 %token INCLUDE
 %token FROM
 %token TEOF
@@ -293,7 +297,8 @@ block: adminblock | generalblock | classblock | connectblock |
        uworldblock | operblock | portblock | jupeblock | clientblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
-       moduleblock | databaseblock | serviceblock | includeblock |
+       moduleblock | databaseblock | serviceblock | securityblock |
+       includeblock |
        error '}' ';' { yyerrok; };
 
 /* The timespec, sizespec and expr was ripped straight from
@@ -1700,6 +1705,31 @@ databasemigrationtimeout: MIGRATION_TIMEOUT '=' timespec ';'
   db_conf_set_migration_timeout($3 * 1000);
 };
 
+/* Security { virtual_host_key = "AbCdEfGhIjKl"; };
+ *
+ * The block is mandatory: every user's visible host is a cipher of its
+ * address under this key (doc/readme.accounting), so a server without one
+ * cannot introduce a user at all.  read_configuration_file() reports the
+ * omission; here we only reject a malformed key.  The key is twelve
+ * characters of the P10 base64 alphabet, and must be the same on every
+ * server of the network.
+ */
+securityblock: SECURITY
+{
+  if (!permitted(BLOCK_SECURITY)) YYERROR;
+} '{' securityitems '}' ';';
+
+securityitems: securityitem securityitems | securityitem;
+securityitem: securityvhostkey;
+
+securityvhostkey: VIRTUAL_HOST_KEY '=' QSTRING ';'
+{
+  if (!vhost_conf_set_key($3))
+    parse_error("virtual_host_key must be exactly %d characters of "
+                "A-Z a-z 0-9 [ ]", VHOST_KEY_LEN);
+  MyFree($3);
+};
+
 includeblock: INCLUDE {
   if (!permitted(BLOCK_INCLUDE)) YYERROR;
   flags = 0;
@@ -1735,4 +1765,5 @@ blocktype: ALL { $$ = ~0; }
   | IPCHECK { $$ = 1 << BLOCK_IPCHECK; }
   | DATABASE { $$ = 1 << BLOCK_DATABASE; }
   | SERVICE { $$ = 1 << BLOCK_SERVICE; }
+  | SECURITY { $$ = 1 << BLOCK_SECURITY; }
   ;

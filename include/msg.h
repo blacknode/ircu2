@@ -340,9 +340,6 @@ struct Client;
 #define TOK_CLEARMODE           "CM"
 #define CMD_CLEARMODE		MSG_CLEARMODE, TOK_CLEARMODE
 
-#define MSG_ACCOUNT		"ACCOUNT"	/* ACCO */
-#define TOK_ACCOUNT		"AC"
-#define CMD_ACCOUNT		MSG_ACCOUNT, TOK_ACCOUNT
 
 #define MSG_ASLL               "ASLL"          /* ASLL */
 #define TOK_ASLL               "LL"
@@ -384,9 +381,6 @@ struct Client;
 #define TOK_CHGHOST		"CHGHOST"
 #define CMD_CHGHOST		MSG_CHGHOST, TOK_CHGHOST
 
-#define MSG_AUTHENTICATE	"AUTHENTICATE"
-#define TOK_AUTHENTICATE	"AUTHENTICATE"
-#define CMD_AUTHENTICATE	MSG_AUTHENTICATE, TOK_AUTHENTICATE
 
 #define MSG_MODULE              "MODULE"        /* MODU */
 #define TOK_MODULE              "MODULE"

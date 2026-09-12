@@ -377,60 +377,6 @@ badid:
   return exit_client(sptr, sptr, &me, "USER: Bad username");
 }
 
-/** Set account for user associated with \a auth.
- * @param[in] auth Authorization request for client.
- */
-int auth_set_account(struct AuthRequest *auth, const char *account_info)
-{
-  struct Client *sptr;
-  char *account_copy = NULL, *account = NULL, *id_str = NULL, *flags_str = NULL, *extra = NULL;
-
-  assert(auth != NULL);
-
-  sptr = auth->client;
-  if (!cli_user(sptr) || EmptyString(account_info))
-    return 1;
-
-  /* Parse account information: username:id:flags */
-  DupString(account_copy, account_info);
-  if (!account_copy)
-    return 1;
-
-  account = strtok(account_copy, ":");
-  id_str = strtok(NULL, ":");
-  flags_str = strtok(NULL, " ");
-  extra = strtok(NULL, "");
-
-  /* A malformed reply may contain no account name at all. */
-  if (EmptyString(account)) {
-    MyFree(account_copy);
-    return 1;
-  }
-
-  /* Copy account name to User structure */
-  ircd_strncpy(cli_user(sptr)->account, account, ACCOUNTLEN);
-
-  /* Parse account ID if provided */
-  if (id_str) {
-    cli_user(sptr)->acc_id = strtoul(id_str, NULL, 10);
-  }
-
-  if (flags_str) {
-    cli_user(sptr)->acc_flags = strtoul(flags_str, NULL, 10);
-  }
-
-  SetAccount(sptr);
-
-  /* Check for +x flag (host hiding) */
-  if (extra && strstr(extra, "+x") && feature_bool(FEAT_HOST_HIDING)) {
-    SetHiddenHost(sptr);
-  }
-
-  sendto_iauth(sptr, "A %s", cli_user(sptr)->account);
-  MyFree(account_copy);
-  return 0;
-}
-
 /** Notifies IAuth of a status change for the client.
  *
  * @param[in] auth Authorization request that was updated.
@@ -649,12 +595,6 @@ static int check_auth_finished(struct AuthRequest *auth, int bitclr)
 
     if (res == 0)
     {
-      if (HasFlag(auth->client, FLAG_SASL)) {
-        send_reply(auth->client, RPL_LOGGEDIN,
-          cli_name(auth->client), cli_user(auth->client)->username,
-          cli_user(auth->client)->host, cli_user(auth->client)->account,
-          cli_user(auth->client)->account);
-      }
       memset(cli_passwd(cptr), 0, sizeof(cli_passwd(cptr)));
       res = register_user(cptr, cptr);
     }
@@ -2330,7 +2270,15 @@ static int iauth_cmd_done_client(struct IAuth *iauth, struct Client *cli,
   return AR_IAUTH_PENDING;
 }
 
-/** Accept a client in IAuth and assign them to an account.
+/** Accept a client that an old iauth instance wants pre-authenticated.
+ *
+ * The R command used to stamp the client with an account before it was
+ * registered.  Accounts are no longer the server's to grant on a hint
+ * from iauth -- +r comes from a server or a service bot once the user
+ * exists (doc/readme.accounting) -- so the account is dropped and the
+ * client is let in as by D.  Kept so that an iauth written for the old
+ * protocol still admits users instead of leaving them hanging.
+ *
  * @param[in] iauth Active IAuth session.
  * @param[in] cli Client referenced by command.
  * @param[in] parc Number of parameters.
@@ -2342,36 +2290,16 @@ static int iauth_cmd_done_client(struct IAuth *iauth, struct Client *cli,
 static int iauth_cmd_done_account(struct IAuth *iauth, struct Client *cli,
 				  int parc, char **params)
 {
-  size_t len;
+  static time_t warn_time;
 
-  /* Sanity check. */
   if (EmptyString(params[0])) {
     sendto_iauth(cli, "E Missing :Missing account parameter");
     return 0;
   }
-  /* Check length of account name. */
-  len = strcspn(params[0], ": ");
-  if (len > ACCOUNTLEN) {
-    sendto_iauth(cli, "E Invalid :Account parameter too long");
-    return 0;
-  }
-  /* If account has an id, use it. */
-  assert(cli_user(cli) != NULL);
-  if (params[0][len] == ':') {
-    cli_user(cli)->acc_id = strtoul(params[0] + len + 1, NULL, 10);
-    params[0][len] = '\0';
-
-    /* If account has flags, use it. */
-    char *flags_start = strchr(params[0] + len + 1, ':');
-    if (flags_start != NULL) {
-        cli_user(cli)->acc_flags = strtoul(flags_start + 1, NULL, 10);
-        *flags_start = '\0';
-    }
-  }
-
-  /* Copy account name to User structure. */
-  ircd_strncpy(cli_user(cli)->account, params[0], ACCOUNTLEN);
-  SetAccount(cli);
+  sendto_opmask_butone_ratelimited(NULL, SNO_AUTH, &warn_time,
+                                   "iauth sent R (account %s) for %s; "
+                                   "accounts are not set by iauth, "
+                                   "treating as D", params[0], cli_name(cli));
 
   /* Fall through to the normal "done" handler. */
   return iauth_cmd_done_client(iauth, cli, parc - 1, params + 1);

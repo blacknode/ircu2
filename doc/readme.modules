@@ -691,6 +691,7 @@ it -- a bot, a service -- through include/bot.h:
   bot_join(bot, "#channel");                 /* with ops, creating it */
   bot_send_user(bot, acptr, 1, "hello");     /* 1: NOTICE, 0: PRIVMSG */
   bot_send_channel(bot, chptr, 0, "hello");
+  bot_set_user_mode(bot, acptr, "+r");       /* service bots only, see below */
   bot_destroy(bot, &me, "reason");
 
 The bot is a struct Client made with make_client(&me, ...), so it shares
@@ -728,6 +729,15 @@ HOOK_MESSAGE_RECEIVED and so that /BOT will neither rename nor destroy
 it.  +B and +S are the server's alone: a user cannot set or clear them,
 and neither can an operator; only a MODE from another server is
 believed.  A bot with +S is what doc/readme.services is about.
+
+A service bot may also change the user modes of anyone who is not an
+operator, through bot_set_user_mode(); what it is for is +r, the mark
+of a user identified to its nick, which nobody but a server or a
+service bot can grant (doc/readme.accounting).  It is held to the modes
+a user may set on itself, plus +r and -r: +o, +k, +S, +B and -x are
+dropped from whatever it asks for.  The change reaches the network and
+the user as coming from the bot.  Any bot, +S or not, may change its
+own modes the same way, within the same limits.
 
 
 DIAGNOSTICS

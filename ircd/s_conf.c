@@ -43,6 +43,7 @@
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
+#include "ircd_vhost.h"
 #include "ircd_tls.h"
 #include "list.h"
 #include "listener.h"
@@ -1014,6 +1015,7 @@ int read_configuration_file(void)
   conf_error = 0;
   feature_unmark(); /* unmark all features for resetting later */
   db_conf_unmark(); /* the Database block is dropped if it is gone */
+  vhost_conf_unmark(); /* a new Security block replaces the key */
   clear_nameservers(); /* clear previous list of DNS servers */
   if (!init_lexer())
     return 0;
@@ -1021,6 +1023,20 @@ int read_configuration_file(void)
   deinit_lexer();
   feature_mark(); /* reset unmarked features */
   db_conf_sweep(); /* ... which is decided here, once the file is read */
+  /* The Security block is the one block the server cannot do without:
+   * no key, no hidden hosts, no users.  A rehash that drops it keeps the
+   * key already in force; the first read has none to fall back on and
+   * init_conf() refuses to start.
+   */
+  if (!vhost_conf_sweep()) {
+    static const char msg[] =
+      "Config file error: Security block with virtual_host_key is required";
+    sendto_opmask_butone(0, SNO_ALL, "%s", msg);
+    log_write(LS_CONFIG, L_ERROR, 0, "%s", msg);
+    if (!conf_already_read)
+      fprintf(stderr, "%s\n", msg);
+    conf_error = 1;
+  }
   conf_already_read = 1;
   return 1;
 }

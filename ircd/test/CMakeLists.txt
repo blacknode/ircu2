@@ -53,6 +53,13 @@ add_ircu_test(ircd_in_addr_t
   "${IRCU_IRCD_DIR}/match.c"
   "${IRCU_IRCD_DIR}/numnicks.c")
 
+add_ircu_test(vhost_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/ircd_vhost.c"
+  "${IRCU_IRCD_DIR}/match.c"
+  "${IRCU_IRCD_DIR}/numnicks.c")
+
 add_ircu_test(ircd_match_t
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/match.c")

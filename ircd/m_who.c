@@ -215,10 +215,6 @@ int m_who(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
         case 'R':
           matchsel |= WHO_FIELD_REN;
           continue;
-        case 'a':
-        case 'A':
-          matchsel |= WHO_FIELD_ACC;
-          continue;
       }
     if (ch == '%')
       while ((ch = *p++) && (ch != ','))
@@ -269,10 +265,6 @@ int m_who(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
           case 'u':
           case 'U':
             fields |= WHO_FIELD_UID;
-            break;
-          case 'a':
-          case 'A':
-            fields |= WHO_FIELD_ACC;
             break;
           case 'o':
           case 'O':
@@ -383,8 +375,6 @@ int m_who(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
         matchsel &= ~WHO_FIELD_UID;
       if ((minlen > HOSTLEN) || !(cset & NTL_IRCHN))
         matchsel &= ~WHO_FIELD_HOS;
-      if ((minlen > ACCOUNTLEN))
-        matchsel &= ~WHO_FIELD_ACC;
     }
 
     /* First of all loop through the clients in common channels */
@@ -422,9 +412,7 @@ int m_who(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
               || matchexec(cli_info(acptr), mymask, minlen))
               && ((!(matchsel & WHO_FIELD_NIP))
 	      || (HasHiddenHost(acptr) && !IsAnOper(sptr))
-              || !ipmask_check(&cli_ip(acptr), &imask, ibits))
-              && ((!(matchsel & WHO_FIELD_ACC))
-              || matchexec(cli_user(acptr)->account, mymask, minlen)))
+              || !ipmask_check(&cli_ip(acptr), &imask, ibits)))
             continue;
           if (!SHOW_MORE(sptr, counter))
             break;
@@ -464,9 +452,7 @@ int m_who(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
             || matchexec(cli_info(acptr), mymask, minlen))
             && ((!(matchsel & WHO_FIELD_NIP))
 	    || (HasHiddenHost(acptr) && !IsAnOper(sptr))
-            || !ipmask_check(&cli_ip(acptr), &imask, ibits))
-            && ((!(matchsel & WHO_FIELD_ACC))
-            || matchexec(cli_user(acptr)->account, mymask, minlen)))
+            || !ipmask_check(&cli_ip(acptr), &imask, ibits)))
           continue;
         if (!SHOW_MORE(sptr, counter))
           break;

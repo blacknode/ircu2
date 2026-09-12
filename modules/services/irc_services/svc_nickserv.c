@@ -52,8 +52,7 @@ static void cmd_info(struct ServiceCall* call)
             cli_user(acptr)->username, cli_user(acptr)->host,
             cli_info(acptr), cli_name(cli_user(acptr)->server));
   if (IsAccount(acptr))
-    svc_reply(call, "%s is logged in as %s.", cli_name(acptr),
-              cli_user(acptr)->account);
+    svc_reply(call, "%s is a registered user.", cli_name(acptr));
   if (IsServiceBot(acptr))
     svc_reply(call, "%s is a service of the network.", cli_name(acptr));
 }

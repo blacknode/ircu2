@@ -266,7 +266,10 @@ notifications whose return value is ignored. All hooks run inline on the main th
 `ircd/worker.c` implements), the channel modes by module (003, in Spanish),
 configuration from the environment (004) and translations with PO files (005,
 in Spanish);
-read the relevant one before changing either subsystem. Other useful docs:
+read the relevant one before changing either subsystem.  `006` (in Spanish) is
+not a subsystem design but the roadmap for turning this into a unified
+communications server (rich text, history, voice/video/screen share): read it
+before starting anything that belongs to one of its phases. Other useful docs:
 `doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
 `doc/readme.database`, `doc/readme.migrations`, `doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root

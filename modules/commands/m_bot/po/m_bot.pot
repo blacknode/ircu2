@@ -1,0 +1,93 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the ircu2 package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: ircu2\n"
+"Report-Msgid-Bugs-To: coder-com@undernet.org\n"
+"POT-Creation-Date: 2026-09-13 15:19-0500\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: modules/commands/m_bot/m_bot.c:89
+#, no-c-format
+msgid "%C :%s is not a bot of this server"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:112
+#, no-c-format
+msgid "%C :%s is a service of the network and cannot be %s; it belongs to %s"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:136
+#, no-c-format
+msgid "%C :Cannot create bot %s: no numeric nick is free"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:147
+#, no-c-format
+msgid "%C :Bot %s (%s@%s) created"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:152 modules/commands/m_bot/m_bot.c:240
+#, no-c-format
+msgid "%C :Bot %s joined %s"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:180
+#, no-c-format
+msgid "%C :Bot %s destroyed"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:202
+#, no-c-format
+msgid "%C :Bot %s already has that nick"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:217
+#, no-c-format
+msgid "%C :Bot %s renamed to %s"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:264
+#, no-c-format
+msgid "%C :Bot %s left %s"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:320
+#, no-c-format
+msgid "%C :%s %s (%s@%s) of %s on %u channel%s%s%s"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:321
+#, no-c-format
+msgid "Service"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:322
+#, no-c-format
+msgid "Bot"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:325
+#, no-c-format
+msgid "the server"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:331
+#, no-c-format
+msgid "%C :End of bot list: %u bot%s"
+msgstr ""
+
+#: modules/commands/m_bot/m_bot.c:398
+#, no-c-format
+msgid "%C :Unknown BOT subcommand %s; use CREATE, RENAME, DESTROY, JOIN, PART, SAY or LIST"
+msgstr ""

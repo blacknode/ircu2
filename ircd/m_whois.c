@@ -87,6 +87,7 @@
 #include "ircd.h"
 #include "ircd_defs.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -173,7 +174,8 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
 
        if (len+strlen(chptr->chname) + mlen > BUFSIZE - 5)
        {
-          send_reply(sptr, SND_EXPLICIT | RPL_WHOISCHANNELS, "%s :%s", name, buf);
+          send_reply(sptr, SND_EXPLICIT | RPL_WHOISCHANNELS,
+                     N_("%s :%s"), name, buf);
           *buf = '\0';
           len = 0;
        }
@@ -240,6 +242,12 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
     if (HasHiddenHost(acptr) && (IsAnOper(sptr) || acptr == sptr))
       send_reply(sptr, RPL_WHOISACTUALLY, name, user->username,
                  user->realhost, ircd_ntoa(&cli_ip(acptr)));
+
+    /* The language preference says where somebody is from, so it is
+     * shown to the same people as the 338: the user and the opers.
+     */
+    if (i18n_languages_str(acptr) && (IsAnOper(sptr) || acptr == sptr))
+      send_reply(sptr, RPL_WHOISLANGUAGE, name, i18n_languages_str(acptr));
 
     /* Hint: if your looking to add more flags to a user, eg +h, here's
      *       probably a good place to add them :)

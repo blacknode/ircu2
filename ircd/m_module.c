@@ -23,6 +23,7 @@
 #include "client.h"
 #include "ircd.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -55,14 +56,14 @@ static void module_send_list(struct Client* sptr)
      * something to hand out over IRC, even to an operator.
      */
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Module %s (%s %s, ABI %u): modules/%s -- %s [loaded by %s]",
+               N_(":Module %s (%s %s, ABI %u): modules/%s -- %s [loaded by %s]"),
                module_file(mod), module_name(mod), module_version(mod),
                (unsigned int) IRCU_MODULE_ABI, module_relpath(mod),
                module_description(mod),
                module_loaded_by(mod) ? module_loaded_by(mod)
                                      : "the configuration file");
 
-  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%u module%s loaded",
+  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":%u module%s loaded"),
              module_count(), module_count() == 1 ? "" : "s");
 }
 
@@ -118,8 +119,8 @@ static int module_migration(struct Client* sptr, int parc, char* parv[])
 
   if (parc < 3) {
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :MODULE MIGRATION subcommand must be LIST, STATUS, "
-                  "APPLY or REVERT", sptr);
+                  _(sptr, "%C :MODULE MIGRATION subcommand must be LIST, STATUS, "
+                  "APPLY or REVERT"), sptr);
     return 0;
   }
 
@@ -133,7 +134,7 @@ static int module_migration(struct Client* sptr, int parc, char* parv[])
 
   if (parc < 4) {
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :MODULE MIGRATION %s needs a module name", sptr, what);
+                  _(sptr, "%C :MODULE MIGRATION %s needs a module name"), sptr, what);
     return 0;
   }
 
@@ -143,13 +144,14 @@ static int module_migration(struct Client* sptr, int parc, char* parv[])
    */
   if (migration_reserved_name(parv[3])) {
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :The server's own migrations run at start-up and are "
-                  "not applied or reverted by hand", sptr);
+                  _(sptr, "%C :The server's own migrations run at start-up and are "
+                  "not applied or reverted by hand"), sptr);
     return 0;
   }
 
   if (!(mod = module_find(parv[3])) && !(mod = module_find_file(parv[3]))) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :No module named %s is loaded",
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :No module named %s is loaded"),
                   sptr, parv[3]);
     return 0;
   }
@@ -162,8 +164,8 @@ static int module_migration(struct Client* sptr, int parc, char* parv[])
   if (parc > 4 && !EmptyString(parv[4])
       && !module_parse_version(parv[4], &version)) {
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :%s is not a version; migrations are numbered v1, v2 "
-                  "and so on", sptr, parv[4]);
+                  _(sptr, "%C :%s is not a version; migrations are numbered v1, v2 "
+                  "and so on"), sptr, parv[4]);
     return 0;
   }
 
@@ -184,8 +186,8 @@ static int module_migration(struct Client* sptr, int parc, char* parv[])
   }
 
   sendcmdto_one(&me, CMD_NOTICE, sptr,
-                "%C :MODULE MIGRATION subcommand must be LIST, STATUS, "
-                "APPLY or REVERT", sptr);
+                _(sptr, "%C :MODULE MIGRATION subcommand must be LIST, STATUS, "
+                "APPLY or REVERT"), sptr);
   return 0;
 }
 
@@ -239,7 +241,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (0 == ircd_strcmp(subcmd, "LOAD")) {
     if (!module_load(parv[2], cli_name(sptr), &err)) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Could not load %s: %s",
+      sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not load %s: %s"),
                     sptr, parv[2], err ? err : "unknown error");
       return 0;
     }
@@ -252,13 +254,14 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (0 == ircd_strcmp(subcmd, "UNLOAD")) {
     if (!(mod = module_find_file(parv[2]))) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :No module named %s is loaded",
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :No module named %s is loaded"),
                     sptr, parv[2]);
       return 0;
     }
 
     if (!module_unload(mod)) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Could not unload %s",
+      sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not unload %s"),
                     sptr, parv[2]);
       return 0;
     }
@@ -271,7 +274,8 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (0 == ircd_strcmp(subcmd, "RELOAD")) {
     if (!(mod = module_find_file(parv[2]))) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :No module named %s is loaded",
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :No module named %s is loaded"),
                     sptr, parv[2]);
       return 0;
     }
@@ -281,7 +285,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     name[sizeof(name) - 1] = '\0';
 
     if (!module_unload(mod)) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Could not unload %s",
+      sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not unload %s"),
                     sptr, parv[2]);
       return 0;
     }
@@ -291,7 +295,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
        * the operator to guess whether the module is still running.
        */
       sendcmdto_one(&me, CMD_NOTICE, sptr,
-                    "%C :Unloaded %s but could not load it again: %s",
+                    _(sptr, "%C :Unloaded %s but could not load it again: %s"),
                     sptr, parv[2], err ? err : "unknown error");
       sendto_opmask_butone(0, SNO_OLDSNO,
                            "Module %s is now unloaded: reload failed: %s",
@@ -309,8 +313,8 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   }
 
   sendcmdto_one(&me, CMD_NOTICE, sptr,
-                "%C :MODULE subcommand must be LIST, LOAD, UNLOAD, RELOAD "
-                "or MIGRATION", sptr);
+                _(sptr, "%C :MODULE subcommand must be LIST, LOAD, UNLOAD, RELOAD "
+                "or MIGRATION"), sptr);
   return 0;
 }
 

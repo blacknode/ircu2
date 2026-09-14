@@ -31,6 +31,7 @@
 #include "ircd_alloc.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_string.h"    /* ircd_ntoa */
 #include "res.h"            /* irc_in_addr_is_ipv4 */
@@ -636,7 +637,8 @@ static void ip_registry_connect_succeeded(struct Client *cptr)
     tr = " tr";
   }
   Debug((DEBUG_DNS, "IPcheck noting local connection success for %s.", ircd_ntoa(&entry->addr)));
-  sendcmdto_one(&me, CMD_NOTICE, cptr, "%C :on %u ca %u(%u) ft %u(%u)%s",
+  sendcmdto_one(&me, CMD_NOTICE, cptr,
+                _(cptr, "%C :on %u ca %u(%u) ft %u(%u)%s"),
 		cptr, entry->connected, entry->attempts, IPCHECK_CLONE_LIMIT,
 		free_targets, STARTTARGETS, tr);
 }

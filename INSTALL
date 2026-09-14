@@ -88,6 +88,10 @@ remembered in the build directory, so later builds do not need to repeat them.
                             it under whichever type it is in (default:
                             IRCU_DPATH/modules, so it follows the data
                             directory)
+    IRCU_POPATH             Directory the core translation catalogs
+                            (po/<code>.po) are installed into and read
+                            from; see doc/readme.translations (default:
+                            IRCU_DPATH/po)
     IRCU_CHROOT             Directory the server will be chrooted into; every
                             compiled-in path is rewritten relative to it, and
                             the install prefix defaults to it so the paths
@@ -169,6 +173,7 @@ COMING FROM AUTOTOOLS
   ./configure --with-cpath=ircd.conf      -DIRCU_CPATH=ircd.conf
   ./configure --with-lpath=ircd.log       -DIRCU_LPATH=ircd.log
   (no equivalent)                        -DIRCU_MPATH=dir
+  (no equivalent)                        -DIRCU_POPATH=dir
   ./configure --with-maxcon=16384         -DIRCU_MAXCON=16384
   ./configure --with-tls=openssl          -DIRCU_TLS=openssl
   ./configure --prefix=/some/where        -DCMAKE_INSTALL_PREFIX=/some/where

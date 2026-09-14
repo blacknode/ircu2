@@ -147,3 +147,7 @@ RUN chown ircu:ircu /opt/ircu/bin/ircd
 FROM runtime-base AS runtime-tree
 COPY --from=builder-tree /build/ircu2/build/ircd/ircd /opt/ircu/bin/ircd
 RUN chown ircu:ircu /opt/ircu/bin/ircd
+# The core translation catalogs, where the server reads them (PO_PATH is
+# $DPATH/po); tests/i18n exercises LANGUAGE against them.
+COPY --from=builder-tree /build/ircu2/po/*.po /opt/ircu/lib/po/
+RUN chown -R ircu:ircu /opt/ircu/lib/po

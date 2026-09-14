@@ -85,6 +85,7 @@
 #include "hash.h"
 #include "ircd.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -126,9 +127,11 @@ int ms_settime(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     if (IsServer(sptr)) /* protocol violation if it's from a server */
       protocol_violation(sptr, "SETTIME: Bad value (%Tu, delta %ld)", t, dt);
     else {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :SETTIME: Bad value (%Tu, "
-                    "delta %ld)", sptr, t, dt);
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :SETTIME: Bad value", sptr);
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :SETTIME: Bad value (%Tu, "
+                    "delta %ld)"), sptr, t, dt);
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :SETTIME: Bad value"), sptr);
     }
     return 0;
   }
@@ -170,8 +173,8 @@ int ms_settime(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     /* Let user know we're ignoring him */
     if (IsUser(sptr))
     {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :clock is not set %ld "
-		    "seconds %s : RELIABLE_CLOCK is defined", sptr,
+      sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :clock is not set %ld "
+		    "seconds %s : RELIABLE_CLOCK is defined"), sptr,
 		    (dt < 0) ? -dt : dt, (dt < 0) ? "forwards" : "backwards");
     }
   }
@@ -185,7 +188,8 @@ int ms_settime(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     /* Let the issuing user know what we did... */
     if (IsUser(sptr))
     {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :clock is set %ld seconds %s",
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :clock is set %ld seconds %s"),
                     sptr, (dt < 0) ? -dt : dt,
                     (dt < 0) ? "forwards" : "backwards");
     }
@@ -231,7 +235,8 @@ int mo_settime(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (t < OLDEST_TS || dt < -9000000) /* verify value */
   {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :SETTIME: Bad value", sptr);
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :SETTIME: Bad value"), sptr);
     return 0;
   }
 
@@ -246,8 +251,9 @@ int mo_settime(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       sendcmdto_serv_butone(&me, CMD_DESYNCH, 0, ":Bad SETTIME from %s: %Tu "
                             "(delta %ld)", cli_name(sptr), t, dt);
     if (IsUser(sptr)) /* Let user know we're ignoring him */
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :clock is not set %ld seconds "
-                    "%s: RELIABLE_CLOCK is defined", sptr, (dt < 0) ? -dt : dt,
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :clock is not set %ld seconds "
+                    "%s: RELIABLE_CLOCK is defined"), sptr, (dt < 0) ? -dt : dt,
                     (dt < 0) ? "forwards" : "backwards");
   }
   else /* tell opers about time change */
@@ -257,7 +263,8 @@ int mo_settime(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 			 (dt < 0) ? "forwards" : "backwards");
     TSoffset -= dt; /* apply time change */
     if (IsUser(sptr)) /* let user know what we did */
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :clock is set %ld seconds %s",
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :clock is set %ld seconds %s"),
 		    sptr, (dt < 0) ? -dt : dt,
 		    (dt < 0) ? "forwards" : "backwards");
   }

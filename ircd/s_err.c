@@ -29,26 +29,36 @@
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <string.h>
 
+/** One numeric with a format.
+ *
+ * Written with the code before the format so that xgettext can extract
+ * the pair as msgctxt / msgid (--keyword=N:2c,3): send_reply() looks a
+ * numeric's translation up with its code as the context, so two numerics
+ * that happen to share a text can be translated apart, and a translator
+ * sees which numeric each line is.  See doc/readme.translations.
+ */
+#define N(sym, str, fmt) { sym, fmt, str }
+
 /** Array of Numeric replies, indexed by numeric. */
 static Numeric replyTable[] = {
 /* 000 */
   { 0 },
 /* 001 */
-  { RPL_WELCOME, ":Welcome to the %s IRC Network%s%s, %s", "001" },
+  N(RPL_WELCOME, "001", ":Welcome to the %s IRC Network%s%s, %s"),
 /* 002 */
-  { RPL_YOURHOST, ":Your host is %s, running version %s", "002" },
+  N(RPL_YOURHOST, "002", ":Your host is %s, running version %s"),
 /* 003 */
-  { RPL_CREATED, ":This server was created %s", "003" },
+  N(RPL_CREATED, "003", ":This server was created %s"),
 /* 004 */
-  { RPL_MYINFO, "%s %s %s %s %s", "004" },
+  N(RPL_MYINFO, "004", "%s %s %s %s %s"),
 /* 005 */
-  { RPL_ISUPPORT, "%s :are supported by this server", "005" },
+  N(RPL_ISUPPORT, "005", "%s :are supported by this server"),
 /* 006 */
   { 0 },
 /* 007 */
   { 0 },
 /* 008 */
-  { RPL_SNOMASK, "%u :: Server notice mask (%#x)", "008" },
+  N(RPL_SNOMASK, "008", "%u :: Server notice mask (%#x)"),
 /* 009 */
   { 0 },
 /* 010 */
@@ -62,11 +72,11 @@ static Numeric replyTable[] = {
 /* 014 */
   { 0 },
 /* 015 */
-  { RPL_MAP, ":%s%s%s %s [%u clients]", "015" },
+  N(RPL_MAP, "015", ":%s%s%s %s [%u clients]"),
 /* 016 */
-  { RPL_MAPMORE, ":%s%s --> *more*", "016" },
+  N(RPL_MAPMORE, "016", ":%s%s --> *more*"),
 /* 017 */
-  { RPL_MAPEND, ":End of /%s", "017" },
+  N(RPL_MAPEND, "017", ":End of /%s"),
 /* 018 */
   { 0 },
 /* 019 */
@@ -92,11 +102,11 @@ static Numeric replyTable[] = {
 /* 029 */
   { 0 },
 /* 030 */
-  { RPL_APASSWARN_SET, ":Channel Admin password (+A) set to '%s'.  Are you SURE you want to use this as Admin password? You will NOT be able to change this password anymore once the channel is more than 48 hours old!", "030" },
+  N(RPL_APASSWARN_SET, "030", ":Channel Admin password (+A) set to '%s'.  Are you SURE you want to use this as Admin password? You will NOT be able to change this password anymore once the channel is more than 48 hours old!"),
 /* 031 */
-  { RPL_APASSWARN_SECRET, ":Use \"/MODE %s -A %s\" to remove the password and then immediately set a new one.  IMPORTANT: YOU CANNOT RECOVER THIS PASSWORD, EVER; WRITE THE PASSWORD DOWN (don't store this rescue password on disk)! Now set the channel user password (+U).", "031" },
+  N(RPL_APASSWARN_SECRET, "031", ":Use \"/MODE %s -A %s\" to remove the password and then immediately set a new one.  IMPORTANT: YOU CANNOT RECOVER THIS PASSWORD, EVER; WRITE THE PASSWORD DOWN (don't store this rescue password on disk)! Now set the channel user password (+U)."),
 /* 032 */
-  { RPL_APASSWARN_CLEAR, ":WARNING: You removed the channel Admin password (+A). If you disconnect or leave the channel without setting a new password then you will not be able to set it again!  SET A NEW PASSWORD NOW!", "032" },
+  N(RPL_APASSWARN_CLEAR, "032", ":WARNING: You removed the channel Admin password (+A). If you disconnect or leave the channel without setting a new password then you will not be able to set it again!  SET A NEW PASSWORD NOW!"),
 /* 033 */
   { 0 },
 /* 034 */
@@ -432,51 +442,51 @@ static Numeric replyTable[] = {
 /* 199 */
   { 0 },
 /* 200 */
-  { RPL_TRACELINK, "Link %s.%s %s %s", "200" },
+  N(RPL_TRACELINK, "200", "Link %s.%s %s %s"),
 /* 201 */
-  { RPL_TRACECONNECTING, "Try. %s %s", "201" },
+  N(RPL_TRACECONNECTING, "201", "Try. %s %s"),
 /* 202 */
-  { RPL_TRACEHANDSHAKE, "H.S. %s %s", "202" },
+  N(RPL_TRACEHANDSHAKE, "202", "H.S. %s %s"),
 /* 203 */
-  { RPL_TRACEUNKNOWN, "???? %s %s", "203" },
+  N(RPL_TRACEUNKNOWN, "203", "???? %s %s"),
 /* 204 */
-  { RPL_TRACEOPERATOR, "Oper %s %s %ld", "204" },
+  N(RPL_TRACEOPERATOR, "204", "Oper %s %s %ld"),
 /* 205 */
-  { RPL_TRACEUSER, "User %s %s %ld", "205" },
+  N(RPL_TRACEUSER, "205", "User %s %s %ld"),
 /* 206 */
-  { RPL_TRACESERVER, "Serv %s %dS %dC %s %s!%s@%s %ld %ld", "206" },
+  N(RPL_TRACESERVER, "206", "Serv %s %dS %dC %s %s!%s@%s %ld %ld"),
 /* 207 */
   { 0 },
 /* 208 */
-  { RPL_TRACENEWTYPE, "<newtype> 0 %s", "208" },
+  N(RPL_TRACENEWTYPE, "208", "<newtype> 0 %s"),
 /* 209 */
-  { RPL_TRACECLASS, "Class %s %u", "209" },
+  N(RPL_TRACECLASS, "209", "Class %s %u"),
 /* 210 */
   { 0 },
 /* 211 */
   { RPL_STATSLINKINFO, 0, "211" },
 /* 212 */
-  { RPL_STATSCOMMANDS, "%s %u %u", "212" },
+  N(RPL_STATSCOMMANDS, "212", "%s %u %u"),
 /* 213 */
-  { RPL_STATSCLINE, "C %s * %d %d %s %s", "213" },
+  N(RPL_STATSCLINE, "213", "C %s * %d %d %s %s"),
 /* 214 */
   { 0 },
 /* 215 */
-  { RPL_STATSILINE, "I %s%s%s %d %s%s %d %s", "215" },
+  N(RPL_STATSILINE, "215", "I %s%s%s %d %s%s %d %s"),
 /* 216 */
-  { RPL_STATSKLINE, "%c %s@%s \"%s\" \"%s\" 0 0", "216" },
+  N(RPL_STATSKLINE, "216", "%c %s@%s \"%s\" \"%s\" 0 0"),
 /* 217 */
-  { RPL_STATSPLINE, "P %d %d %s %s", "217" },
+  N(RPL_STATSPLINE, "217", "P %d %d %s %s"),
 /* 218 */
-  { RPL_STATSYLINE, "%c %s %d %d %u %u %u %u %s", "218" },
+  N(RPL_STATSYLINE, "218", "%c %s %d %d %u %u %u %u %s"),
 /* 219 */
-  { RPL_ENDOFSTATS, "%s :End of /STATS report", "219" },
+  N(RPL_ENDOFSTATS, "219", "%s :End of /STATS report"),
 /* 220 */
-  { RPL_STATSWLINE, "W %s %d :%s", "220" },
+  N(RPL_STATSWLINE, "220", "W %s %d :%s"),
 /* 221 */
-  { RPL_UMODEIS, "%s", "221" },
+  N(RPL_UMODEIS, "221", "%s"),
 /* 222 */
-  { RPL_STATSJLINE, "J %s", "222" },
+  N(RPL_STATSJLINE, "222", "J %s"),
 /* 223 */
   { 0 },
 /* 224 */
@@ -484,11 +494,11 @@ static Numeric replyTable[] = {
 /* 225 */
   { 0 },
 /* 226 */
-  { RPL_STATSALINE, "%s", "226" },
+  N(RPL_STATSALINE, "226", "%s"),
 /* 227 */
   { 0 },
 /* 228 */
-  { RPL_STATSQLINE, "Q %s :%s", "228" },
+  N(RPL_STATSQLINE, "228", "Q %s :%s"),
 /* 229 */
   { 0 },
 /* 230 */
@@ -504,59 +514,59 @@ static Numeric replyTable[] = {
 /* 235 */
   { 0 },
 /* 236 */
-  { RPL_STATSVERBOSE, "V :Sent as explicit", "236" },
+  N(RPL_STATSVERBOSE, "236", "V :Sent as explicit"),
 /* 237 */
-  { RPL_STATSENGINE, "%s :Event loop engine", "237" },
+  N(RPL_STATSENGINE, "237", "%s :Event loop engine"),
 /* 238 */
-  { RPL_STATSFLINE, "F %s %s", "238" },
+  N(RPL_STATSFLINE, "238", "F %s %s"),
 /* 239 */
   { 0 },
 /* 240 */
-  { RPL_STATSSLINE, "%Tu %Tu %Lu %s :%s", "240" },
+  N(RPL_STATSSLINE, "240", "%Tu %Tu %Lu %s :%s"),
 /* 241 */
-  { RPL_STATSLLINE, "Module Description EntryPoint", "241" },
+  N(RPL_STATSLLINE, "241", "Module Description EntryPoint"),
 /* 242 */
-  { RPL_STATSUPTIME, ":Server Up %d days, %d:%02d:%02d", "242" },
+  N(RPL_STATSUPTIME, "242", ":Server Up %d days, %d:%02d:%02d"),
 /* 243 */
-  { RPL_STATSOLINE, "%c %s@%s * %s %s", "243" },
+  N(RPL_STATSOLINE, "243", "%c %s@%s * %s %s"),
 /* 244 */
   { 0 },
 /* 245 */
   { 0 },
 /* 246 */
-  { RPL_STATSTLINE, "%c %s %s", "246" },
+  N(RPL_STATSTLINE, "246", "%c %s %s"),
 /* 247 */
-  { RPL_STATSGLINE, "%c %s%s%s %Tu %Tu %Tu %s%c :%s", "247" },
+  N(RPL_STATSGLINE, "247", "%c %s%s%s %Tu %Tu %Tu %s%c :%s"),
 /* 248 */
-  { RPL_STATSULINE, "U %s%s", "248" },
+  N(RPL_STATSULINE, "248", "U %s%s"),
 /* 249 */
   { RPL_STATSDEBUG, 0, "249" },
 /* 250 */
-  { RPL_STATSCONN, ":Highest connection count: %u (%u clients)", "250" },
+  N(RPL_STATSCONN, "250", ":Highest connection count: %u (%u clients)"),
 /* 251 */
-  { RPL_LUSERCLIENT, ":There are %u users and %u invisible on %u servers", "251" },
+  N(RPL_LUSERCLIENT, "251", ":There are %u users and %u invisible on %u servers"),
 /* 252 */
-  { RPL_LUSEROP, "%u :operator(s) online", "252" },
+  N(RPL_LUSEROP, "252", "%u :operator(s) online"),
 /* 253 */
-  { RPL_LUSERUNKNOWN, "%u :unknown connection(s)", "253" },
+  N(RPL_LUSERUNKNOWN, "253", "%u :unknown connection(s)"),
 /* 254 */
-  { RPL_LUSERCHANNELS, "%u :channels formed", "254" },
+  N(RPL_LUSERCHANNELS, "254", "%u :channels formed"),
 /* 255 */
-  { RPL_LUSERME, ":I have %u clients and %u servers", "255" },
+  N(RPL_LUSERME, "255", ":I have %u clients and %u servers"),
 /* 256 */
-  { RPL_ADMINME, ":Administrative info about %s", "256" },
+  N(RPL_ADMINME, "256", ":Administrative info about %s"),
 /* 257 */
-  { RPL_ADMINLOC1, ":%s", "257" },
+  N(RPL_ADMINLOC1, "257", ":%s"),
 /* 258 */
-  { RPL_ADMINLOC2, ":%s", "258" },
+  N(RPL_ADMINLOC2, "258", ":%s"),
 /* 259 */
-  { RPL_ADMINEMAIL, ":%s", "259" },
+  N(RPL_ADMINEMAIL, "259", ":%s"),
 /* 260 */
   { 0 },
 /* 261 */
   { 0 },
 /* 262 */
-  { RPL_TRACEEND, ":End of TRACE", "262" },
+  N(RPL_TRACEEND, "262", ":End of TRACE"),
 /* 263 */
   { 0 },
 /* 264 */
@@ -572,19 +582,19 @@ static Numeric replyTable[] = {
 /* 269 */
   { 0 },
 /* 270 */
-  { RPL_PRIVS, "%s :", "270" },
+  N(RPL_PRIVS, "270", "%s :"),
 /* 271 */
-  { RPL_SILELIST, "%s %s%s", "271" },
+  N(RPL_SILELIST, "271", "%s %s%s"),
 /* 272 */
-  { RPL_ENDOFSILELIST, "%s :End of Silence List", "272" },
+  N(RPL_ENDOFSILELIST, "272", "%s :End of Silence List"),
 /* 273 */
   { 0 },
 /* 274 */
   { 0 },
 /* 275 */
-  { RPL_STATSDLINE, "%c %s %s", "275" },
+  N(RPL_STATSDLINE, "275", "%c %s %s"),
 /* 276 */
-  { RPL_STATSRLINE, "%-9s %-9s %-10s %s", "276" },
+  N(RPL_STATSRLINE, "276", "%-9s %-9s %-10s %s"),
 /* 277 */
   { 0 },
 /* 278 */
@@ -592,13 +602,13 @@ static Numeric replyTable[] = {
 /* 279 */
   { 0 },
 /* 280 */
-  { RPL_GLIST, "%s%s%s %Tu %Tu %Tu %s %s%c :%s", "280" },
+  N(RPL_GLIST, "280", "%s%s%s %Tu %Tu %Tu %s %s%c :%s"),
 /* 281 */
-  { RPL_ENDOFGLIST, ":End of G-line List", "281" },
+  N(RPL_ENDOFGLIST, "281", ":End of G-line List"),
 /* 282 */
-  { RPL_JUPELIST, "%s %Tu %s %c :%s", "282" },
+  N(RPL_JUPELIST, "282", "%s %Tu %s %c :%s"),
 /* 283 */
-  { RPL_ENDOFJUPELIST, ":End of Jupe List", "283" },
+  N(RPL_ENDOFJUPELIST, "283", ":End of Jupe List"),
 /* 284 */
   { RPL_FEATURE, 0, "284" },
 /* 285 */
@@ -634,19 +644,19 @@ static Numeric replyTable[] = {
 /* 300 */
   { 0 },
 /* 301 */
-  { RPL_AWAY, "%s :%s", "301" },
+  N(RPL_AWAY, "301", "%s :%s"),
 /* 302 */
-  { RPL_USERHOST, ":", "302" },
+  N(RPL_USERHOST, "302", ":"),
 /* 303 */
-  { RPL_ISON, ":", "303" },
+  N(RPL_ISON, "303", ":"),
 /* 304 */
   { 0 },
 /* 305 */
-  { RPL_UNAWAY, ":You are no longer marked as being away", "305" },
+  N(RPL_UNAWAY, "305", ":You are no longer marked as being away"),
 /* 306 */
-  { RPL_NOWAWAY, ":You have been marked as being away", "306" },
+  N(RPL_NOWAWAY, "306", ":You have been marked as being away"),
 /* 307 */
-  { RPL_WHOISREGNICK, "%s :is a registered user", "307" },
+  N(RPL_WHOISREGNICK, "307", "%s :is a registered user"),
 /* 308 */
   { 0 },
 /* 309 */
@@ -654,33 +664,33 @@ static Numeric replyTable[] = {
 /* 310 */
   { 0 },
 /* 311 */
-  { RPL_WHOISUSER, "%s %s %s * :%s", "311" },
+  N(RPL_WHOISUSER, "311", "%s %s %s * :%s"),
 /* 312 */
-  { RPL_WHOISSERVER, "%s %s :%s", "312" },
+  N(RPL_WHOISSERVER, "312", "%s %s :%s"),
 /* 313 */
-  { RPL_WHOISOPERATOR, "%s :is an IRC Operator", "313" },
+  N(RPL_WHOISOPERATOR, "313", "%s :is an IRC Operator"),
 /* 314 */
-  { RPL_WHOWASUSER, "%s %s %s * :%s", "314" },
+  N(RPL_WHOWASUSER, "314", "%s %s %s * :%s"),
 /* 315 */
-  { RPL_ENDOFWHO, "%s :End of /WHO list.", "315" },
+  N(RPL_ENDOFWHO, "315", "%s :End of /WHO list."),
 /* 316 */
   { 0 },
 /* 317 */
-  { RPL_WHOISIDLE, "%s %ld %ld :seconds idle, signon time", "317" },
+  N(RPL_WHOISIDLE, "317", "%s %ld %ld :seconds idle, signon time"),
 /* 318 */
-  { RPL_ENDOFWHOIS, "%s :End of /WHOIS list.", "318" },
+  N(RPL_ENDOFWHOIS, "318", "%s :End of /WHOIS list."),
 /* 319 */
-  { RPL_WHOISCHANNELS, "%s :%s", "319" },
+  N(RPL_WHOISCHANNELS, "319", "%s :%s"),
 /* 320 */
-  { RPL_WHOISWEBIRC, "%s :is connected via %s", "320" },
+  N(RPL_WHOISWEBIRC, "320", "%s :is connected via %s"),
 /* 321 */
-  { RPL_LISTSTART, "Channel :Users  Name", "321" },
+  N(RPL_LISTSTART, "321", "Channel :Users  Name"),
 /* 322 */
-  { RPL_LIST, "%s %u :%s", "322" },
+  N(RPL_LIST, "322", "%s %u :%s"),
 /* 323 */
-  { RPL_LISTEND, ":End of /LIST", "323" },
+  N(RPL_LISTEND, "323", ":End of /LIST"),
 /* 324 */
-  { RPL_CHANNELMODEIS, "%s %s %s", "324" },
+  N(RPL_CHANNELMODEIS, "324", "%s %s %s"),
 /* 325 */
   { 0 },
 /* 326 */
@@ -690,31 +700,31 @@ static Numeric replyTable[] = {
 /* 328 */
   { 0 },
 /* 329 */
-  { RPL_CREATIONTIME, "%s %Tu", "329" },
+  N(RPL_CREATIONTIME, "329", "%s %Tu"),
 /* 330 */
   { 0 },
 /* 331 */
-  { RPL_NOTOPIC, "%s :No topic is set.", "331" },
+  N(RPL_NOTOPIC, "331", "%s :No topic is set."),
 /* 332 */
-  { RPL_TOPIC, "%s :%s", "332" },
+  N(RPL_TOPIC, "332", "%s :%s"),
 /* 333 */
-  { RPL_TOPICWHOTIME, "%s %s %Tu", "333" },
+  N(RPL_TOPICWHOTIME, "333", "%s %s %Tu"),
 /* 334 */
-  { RPL_LISTUSAGE, ":%s", "334" },
+  N(RPL_LISTUSAGE, "334", ":%s"),
 /* 335 */
-  { RPL_WHOISBOT, "%s :%s", "335" },
+  N(RPL_WHOISBOT, "335", "%s :%s"),
 /* 336 */
   { 0 },
 /* 337 */
   { 0 },
 /* 338 */
-  { RPL_WHOISACTUALLY, "%s %s@%s %s :Actual user@host, Actual IP", "338" },
+  N(RPL_WHOISACTUALLY, "338", "%s %s@%s %s :Actual user@host, Actual IP"),
 /* 339 */
   { 0 },
 /* 340 */
-  { RPL_USERIP, ":", "340" },
+  N(RPL_USERIP, "340", ":"),
 /* 341 */
-  { RPL_INVITING, "%s %s", "341" },
+  N(RPL_INVITING, "341", "%s %s"),
 /* 342 */
   { 0 },
 /* 343 */
@@ -722,11 +732,11 @@ static Numeric replyTable[] = {
 /* 344 */
   { 0 },
 /* 345 */
-  { RPL_ISSUEDINVITE, "%s %s %s :%s has been invited by %s", "345" },
+  N(RPL_ISSUEDINVITE, "345", "%s %s %s :%s has been invited by %s"),
 /* 346 */
-  { RPL_INVITELIST, ":%s", "346" },
+  N(RPL_INVITELIST, "346", ":%s"),
 /* 347 */
-  { RPL_ENDOFINVITELIST, ":End of Invite List", "347" },
+  N(RPL_ENDOFINVITELIST, "347", ":End of Invite List"),
 /* 348 */
   { 0 },
 /* 349 */
@@ -734,15 +744,15 @@ static Numeric replyTable[] = {
 /* 350 */
   { 0 },
 /* 351 */
-  { RPL_VERSION, "%s.%s %s :%s", "351" },
+  N(RPL_VERSION, "351", "%s.%s %s :%s"),
 /* 352 */
-  { RPL_WHOREPLY, "%s", "352" },
+  N(RPL_WHOREPLY, "352", "%s"),
 /* 353 */
-  { RPL_NAMREPLY, "%s", "353" },
+  N(RPL_NAMREPLY, "353", "%s"),
 /* 354 */
-  { RPL_WHOSPCRPL, "%s", "354" },
+  N(RPL_WHOSPCRPL, "354", "%s"),
 /* 355 */
-  { RPL_DELNAMREPLY, "%s", "355" },
+  N(RPL_DELNAMREPLY, "355", "%s"),
 /* 356 */
   { 0 },
 /* 357 */
@@ -756,47 +766,47 @@ static Numeric replyTable[] = {
 /* 361 */
   { 0 },
 /* 362 */
-  { RPL_CLOSING, "%s :Operator enforced Close", "362" },
+  N(RPL_CLOSING, "362", "%s :Operator enforced Close"),
 /* 363 */
-  { RPL_CLOSEEND, "%d :Connections Closed", "363" },
+  N(RPL_CLOSEEND, "363", "%d :Connections Closed"),
 /* 364 */
-  { RPL_LINKS, "%s %s :%u P%u %s", "364" },
+  N(RPL_LINKS, "364", "%s %s :%u P%u %s"),
 /* 365 */
-  { RPL_ENDOFLINKS, "%s :End of /LINKS list.", "365" },
+  N(RPL_ENDOFLINKS, "365", "%s :End of /LINKS list."),
 /* 366 */
-  { RPL_ENDOFNAMES, "%s :End of /NAMES list.", "366" },
+  N(RPL_ENDOFNAMES, "366", "%s :End of /NAMES list."),
 /* 367 */
-  { RPL_BANLIST, "%s %s %s %Tu", "367" },
+  N(RPL_BANLIST, "367", "%s %s %s %Tu"),
 /* 368 */
-  { RPL_ENDOFBANLIST, "%s :End of Channel Ban List", "368" },
+  N(RPL_ENDOFBANLIST, "368", "%s :End of Channel Ban List"),
 /* 369 */
-  { RPL_ENDOFWHOWAS, "%s :End of WHOWAS", "369" },
+  N(RPL_ENDOFWHOWAS, "369", "%s :End of WHOWAS"),
 /* 370 */
   { 0 },
 /* 371 */
-  { RPL_INFO, ":%s", "371" },
+  N(RPL_INFO, "371", ":%s"),
 /* 372 */
-  { RPL_MOTD, ":- %s", "372" },
+  N(RPL_MOTD, "372", ":- %s"),
 /* 373 */
   { 0 },
 /* 374 */
-  { RPL_ENDOFINFO, ":End of /INFO list.", "374" },
+  N(RPL_ENDOFINFO, "374", ":End of /INFO list."),
 /* 375 */
-  { RPL_MOTDSTART, ":- %s Message of the Day - ", "375" },
+  N(RPL_MOTDSTART, "375", ":- %s Message of the Day - "),
 /* 376 */
-  { RPL_ENDOFMOTD, ":End of /MOTD command.", "376" },
+  N(RPL_ENDOFMOTD, "376", ":End of /MOTD command."),
 /* 377 */
   { 0 },
 /* 378 */
   { 0 },
 /* 379 */
-  { RPL_WHOISMODES, "%s :using modes [%s]", "379" },
+  N(RPL_WHOISMODES, "379", "%s :using modes [%s]"),
 /* 380 */
   { 0 },
 /* 381 */
-  { RPL_YOUREOPER, ":You are now an IRC Operator", "381" },
+  N(RPL_YOUREOPER, "381", ":You are now an IRC Operator"),
 /* 382 */
-  { RPL_REHASHING, "%s :Rehashing", "382" },
+  N(RPL_REHASHING, "382", "%s :Rehashing"),
 /* 383 */
   { 0 },
 /* 384 */
@@ -814,7 +824,7 @@ static Numeric replyTable[] = {
 /* 390 */
   { 0 },
 /* 391 */
-  { RPL_TIME, "%s %Tu %ld :%s", "391" },
+  N(RPL_TIME, "391", "%s %Tu %ld :%s"),
 /* 392 */
   { 0 },
 /* 393 */
@@ -824,7 +834,7 @@ static Numeric replyTable[] = {
 /* 395 */
   { 0 },
 /* 396 */
-  { RPL_HOSTHIDDEN, "%s :is now your hidden host", "396" },
+  N(RPL_HOSTHIDDEN, "396", "%s :is now your hidden host"),
 /* 397 */
   { 0 },
 /* 398 */
@@ -834,39 +844,39 @@ static Numeric replyTable[] = {
 /* 400 */
   { 0 },
 /* 401 */
-  { ERR_NOSUCHNICK, "%s :No such nick", "401" },
+  N(ERR_NOSUCHNICK, "401", "%s :No such nick"),
 /* 402 */
-  { ERR_NOSUCHSERVER, "%s :No such server", "402" },
+  N(ERR_NOSUCHSERVER, "402", "%s :No such server"),
 /* 403 */
-  { ERR_NOSUCHCHANNEL, "%s :No such channel", "403" },
+  N(ERR_NOSUCHCHANNEL, "403", "%s :No such channel"),
 /* 404 */
-  { ERR_CANNOTSENDTOCHAN, "%s :Cannot send to channel", "404" },
+  N(ERR_CANNOTSENDTOCHAN, "404", "%s :Cannot send to channel"),
 /* 405 */
-  { ERR_TOOMANYCHANNELS, "%s :You have joined too many channels", "405" },
+  N(ERR_TOOMANYCHANNELS, "405", "%s :You have joined too many channels"),
 /* 406 */
-  { ERR_WASNOSUCHNICK, "%s :There was no such nickname", "406" },
+  N(ERR_WASNOSUCHNICK, "406", "%s :There was no such nickname"),
 /* 407 */
-  { ERR_TOOMANYTARGETS, "%s :Duplicate recipients. No message delivered", "407" },
+  N(ERR_TOOMANYTARGETS, "407", "%s :Duplicate recipients. No message delivered"),
 /* 408 */
   { 0 },
 /* 409 */
-  { ERR_NOORIGIN, ":No origin specified", "409" },
+  N(ERR_NOORIGIN, "409", ":No origin specified"),
 /* 410 */
-  { ERR_UNKNOWNCAPCMD, "%s :Unknown CAP subcommand", "410" },
+  N(ERR_UNKNOWNCAPCMD, "410", "%s :Unknown CAP subcommand"),
 /* 411 */
-  { ERR_NORECIPIENT, ":No recipient given (%s)", "411" },
+  N(ERR_NORECIPIENT, "411", ":No recipient given (%s)"),
 /* 412 */
-  { ERR_NOTEXTTOSEND, ":No text to send", "412" },
+  N(ERR_NOTEXTTOSEND, "412", ":No text to send"),
 /* 413 */
-  { ERR_NOTOPLEVEL, "%s :No toplevel domain specified", "413" },
+  N(ERR_NOTOPLEVEL, "413", "%s :No toplevel domain specified"),
 /* 414 */
-  { ERR_WILDTOPLEVEL, "%s :Wildcard in toplevel Domain", "414" },
+  N(ERR_WILDTOPLEVEL, "414", "%s :Wildcard in toplevel Domain"),
 /* 415 */
   { 0 },
 /* 416 */
-  { ERR_QUERYTOOLONG, "%s :Too many lines in the output, restrict your query", "416" },
+  N(ERR_QUERYTOOLONG, "416", "%s :Too many lines in the output, restrict your query"),
 /* 417 */
-  { ERR_INPUTTOOLONG, ":Input line was too long", "417" },
+  N(ERR_INPUTTOOLONG, "417", ":Input line was too long"),
 /* 418 */
   { 0 },
 /* 419 */
@@ -874,11 +884,11 @@ static Numeric replyTable[] = {
 /* 420 */
   { 0 },
 /* 421 */
-  { ERR_UNKNOWNCOMMAND, "%s :Unknown command", "421" },
+  N(ERR_UNKNOWNCOMMAND, "421", "%s :Unknown command"),
 /* 422 */
-  { ERR_NOMOTD, ":MOTD File is missing", "422" },
+  N(ERR_NOMOTD, "422", ":MOTD File is missing"),
 /* 423 */
-  { ERR_NOADMININFO, "%s :No administrative info available", "423" },
+  N(ERR_NOADMININFO, "423", "%s :No administrative info available"),
 /* 424 */
   { 0 },
 /* 425 */
@@ -894,31 +904,31 @@ static Numeric replyTable[] = {
 /* 430 */
   { 0 },
 /* 431 */
-  { ERR_NONICKNAMEGIVEN, ":No nickname given", "431" },
+  N(ERR_NONICKNAMEGIVEN, "431", ":No nickname given"),
 /* 432 */
-  { ERR_ERRONEUSNICKNAME, "%s :Erroneous Nickname", "432" },
+  N(ERR_ERRONEUSNICKNAME, "432", "%s :Erroneous Nickname"),
 /* 433 */
-  { ERR_NICKNAMEINUSE, "%s :Nickname is already in use.", "433" },
+  N(ERR_NICKNAMEINUSE, "433", "%s :Nickname is already in use."),
 /* 434 */
   { 0 },
 /* 435 */
   { 0 },
 /* 436 */
-  { ERR_NICKCOLLISION, "%s :Nickname collision KILL", "436" },
+  N(ERR_NICKCOLLISION, "436", "%s :Nickname collision KILL"),
 /* 437 */
-  { ERR_BANNICKCHANGE, "%s :Cannot change nickname while banned on channel or channel is moderated", "437" },
+  N(ERR_BANNICKCHANGE, "437", "%s :Cannot change nickname while banned on channel or channel is moderated"),
 /* 438 */
-  { ERR_NICKTOOFAST, "%s :Nick change too fast. Please wait %d seconds.", "438" },
+  N(ERR_NICKTOOFAST, "438", "%s :Nick change too fast. Please wait %d seconds."),
 /* 439 */
-  { ERR_TARGETTOOFAST, "%s :Target change too fast. Please wait %d seconds.", "439" },
+  N(ERR_TARGETTOOFAST, "439", "%s :Target change too fast. Please wait %d seconds."),
 /* 440 */
-  { ERR_SERVICESDOWN, "%s :Services are currently unavailable.", "440" },
+  N(ERR_SERVICESDOWN, "440", "%s :Services are currently unavailable."),
 /* 441 */
-  { ERR_USERNOTINCHANNEL, "%s %s :They aren't on that channel", "441" },
+  N(ERR_USERNOTINCHANNEL, "441", "%s %s :They aren't on that channel"),
 /* 442 */
-  { ERR_NOTONCHANNEL, "%s :You're not on that channel", "442" },
+  N(ERR_NOTONCHANNEL, "442", "%s :You're not on that channel"),
 /* 443 */
-  { ERR_USERONCHANNEL, "%s %s :is already on channel", "443" },
+  N(ERR_USERONCHANNEL, "443", "%s %s :is already on channel"),
 /* 444 */
   { 0 },
 /* 445 */
@@ -934,7 +944,7 @@ static Numeric replyTable[] = {
 /* 450 */
   { 0 },
 /* 451 */
-  { ERR_NOTREGISTERED, ":You have not registered", "451" },
+  N(ERR_NOTREGISTERED, "451", ":You have not registered"),
 /* 452 */
   { 0 },
 /* 453 */
@@ -954,53 +964,53 @@ static Numeric replyTable[] = {
 /* 460 */
   { 0 },
 /* 461 */
-  { ERR_NEEDMOREPARAMS, "%s :Not enough parameters", "461" },
+  N(ERR_NEEDMOREPARAMS, "461", "%s :Not enough parameters"),
 /* 462 */
-  { ERR_ALREADYREGISTRED, ":You may not reregister", "462" },
+  N(ERR_ALREADYREGISTRED, "462", ":You may not reregister"),
 /* 463 */
-  { ERR_NOPERMFORHOST, ":Your host isn't among the privileged", "463" },
+  N(ERR_NOPERMFORHOST, "463", ":Your host isn't among the privileged"),
 /* 464 */
-  { ERR_PASSWDMISMATCH, ":Password Incorrect", "464" },
+  N(ERR_PASSWDMISMATCH, "464", ":Password Incorrect"),
 /* 465 */
-  { ERR_YOUREBANNEDCREEP, ":You are banned from this server", "465" },
+  N(ERR_YOUREBANNEDCREEP, "465", ":You are banned from this server"),
 /* 466 */
-  { ERR_YOUWILLBEBANNED, "", "466" },
+  N(ERR_YOUWILLBEBANNED, "466", ""),
 /* 467 */
-  { ERR_KEYSET, "%s :Channel key already set", "467" },
+  N(ERR_KEYSET, "467", "%s :Channel key already set"),
 /* 468 */
   { ERR_INVALIDUSERNAME, 0, "468" },
 /* 469 */
-  { ERR_TLSONLYCHAN, "%s :Cannot join channel (+Z)", "469" },
+  N(ERR_TLSONLYCHAN, "469", "%s :Cannot join channel (+Z)"),
 /* 470 */
   { 0 },
 /* 471 */
-  { ERR_CHANNELISFULL, "%s :Cannot join channel (+l)", "471" },
+  N(ERR_CHANNELISFULL, "471", "%s :Cannot join channel (+l)"),
 /* 472 */
-  { ERR_UNKNOWNMODE, "%c :is unknown mode char to me", "472" },
+  N(ERR_UNKNOWNMODE, "472", "%c :is unknown mode char to me"),
 /* 473 */
-  { ERR_INVITEONLYCHAN, "%s :Cannot join channel (+i)", "473" },
+  N(ERR_INVITEONLYCHAN, "473", "%s :Cannot join channel (+i)"),
 /* 474 */
-  { ERR_BANNEDFROMCHAN, "%s :Cannot join channel (+b)", "474" },
+  N(ERR_BANNEDFROMCHAN, "474", "%s :Cannot join channel (+b)"),
 /* 475 */
-  { ERR_BADCHANNELKEY, "%s :Cannot join channel (+k)", "475" },
+  N(ERR_BADCHANNELKEY, "475", "%s :Cannot join channel (+k)"),
 /* 476 */
-  { ERR_BADCHANMASK, "%s :Bad Channel Mask", "476" },
+  N(ERR_BADCHANMASK, "476", "%s :Bad Channel Mask"),
 /* 477 */
-  { ERR_NEEDREGGEDNICK, "%s :Cannot join channel (+r): this channel requires authentication -- you can obtain an account from %s", "477" },
+  N(ERR_NEEDREGGEDNICK, "477", "%s :Cannot join channel (+r): this channel requires authentication -- you can obtain an account from %s"),
 /* 478 */
-  { ERR_BANLISTFULL, "%s %s :Channel ban/ignore list is full", "478" },
+  N(ERR_BANLISTFULL, "478", "%s %s :Channel ban/ignore list is full"),
 /* 479 */
-  { ERR_BADCHANNAME, "%s :Cannot join channel (access denied on this server)", "479" },
+  N(ERR_BADCHANNAME, "479", "%s :Cannot join channel (access denied on this server)"),
 /* 480 */
   { 0 },
 /* 481 */
-  { ERR_NOPRIVILEGES, ":Permission Denied: Insufficient privileges", "481" },
+  N(ERR_NOPRIVILEGES, "481", ":Permission Denied: Insufficient privileges"),
 /* 482 */
-  { ERR_CHANOPRIVSNEEDED, "%s :You're not channel operator", "482" },
+  N(ERR_CHANOPRIVSNEEDED, "482", "%s :You're not channel operator"),
 /* 483 */
-  { ERR_CANTKILLSERVER, ":You cant kill a server!", "483" },
+  N(ERR_CANTKILLSERVER, "483", ":You cant kill a server!"),
 /* 484 */
-  { ERR_ISCHANSERVICE, "%s %s :Cannot kill, kick or deop a network service", "484" },
+  N(ERR_ISCHANSERVICE, "484", "%s %s :Cannot kill, kick or deop a network service"),
 /* 485 */
   { 0 },
 /* 486 */
@@ -1010,33 +1020,33 @@ static Numeric replyTable[] = {
 /* 488 */
   { 0 },
 /* 489 */
-  { ERR_VOICENEEDED, "%s :You're neither voiced nor channel operator", "489" },
+  N(ERR_VOICENEEDED, "489", "%s :You're neither voiced nor channel operator"),
 /* 490 */
   { 0 },
 /* 491 */
-  { ERR_NOOPERHOST, ":No Operator block for your host", "491" },
+  N(ERR_NOOPERHOST, "491", ":No Operator block for your host"),
 /* 492 */
   { 0 },
 /* 493 */
-  { ERR_NOFEATURE, "%s :No such feature", "493" },
+  N(ERR_NOFEATURE, "493", "%s :No such feature"),
 /* 494 */
-  { ERR_BADFEATVALUE, "%s :Bad value for feature %s", "494" },
+  N(ERR_BADFEATVALUE, "494", "%s :Bad value for feature %s"),
 /* 495 */
-  { ERR_BADLOGTYPE, "%s :No such log type", "495" },
+  N(ERR_BADLOGTYPE, "495", "%s :No such log type"),
 /* 496 */
-  { ERR_BADLOGSYS, "%s :No such log subsystem", "496" },
+  N(ERR_BADLOGSYS, "496", "%s :No such log subsystem"),
 /* 497 */
-  { ERR_BADLOGVALUE, "%s :Bad value for log type", "497" },
+  N(ERR_BADLOGVALUE, "497", "%s :Bad value for log type"),
 /* 498 */
-  { ERR_ISOPERLCHAN, "%s %s :Cannot kick or deop an IRC Operator on a local channel", "498" },
+  N(ERR_ISOPERLCHAN, "498", "%s %s :Cannot kick or deop an IRC Operator on a local channel"),
 /* 499 */
   { 0 },
 /* 500 */
   { 0 },
 /* 501 */
-  { ERR_UMODEUNKNOWNFLAG, "%c :Unknown user MODE flag", "501" },
+  N(ERR_UMODEUNKNOWNFLAG, "501", "%c :Unknown user MODE flag"),
 /* 502 */
-  { ERR_USERSDONTMATCH, ":Cant change mode for other users", "502" },
+  N(ERR_USERSDONTMATCH, "502", ":Cant change mode for other users"),
 /* 503 */
   { 0 },
 /* 504 */
@@ -1054,25 +1064,25 @@ static Numeric replyTable[] = {
 /* 510 */
   { 0 },
 /* 511 */
-  { ERR_SILELISTFULL, "%s :Your silence list is full", "511" },
+  N(ERR_SILELISTFULL, "511", "%s :Your silence list is full"),
 /* 512 */
-  { ERR_NOSUCHGLINE, "%s :No such gline", "512" },
+  N(ERR_NOSUCHGLINE, "512", "%s :No such gline"),
 /* 513 */
   { ERR_BADPING, 0, "513" },
 /* 514 */
-  { ERR_NOSUCHJUPE, "%s :No such jupe", "514" },
+  N(ERR_NOSUCHJUPE, "514", "%s :No such jupe"),
 /* 515 */
-  { ERR_BADEXPIRE, "%Tu :Bad expire time", "515" },
+  N(ERR_BADEXPIRE, "515", "%Tu :Bad expire time"),
 /* 516 */
-  { ERR_DONTCHEAT, "%s :Don't Cheat.", "516" },
+  N(ERR_DONTCHEAT, "516", "%s :Don't Cheat."),
 /* 517 */
-  { ERR_DISABLED, "%s :Command disabled.", "517" },
+  N(ERR_DISABLED, "517", "%s :Command disabled."),
 /* 518 */
-  { ERR_LONGMASK, ":Mask is too long", "518" },
+  N(ERR_LONGMASK, "518", ":Mask is too long"),
 /* 519 */
-  { ERR_TOOMANYUSERS, "%d :Too many users affected by mask", "519" },
+  N(ERR_TOOMANYUSERS, "519", "%d :Too many users affected by mask"),
 /* 520 */
-  { ERR_MASKTOOWIDE, "%s :Mask is too wide", "520" },
+  N(ERR_MASKTOOWIDE, "520", "%s :Mask is too wide"),
 /* 521 */
   { 0 },
 /* 522 */
@@ -1080,9 +1090,9 @@ static Numeric replyTable[] = {
 /* 523 */
   { 0 },
 /* 524 */
-  { ERR_QUARANTINED, "%s :Channel is quarantined : %s", "524" },
+  N(ERR_QUARANTINED, "524", "%s :Channel is quarantined : %s"),
 /* 525 */
-  { ERR_INVALIDKEY, "%s :Key is not well-formed", "525" },
+  N(ERR_INVALIDKEY, "525", "%s :Key is not well-formed"),
 /* 526 */
   { 0 },
 /* 527 */
@@ -1096,7 +1106,7 @@ static Numeric replyTable[] = {
 /* 531 */
   { 0 },
 /* 532 */
-  { ERR_TLSCLIFINGERPRINT, ":TLS certificate fingerprint did not match", "532" },
+  N(ERR_TLSCLIFINGERPRINT, "532", ":TLS certificate fingerprint did not match"),
 /* 533 */
   { 0 },
 /* 534 */
@@ -1152,21 +1162,21 @@ static Numeric replyTable[] = {
 /* 559 */
   { 0 },
 /* 560 */
-  { ERR_NOTLOWEROPLEVEL, "%s %s %hu %hu :Cannot %s someone with %s op-level", "560" },
+  N(ERR_NOTLOWEROPLEVEL, "560", "%s %s %hu %hu :Cannot %s someone with %s op-level"),
 /* 561 */
-  { ERR_NOTMANAGER, "%s :You must be channel Admin to add or remove a password. Use /JOIN %s <AdminPass>.", "561" },
+  N(ERR_NOTMANAGER, "561", "%s :You must be channel Admin to add or remove a password. Use /JOIN %s <AdminPass>."),
 /* 562 */
-  { ERR_CHANSECURED, "%s :Channel is older than 48 hours and secured. Cannot change Admin pass anymore", "562" },
+  N(ERR_CHANSECURED, "562", "%s :Channel is older than 48 hours and secured. Cannot change Admin pass anymore"),
 /* 563 */
-  { ERR_UPASSSET, "%s :Cannot remove Admin pass (+A) while User pass (+U) is still set. First use /MODE %s -U <userpass>", "563" },
+  N(ERR_UPASSSET, "563", "%s :Cannot remove Admin pass (+A) while User pass (+U) is still set. First use /MODE %s -U <userpass>"),
 /* 564 */
-  { ERR_UPASSNOTSET, "%s :Cannot set user pass (+U) until Admin pass (+A) is set. First use /MODE %s +A <adminpass>", "564" },
+  N(ERR_UPASSNOTSET, "564", "%s :Cannot set user pass (+U) until Admin pass (+A) is set. First use /MODE %s +A <adminpass>"),
 /* 565 */
   { 0 },
 /* 566 */
-  { ERR_NOMANAGER, "%s :Re-create the channel. The channel must be completely empty for a period of %s before it can be recreated.", "566" },
+  N(ERR_NOMANAGER, "566", "%s :Re-create the channel. The channel must be completely empty for a period of %s before it can be recreated."),
 /* 567 */
-  { ERR_UPASS_SAME_APASS, "%s :Cannot use the same pass for both admin (+A) and user (+U) pass.", "567" },
+  N(ERR_UPASS_SAME_APASS, "567", "%s :Cannot use the same pass for both admin (+A) and user (+U) pass."),
 /* 568 */
   { 0 },
 /* 569 */
@@ -1374,7 +1384,7 @@ static Numeric replyTable[] = {
 /* 670 */
   { 0 },
 /* 671 */
-  { RPL_WHOISSECURE, "%s :is using a secure connection%s", "671" },
+  N(RPL_WHOISSECURE, "671", "%s :is using a secure connection%s"),
 /* 672 */
   { 0 },
 /* 673 */
@@ -1406,13 +1416,13 @@ static Numeric replyTable[] = {
 /* 686 */
   { 0 },
 /* 687 */
-  { 0 },
+  N(RPL_YOURLANGUAGESARE, "687", "%s :Language preferences have been set."),
 /* 688 */
   { 0 },
 /* 689 */
   { 0 },
 /* 690 */
-  { 0 },
+  N(RPL_WHOISLANGUAGE, "690", "%s %s :can speak these languages."),
 /* 691 */
   { 0 },
 /* 692 */
@@ -1994,9 +2004,9 @@ static Numeric replyTable[] = {
 /* 980 */
   { 0 },
 /* 981 */
-  { 0 },
+  N(ERR_TOOMANYLANGUAGES, "981", "%u :You specified too many languages."),
 /* 982 */
-  { 0 },
+  N(ERR_NOLANGUAGE, "982", "%s :Languages are not supported by this server."),
 /* 983 */
   { 0 },
 /* 984 */

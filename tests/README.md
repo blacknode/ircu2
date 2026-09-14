@@ -95,6 +95,9 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
   accounting/
     test_accounting.py       # umode +r (server / +S bot / burst), the hidden host
                              # every user carries, who may change whose modes
+  i18n/
+    test_language.py         # LANGUAGE, draft/languages, translated numerics from
+                             # po/es.po (the image installs it), the LG token
   trust_username/            # visible vs. real identity: WHOIS, bans, SILENCE, G-lines
 vhost.py               # Python port of the hidden-host cipher (ircd/ircd_vhost.c)
 ```

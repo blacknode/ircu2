@@ -126,10 +126,12 @@ set(IRCU_SOURCES
   ircd_env.c
   ircd_events.c
   ircd_features.c
+  ircd_i18n.c
   ircd_lexer.c
   ircd_log.c
   ircd_md5.c
   ircd_netconf.c
+  ircd_po.c
   ircd_relay.c
   ircd_reply.c
   ircd_res.c
@@ -169,6 +171,7 @@ set(IRCU_SOURCES
   m_jupe.c
   m_kick.c
   m_kill.c
+  m_language.c
   m_links.c
   m_list.c
   m_lusers.c

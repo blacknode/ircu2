@@ -472,6 +472,8 @@ extern const struct Numeric* get_error_numeric(int err);
 #define ERR_NOMANAGER        566	/* Undernet extension */
 #define ERR_UPASS_SAME_APASS 567        /* Undernet extension */
 #define RPL_WHOISSECURE      671        /* Nefarious, Undernet */
+#define RPL_YOURLANGUAGESARE 687        /* IRCv3 draft/languages */
+#define RPL_WHOISLANGUAGE    690        /* IRCv3 draft/languages */
 
 /*	RPL_LOGON	     600	dalnet,unreal
 	RPL_LOGOFF           601	dalnet,unreal
@@ -501,6 +503,9 @@ extern const struct Numeric* get_error_numeric(int err);
  * (doc/readme.accounting).
  */
 
-#define ERR_LASTERROR        909
+#define ERR_TOOMANYLANGUAGES 981        /* IRCv3 draft/languages */
+#define ERR_NOLANGUAGE       982        /* IRCv3 draft/languages */
+
+#define ERR_LASTERROR        983
 
 #endif /* INCLUDED_numeric_h */

@@ -44,6 +44,7 @@
 #include "ircd_chattr.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_osdep.h"
 #include "listener.h"
@@ -111,26 +112,25 @@ struct AuthRequest {
   unsigned short      port;       /**< client's remote port number */
 };
 
-/** Array of message text (with length) pairs for AUTH status
- * messages.  Indexed using #ReportType.
+/** Array of AUTH status messages, indexed using #ReportType.  Sent
+ * before registration, so a client that negotiated a language with
+ * LANGUAGE -- or a server with DEFAULT_LANGUAGE -- sees them translated;
+ * sendheader() looks each one up and adds the line ending.
  */
-static struct {
-  const char*  message;
-  unsigned int length;
-} HeaderMessages [] = {
-#define MSG(STR) { STR, sizeof(STR) - 1 }
-  MSG("NOTICE AUTH :*** Looking up your hostname\r\n"),
-  MSG("NOTICE AUTH :*** Found your hostname\r\n"),
-  MSG("NOTICE AUTH :*** Couldn't look up your hostname\r\n"),
-  MSG("NOTICE AUTH :*** Checking Ident\r\n"),
-  MSG("NOTICE AUTH :*** Got ident response\r\n"),
-  MSG("NOTICE AUTH :*** No ident response\r\n"),
-  MSG("NOTICE AUTH :*** \r\n"),
-  MSG("NOTICE AUTH :*** Your forward and reverse DNS do not match, "
-    "ignoring hostname.\r\n"),
-  MSG("NOTICE AUTH :*** Invalid hostname\r\n")
-#undef MSG
+static const char* HeaderMessages [] = {
+  N_("Looking up your hostname"),
+  N_("Found your hostname"),
+  N_("Couldn't look up your hostname"),
+  N_("Checking Ident"),
+  N_("Got ident response"),
+  N_("No ident response"),
+  "",
+  N_("Your forward and reverse DNS do not match, ignoring hostname."),
+  N_("Invalid hostname")
 };
+
+/** What every AUTH status message starts with; not for translation. */
+static const char HeaderPrefix[] = "NOTICE AUTH :*** ";
 
 /** Enum used to index messages in the HeaderMessages[] array. */
 typedef enum {
@@ -223,15 +223,27 @@ typedef int (*iauth_cmd_handler)(struct IAuth *iauth, struct Client *cli,
 /** Sends response \a r (from #ReportType) to client \a cptr. */
 static void sendheader(struct Client *cptr, ReportType r)
 {
+  const char *message = _(cptr, HeaderMessages[r]);
+
   if (IsTLS(cptr) || IsWebsocket(cptr))
   {
-    sendrawto_one(cptr, "%.*s", HeaderMessages[r].length - 2,
-      HeaderMessages[r].message);
+    sendrawto_one(cptr, "%s%s", HeaderPrefix, message);
     send_queued(cptr);
   }
   else
   {
-   send(cli_fd(cptr), HeaderMessages[r].message, HeaderMessages[r].length, 0);
+    char line[BUFSIZE];
+    size_t len = sizeof(HeaderPrefix) - 1;
+    size_t mlen = strlen(message);
+
+    if (mlen > sizeof(line) - len - 2)
+      mlen = sizeof(line) - len - 2;
+    memcpy(line, HeaderPrefix, len);
+    memcpy(line + len, message, mlen);
+    len += mlen;
+    line[len++] = '\r';
+    line[len++] = '\n';
+    send(cli_fd(cptr), line, len, 0);
   }
 }
 
@@ -368,12 +380,12 @@ badid:
 
   ++ServerStats->is_bad_username;
   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-             ":Your username is invalid.");
+             N_(":Your username is invalid."));
   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-             ":Connect with your real username, in lowercase.");
+             N_(":Connect with your real username, in lowercase."));
   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-             ":If your mail address were foo@bar.com, your username "
-             "would be foo.");
+             N_(":If your mail address were foo@bar.com, your username "
+             "would be foo."));
   return exit_client(sptr, sptr, &me, "USER: Bad username");
 }
 
@@ -953,9 +965,9 @@ int auth_ping_timeout(struct Client *cptr)
        */
       if (*(cli_name(cptr)) && cli_user(cptr) && *(cli_user(cptr))->username) {
         send_reply(cptr, SND_EXPLICIT | ERR_BADPING,
-                   ":Your client may not be compatible with this server.");
+                   N_(":Your client may not be compatible with this server."));
         send_reply(cptr, SND_EXPLICIT | ERR_BADPING,
-                   ":Compatible clients are available at %s",
+                   N_(":Compatible clients are available at %s"),
                    feature_str(FEAT_URL_CLIENTS));
       }
       return exit_client_msg(cptr, cptr, &me, "Registration Timeout");
@@ -1352,7 +1364,7 @@ int auth_set_pong(struct AuthRequest *auth, unsigned int cookie)
   if (cookie != auth->cookie)
   {
     send_reply(auth->client, SND_EXPLICIT | ERR_BADPING,
-               ":To connect, type /QUOTE PONG %u", auth->cookie);
+               N_(":To connect, type /QUOTE PONG %u"), auth->cookie);
     return 0;
   }
   cli_lasttime(auth->client) = CurrentTime;
@@ -2015,7 +2027,7 @@ static int iauth_cmd_stats(struct IAuth *iauth, struct Client *cli,
     for (node = iauth_stats_clients; node; node = node->next)
     {
       struct Client *cptr = node->value.cptr;
-      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s", line);
+      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":%s"), line);
     }
   }
   else
@@ -2687,11 +2699,11 @@ void report_iauth_conf(struct Client *cptr, const struct StatDesc *sd, char *par
   if (!iauth)
     return;
 
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, " :%s",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(" :%s"),
     iauth->i_version ? iauth->i_version : "IAuth did not report a version");
   for (link = iauth->i_config; link; link = link->next)
   {
-    send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s", link->value.cp);
+    send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":%s"), link->value.cp);
   }
 
   if (param && !strcmp(param, "get"))
@@ -2733,7 +2745,8 @@ void report_iauth_stats(struct Client *cptr, const struct StatDesc *sd, char *pa
   {
     for (link = iauth->i_stats; link; link = link->next)
     {
-      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s", link->value.cp);
+      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
+                 N_(":%s"), link->value.cp);
     }
     send_reply(cptr, RPL_ENDOFSTATS, sd->sd_name);
 

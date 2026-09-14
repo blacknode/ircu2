@@ -31,6 +31,7 @@
 #include "hash.h"
 #include "ircd_alloc.h"
 #include "ircd_events.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_features.h"
 #include "ircd_osdep.h"
@@ -980,15 +981,17 @@ int connect_server(struct ConfItem* aconf, struct Client* by)
       sendto_opmask_butone(0, SNO_OLDSNO, "Server %s already present from %s", 
                            aconf->name, cli_name(cli_from(cptr)));
       if (by && IsUser(by) && !MyUser(by)) {
-        sendcmdto_one(&me, CMD_NOTICE, by, "%C :Server %s already present "
-                      "from %s", by, aconf->name, cli_name(cli_from(cptr)));
+        sendcmdto_one(&me, CMD_NOTICE, by,
+                      _(by, "%C :Server %s already present "
+                      "from %s"), by, aconf->name, cli_name(cli_from(cptr)));
       }
       return 0;
     }
     else if (IsHandshake(cptr) || IsConnecting(cptr)) {
       if (by && IsUser(by)) {
-        sendcmdto_one(&me, CMD_NOTICE, by, "%C :Connection to %s already in "
-                      "progress", by, cli_name(cptr));
+        sendcmdto_one(&me, CMD_NOTICE, by,
+                      _(by, "%C :Connection to %s already in "
+                      "progress"), by, cli_name(cptr));
       }
       return 0;
     }
@@ -1024,8 +1027,9 @@ int connect_server(struct ConfItem* aconf, struct Client* by)
     sendto_opmask_butone(0, SNO_OLDSNO, "Host %s is not enabled for "
                          "connecting: no Connect block", aconf->name);
     if (by && IsUser(by) && !MyUser(by)) {
-      sendcmdto_one(&me, CMD_NOTICE, by, "%C :Connect to host %s failed: no "
-                    "Connect block", by, aconf->name);
+      sendcmdto_one(&me, CMD_NOTICE, by,
+                    _(by, "%C :Connect to host %s failed: no "
+                    "Connect block"), by, aconf->name);
     }
     det_confs_butmask(cptr, 0);
     free_client(cptr);
@@ -1036,7 +1040,8 @@ int connect_server(struct ConfItem* aconf, struct Client* by)
    */
   if (!connect_inet(aconf, cptr)) {
     if (by && IsUser(by) && !MyUser(by)) {
-      sendcmdto_one(&me, CMD_NOTICE, by, "%C :Couldn't connect to %s", by,
+      sendcmdto_one(&me, CMD_NOTICE, by,
+                    _(by, "%C :Couldn't connect to %s"), by,
                     cli_name(cptr));
     }
     det_confs_butmask(cptr, 0);

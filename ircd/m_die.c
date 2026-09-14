@@ -83,6 +83,7 @@
 
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -111,7 +112,8 @@ int mo_die(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     if (!(acptr = LocalClientArray[i]))
       continue;
     if (IsUser(acptr))
-      sendcmdto_one(&me, CMD_NOTICE, acptr, "%C :Server Terminating. %s",
+      sendcmdto_one(&me, CMD_NOTICE, acptr,
+                    _(acptr, "%C :Server Terminating. %s"),
 		    acptr, get_client_name(sptr, HIDE_IP));
     else if (IsServer(acptr))
       sendcmdto_one(&me, CMD_ERROR, acptr, ":Terminated by %s",

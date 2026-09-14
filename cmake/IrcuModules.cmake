@@ -20,6 +20,13 @@
 # copied beside it, and a module with migrations must therefore be a module
 # built from a directory; see cmake/IrcuMigrations.cmake.
 #
+# A module that ships translations keeps them in a po/ subdirectory, one
+# <code>.po per language.  They are ordinary resources -- copied beside the
+# shared object, where the loader opens them as the module's own domain
+# (doc/readme.translations) -- so, again, only a module built from a
+# directory can have them.  The <name>.pot template that the `pot` target
+# writes there is for translators and is not copied.
+#
 # A module that needs something the core knows nothing about -- a client
 # library, a header outside the tree, a definition of its own -- says so in
 # its own CMake fragment rather than in the core's build files:
@@ -349,6 +356,10 @@ function(_ircu_module_directory_contents dir sources_var resources_var)
       list(APPEND sources "${file}")
     elseif(relative MATCHES "\\.h$" OR relative STREQUAL "CMakeLists.txt"
            OR relative MATCHES "\\.cmake$")
+      continue()
+    elseif(relative MATCHES "^po/.*\\.pot$")
+      # The template the `pot` target regenerates is for translators, not
+      # for the server: only the po/<code>.po catalogs travel with the .so.
       continue()
     elseif(relative MATCHES "^migrations/")
       # Migrations are compiled into the shared object, never copied beside

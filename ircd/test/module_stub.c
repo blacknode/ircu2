@@ -152,6 +152,34 @@ int feature_bool(enum Feature feat)
   return feat == FEAT_OPLEVELS;
 }
 
+/** Stubs for the translation subsystem module.c opens a domain through.
+ *
+ * ircd_i18n.c is linked in whole -- a fixture module could ship a po/
+ * directory -- but it reaches for the default language, the capability
+ * value and the opers, none of which these tests have.
+ */
+const char* feature_str(enum Feature feat)
+{
+  (void) feat;
+  return "";
+}
+
+#include "capab.h"
+
+void cap_set_value(enum Capab cap, const char *value)
+{
+  (void) cap;
+  (void) value;
+}
+
+void sendto_opmask_butone(struct Client *one, unsigned int mask,
+                          const char *pattern, ...)
+{
+  (void) one;
+  (void) mask;
+  (void) pattern;
+}
+
 /** Stub for the one thing ircd_snprintf.c reaches out of itself for.
  *
  * module.c formats the load errors that migration.c hands it, and that

@@ -390,6 +390,10 @@ struct Client;
 #define TOK_CONFIG		"CF"
 #define CMD_CONFIG		MSG_CONFIG, TOK_CONFIG
 
+#define MSG_LANGUAGE		"LANGUAGE"	/* LANG */
+#define TOK_LANGUAGE		"LG"
+#define CMD_LANGUAGE		MSG_LANGUAGE, TOK_LANGUAGE
+
 /*
  * Constants
  */

@@ -1,6 +1,6 @@
 #
-# Runtime paths compiled into the server: DPATH, CPATH, LPATH, SPATH and the
-# module directory (MOD_PATH).
+# Runtime paths compiled into the server: DPATH, CPATH, LPATH, SPATH, the
+# module directory (MOD_PATH) and the translation directory (PO_PATH).
 #
 # When --with-chroot (IRCU_CHROOT) is in play the server sees the filesystem
 # from inside the chroot, so every absolute path baked into the binary has the
@@ -69,6 +69,26 @@ if(NOT IRCU_MPATH)
 endif()
 
 # ---------------------------------------------------------------------------
+# Translation catalogs
+#
+# The same shape as the module directory: `po/*.po` in the source tree is
+# installed here, and the server reads every <code>.po it finds here as the
+# "core" domain (doc/readme.translations).  A module's catalogs are not
+# involved: they are resources of the module and travel beside its .so.
+#
+# The cache variable is IRCU_POPATH; the macro compiled into the server is
+# PO_PATH.
+# ---------------------------------------------------------------------------
+set(_ircu_popath_default "${IRCU_DPATH}/po")
+
+set(IRCU_POPATH "${_ircu_popath_default}" CACHE STRING
+  "Directory the core translation catalogs are installed into and read from")
+string(REGEX REPLACE "/+$" "" IRCU_POPATH "${IRCU_POPATH}")
+if(NOT IRCU_POPATH)
+  set(IRCU_POPATH "${_ircu_popath_default}")
+endif()
+
+# ---------------------------------------------------------------------------
 # Rebase the absolute paths onto the chroot
 # ---------------------------------------------------------------------------
 function(_ircu_strip_chroot out path what fatal)
@@ -99,6 +119,7 @@ endfunction()
 _ircu_strip_chroot(SPATH "${_ircu_spath}" "Binary" FALSE)
 _ircu_strip_chroot(DPATH "${IRCU_DPATH}"  "Data directory" TRUE)
 _ircu_strip_chroot(MOD_PATH "${IRCU_MPATH}" "Module directory" TRUE)
+_ircu_strip_chroot(PO_PATH "${IRCU_POPATH}" "Translation directory" TRUE)
 
 if(IRCU_CPATH MATCHES "^/")
   _ircu_strip_chroot(CPATH "${IRCU_CPATH}" "Configuration file" TRUE)

@@ -89,6 +89,17 @@ add_ircu_test(migration_t
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/migration.c")
 
+# Also loads every .po in the source tree and fails if an entry is
+# rejected: the replacement for msgfmt --check, which does not know %C.
+add_ircu_test(ircd_i18n_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_i18n.c"
+  "${IRCU_IRCD_DIR}/ircd_po.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+target_compile_definitions(ircd_i18n_t PRIVATE
+  IRCU_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 add_ircu_test(user_modes_t
   user_modes_stub.c
   "${IRCU_IRCD_DIR}/client.c"
@@ -122,6 +133,8 @@ add_ircu_test(module_t
   "${IRCU_IRCD_DIR}/db.c"
   "${IRCU_IRCD_DIR}/hooks.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_i18n.c"
+  "${IRCU_IRCD_DIR}/ircd_po.c"
   "${IRCU_IRCD_DIR}/ircd_snprintf.c"
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/migration.c"

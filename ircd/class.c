@@ -27,6 +27,7 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -376,7 +377,7 @@ find_max_flood(struct Client *cptr)
  */
 void class_send_meminfo(struct Client* cptr)
 {
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":Classes: inuse: %d(%d)",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":Classes: inuse: %d(%d)"),
              connClassAllocCount,
              connClassAllocCount * sizeof(struct ConnectionClass));
 }

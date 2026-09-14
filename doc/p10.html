@@ -266,6 +266,12 @@ by reducing the length of common message identifiers.
 </TR>
 
 <TR>
+<TD><FONT SIZE=-1>LANGUAGE</FONT></TD>
+
+<TD><FONT SIZE=-1>LG</FONT></TD>
+</TR>
+
+<TR>
 <TD><FONT SIZE=-1>CONNECT</FONT></TD>
 
 <TD><FONT SIZE=-1>CO</FONT></TD>
@@ -1117,6 +1123,18 @@ during net bursts without a parameter, and every server takes it away
 by itself when the user changes nick.  See doc/readme.accounting.
 <P><B>4.2.3 - ACCOUNT</B>
 <P>Removed.  There is no account name apart from the nick; see MODE +r.
+<P><B>4.2.4 - LANGUAGE</B>
+<BLOCKQUOTE><TT>AZAAA LG es-ar es</TT></BLOCKQUOTE>
+<P>The user's language preference, as given to the LANGUAGE command: up
+to three BCP 47 codes, most preferred first, in lower case.  Sent by the
+user's server when a registered user changes it, right after the NICK
+that introduces a user who chose one before registering, and in the net
+burst after the NICK of each user that has one (where AWAY goes).  A
+server stores what it receives without checking the codes against its
+own catalogs and passes it on; a parameter that is not a language code
+at all is dropped with a protocol violation.  Replies are translated by
+the server that generates them, which is why the preference has to be
+known everywhere.  See doc/readme.translations.
 </BLOCKQUOTE>
 <A NAME="chap4.3"></A><B><FONT SIZE=+1>4.3 Channel/Client Messaging.</FONT></B>
 <BLOCKQUOTE><B>4.3.1 - PRIVMSG</B>
@@ -1164,6 +1182,8 @@ from msg.h. -Gte.
 in a NICK message may have an argument. -Kev
 <BR>[2026-09-11]: Removed ACCOUNT; +r takes no argument and a MODE for another
 user is accepted from servers and +S service bots. See doc/readme.accounting.
+<BR>[2026-09-13]: Added LANGUAGE (LG), the user's language preference. See
+doc/readme.translations.
 <P><A NAME="chap8.1"></A><B><FONT SIZE=+1>8.1 TODO</FONT></B>
 <UL>
 <LI>

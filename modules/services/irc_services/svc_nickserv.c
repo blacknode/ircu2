@@ -58,13 +58,13 @@ static void cmd_info(struct ServiceCall* call)
 }
 
 static const struct ServiceCommand commands[] = {
-  { "INFO", "INFO <nick>", "Show what the network knows about a nick.",
+  { "INFO", N_("INFO <nick>"), N_("Show what the network knows about a nick."),
     1, 0, cmd_info },
   { NULL, NULL, NULL, 0, 0, NULL }
 };
 
 const struct ServiceType svc_type_nickserv = {
   "nickserv",
-  "Nickname services",
+  N_("Nickname services"),
   commands
 };

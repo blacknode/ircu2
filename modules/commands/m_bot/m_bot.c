@@ -40,6 +40,12 @@
  */
 #include "config.h"
 
+/* The _() and _n() macros translate with this module's own domain, loaded
+ * from the po/ directory beside the shared object (doc/readme.translations).
+ */
+#define I18N_DOMAIN bot_i18n
+#include "ircd_i18n.h"
+
 #include "bot.h"
 #include "channel.h"
 #include "client.h"
@@ -62,6 +68,9 @@
 /** Our handle, so that the bots we create are owned by us. */
 static struct ModuleHandle* bot_mod;
 
+/** Our translations, or NULL if none were installed with us. */
+static struct I18nDomain* bot_i18n;
+
 /** Look a bot up by nick, telling the operator when there is none.
  * @param[in] sptr Operator to answer.
  * @param[in] nick Nick to look for.
@@ -77,7 +86,7 @@ static struct Client* bot_lookup(struct Client* sptr, const char* nick)
   }
 
   if (!bot_find(acptr)) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :%s is not a bot of this server",
+    sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :%s is not a bot of this server"),
                   sptr, cli_name(acptr));
     return NULL;
   }
@@ -100,8 +109,8 @@ static int bot_refuse_service(struct Client* sptr, struct Client* bot,
     return 0;
 
   sendcmdto_one(&me, CMD_NOTICE, sptr,
-                "%C :%s is a service of the network and cannot be %s; it "
-                "belongs to %s", sptr, cli_name(bot), what,
+                _(sptr, "%C :%s is a service of the network and cannot be %s; it "
+                "belongs to %s"), sptr, cli_name(bot), what,
                 b->b_owner ? module_name(b->b_owner) : "the server");
   return 1;
 }
@@ -124,7 +133,7 @@ static int bot_cmd_create(struct Client* sptr, const char* nick, char* chan)
 
   if (!(bot = bot_create(bot_mod, nick, NULL, NULL, NULL, 0))) {
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :Cannot create bot %s: no numeric nick is free",
+                  _(sptr, "%C :Cannot create bot %s: no numeric nick is free"),
                   sptr, nick);
     return 0;
   }
@@ -135,12 +144,12 @@ static int bot_cmd_create(struct Client* sptr, const char* nick, char* chan)
   log_write(LS_SYSTEM, L_INFO, 0, "%#C created bot %s (%s@%s)", sptr,
             cli_name(bot), cli_user(bot)->username, cli_user(bot)->host);
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Bot %s (%s@%s) created", sptr,
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s (%s@%s) created"), sptr,
                 cli_name(bot), cli_user(bot)->username, cli_user(bot)->host);
 
   if (chan) {
     bot_join(bot, chan);
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Bot %s joined %s", sptr,
+    sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s joined %s"), sptr,
                   cli_name(bot), chan);
   }
 
@@ -168,7 +177,7 @@ static int bot_cmd_destroy(struct Client* sptr, const char* nick)
 
   bot_destroy(bot, sptr, "Bot destroyed");
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Bot %s destroyed", sptr, name);
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s destroyed"), sptr, name);
 
   return 0;
 }
@@ -190,7 +199,7 @@ static int bot_cmd_rename(struct Client* sptr, const char* nick,
     return send_reply(sptr, err, newnick);
 
   if (0 == strcmp(cli_name(bot), newnick)) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Bot %s already has that nick",
+    sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s already has that nick"),
                   sptr, cli_name(bot));
     return 0;
   }
@@ -205,7 +214,7 @@ static int bot_cmd_rename(struct Client* sptr, const char* nick,
   log_write(LS_SYSTEM, L_INFO, 0, "%#C renamed bot %s to %s", sptr, oldnick,
             cli_name(bot));
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Bot %s renamed to %s", sptr,
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s renamed to %s"), sptr,
                 oldnick, cli_name(bot));
 
   return 0;
@@ -228,7 +237,7 @@ static int bot_cmd_join(struct Client* sptr, const char* nick, char* chan)
 
   bot_join(bot, chan);
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Bot %s joined %s", sptr,
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s joined %s"), sptr,
                 cli_name(bot), chan);
 
   return 0;
@@ -252,7 +261,7 @@ static int bot_cmd_part(struct Client* sptr, const char* nick,
 
   bot_part(bot, chptr);
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Bot %s left %s", sptr,
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s left %s"), sptr,
                 cli_name(bot), chan);
 
   return 0;
@@ -308,17 +317,18 @@ static int bot_cmd_list(struct Client* sptr)
     }
 
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :%s %s (%s@%s) of %s on %u channel%s%s%s", sptr,
-                  (b->b_flags & BOT_SERVICE) ? "Service" : "Bot",
+                  _(sptr, "%C :%s %s (%s@%s) of %s on %u channel%s%s%s"), sptr,
+                  (b->b_flags & BOT_SERVICE) ? _(sptr, "Service")
+                                             : _(sptr, "Bot"),
                   cli_name(bot), cli_user(bot)->username,
                   cli_user(bot)->host,
-                  b->b_owner ? module_name(b->b_owner) : "the server",
+                  b->b_owner ? module_name(b->b_owner) : _(sptr, "the server"),
                   cli_user(bot)->joined,
                   cli_user(bot)->joined == 1 ? "" : "s",
                   chans[0] ? ":" : "", chans);
   }
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :End of bot list: %u bot%s", sptr,
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :End of bot list: %u bot%s"), sptr,
                 n, n == 1 ? "" : "s");
 
   return 0;
@@ -385,8 +395,8 @@ static int mo_bot(struct Client* cptr, struct Client* sptr, int parc,
   }
 
   sendcmdto_one(&me, CMD_NOTICE, sptr,
-                "%C :Unknown BOT subcommand %s; use CREATE, RENAME, DESTROY, "
-                "JOIN, PART, SAY or LIST", sptr, sub);
+                _(sptr, "%C :Unknown BOT subcommand %s; use CREATE, RENAME, DESTROY, "
+                "JOIN, PART, SAY or LIST"), sptr, sub);
 
   return 0;
 }
@@ -406,6 +416,7 @@ static int bot_init(struct ModuleHandle* mod)
   handlers[SERVICE_HANDLER]      = NULL;
 
   bot_mod = mod;
+  bot_i18n = module_i18n(mod);
 
   /* Four parameters: subcommand, nick, target, and the message for SAY
    * as one trailing parameter with its spaces intact.

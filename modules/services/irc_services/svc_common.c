@@ -43,7 +43,7 @@ static void help_list(const struct ServiceCall* call,
   for (c = table; c && c->cmd_name; c++) {
     if ((c->cmd_flags & SVC_CMD_OPER) && !IsOper(call->sc_source))
       continue;
-    svc_reply(call, "  %-12s %s", c->cmd_name, c->cmd_help);
+    svc_reply(call, "  %-12s %s", c->cmd_name, _(call->sc_source, c->cmd_help));
   }
 }
 
@@ -61,15 +61,16 @@ static void cmd_help(struct ServiceCall* call)
       return;
     }
 
-    svc_reply(call, "Syntax: %s", c->cmd_syntax);
-    svc_reply(call, "%s", c->cmd_help);
+    svc_reply(call, "Syntax: %s", _(call->sc_source, c->cmd_syntax));
+    svc_reply(call, "%s", _(call->sc_source, c->cmd_help));
     if (c->cmd_flags & SVC_CMD_FANTASY)
       svc_reply(call, "May also be used as %c%s on a channel %s is on.",
                 SVC_FANTASY_PREFIX, c->cmd_name, sv->sv_name);
     return;
   }
 
-  svc_reply(call, "%s - %s", sv->sv_name, sv->sv_type->st_description);
+  svc_reply(call, "%s - %s", sv->sv_name,
+            _(call->sc_source, sv->sv_type->st_description));
   svc_reply(call, "Commands:");
   help_list(call, sv->sv_type->st_commands);
   help_list(call, svc_common_commands);
@@ -84,9 +85,9 @@ static void cmd_version(struct ServiceCall* call)
 }
 
 const struct ServiceCommand svc_common_commands[] = {
-  { "HELP", "HELP [command]", "List the commands, or explain one.",
+  { "HELP", N_("HELP [command]"), N_("List the commands, or explain one."),
     0, SVC_CMD_FANTASY, cmd_help },
-  { "VERSION", "VERSION", "Which services these are, and where they run.",
+  { "VERSION", "VERSION", N_("Which services these are, and where they run."),
     0, 0, cmd_version },
   { NULL, NULL, NULL, 0, 0, NULL }
 };

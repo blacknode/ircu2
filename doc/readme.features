@@ -480,6 +480,28 @@ until the server runs out of memory.
 climbs means either the pool is too small for what is being asked of it
 or something is submitting work faster than any pool could absorb.
 
+DEFAULT_LANGUAGE
+ * Type: string
+ * Default: (none)
+
+The language a client is answered in when it asked for none with the
+LANGUAGE command: a code such as "es" for which a catalog exists in
+$DPATH/po/ (or, through its primary subtag, "es-ar" with only an
+es.po).  Empty, the default, means the original English text.  A
+client's own LANGUAGE preference is consulted before this, and "en"
+anywhere in it wins over this.  The value is per server, so servers
+in different countries can share one po/ and differ here; it can be
+changed with /SET.  See doc/readme.translations.
+
+CAP_LANGUAGES
+ * Type: boolean
+ * Default: TRUE
+
+Advertise the IRCv3 "draft/languages" capability, whose value under
+CAP LS 302 lists the languages this server can answer in.  The
+LANGUAGE command works whether or not the capability is advertised or
+requested; this only controls the advertisement.
+
 CONFIG_OPERCMDS
  * Type: boolean
  * Default: FALSE
@@ -630,6 +652,13 @@ HIS_STATS_m
  * Default: TRUE
 
 As per UnderNet CFV-165, this removes /STATS m from users.
+
+HIS_STATS_n
+ * Type: boolean
+ * Default: TRUE
+
+As per UnderNet CFV-165, this removes /STATS n (the translation
+catalogs loaded) from users.
 
 HIS_STATS_o
  * Type: boolean

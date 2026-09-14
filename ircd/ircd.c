@@ -35,6 +35,7 @@
 #include "ircd_alloc.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_signal.h"
@@ -751,6 +752,7 @@ int main(int argc, char **argv) {
 
   motd_init();
   hooks_init();
+  i18n_init();  /* before module_init(): a module opens its own domain */
   module_init();
 
   if (!init_conf()) {
@@ -770,6 +772,22 @@ int main(int argc, char **argv) {
    * the feature at its default of zero this creates nothing at all.
    */
   worker_init();
+
+  /* The translation catalogs, after init_conf() so that DEFAULT_LANGUAGE
+   * has its final value and the log goes where the file says.  A broken
+   * catalog does not stop the server -- it is reported and that language
+   * is incomplete or absent -- except under -k, where it is an error, so
+   * that a deployment can check its translations before starting.
+   */
+  {
+    unsigned int problems = i18n_load();
+
+    if (problems && (thisServer.bootopt & BOOT_CHKCONF)) {
+      fprintf(stderr, "Translation catalogs: %u problem%s found.\n", problems,
+              problems == 1 ? "" : "s");
+      return 11;
+    }
+  }
 
   if (thisServer.bootopt & BOOT_CHKCONF) {
     if (dbg_client)
@@ -857,6 +875,7 @@ int main(int argc, char **argv) {
   worker_shutdown();
   migration_shutdown();
   db_shutdown();
+  i18n_close();
 
   return 0;
 }

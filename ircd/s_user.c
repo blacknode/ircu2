@@ -38,6 +38,7 @@
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -217,7 +218,8 @@ int hunt_server_cmd(struct Client *from, const char *cmd, const char *tok,
       return (HUNTED_NOSUCH);
     }
   } else if (!(acptr = FindNServer(to))) {
-    send_reply(from, SND_EXPLICIT | ERR_NOSUCHSERVER, "* :Server has disconnected");
+    send_reply(from, SND_EXPLICIT | ERR_NOSUCHSERVER,
+               N_("* :Server has disconnected"));
     return (HUNTED_NOSUCH);        /* Server broke off in the meantime */
   }
 
@@ -491,6 +493,14 @@ int register_user(struct Client *cptr, struct Client *sptr)
                              *tmpstr ? "+" : "", tmpstr, *tmpstr ? " " : "",
                              iptobase64(ip_base64, &cli_ip(sptr), sizeof(ip_base64), 0),
                              NumNick(sptr), cli_info(sptr));
+
+  /* A language chosen before registration goes out right behind the
+   * NICK, so that every server answers this user in it from the start;
+   * see doc/readme.translations.
+   */
+  if (MyUser(sptr) && i18n_languages_str(sptr))
+    sendcmdto_serv_butone(sptr, CMD_LANGUAGE, cptr, "%s",
+                          i18n_languages_str(sptr));
 
   /* Send user mode to client */
   if (MyUser(sptr))
@@ -881,7 +891,7 @@ int should_block_unauth_user(struct Client *source, struct Client *dest)
 int send_reply_blocked_unauth_user(struct Client *source, struct Client *dest)
 {
   return send_reply(source, SND_EXPLICIT | ERR_NEEDREGGEDNICK,
-    "%s :You need to be identified to a registered account to contact this user -- you can obtain an account from %s",
+    N_("%s :You need to be identified to a registered account to contact this user -- you can obtain an account from %s"),
     cli_name(dest), feature_str(FEAT_URLREG));
 }
 

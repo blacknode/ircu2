@@ -26,6 +26,7 @@
 #include "ircd_alloc.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_netconf.h"
 #include "ircd_reply.h"
@@ -386,33 +387,33 @@ sline_stats(struct Client *sptr, const struct StatDesc *sd,
   }
   
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-    "S :S-line enabled: %s", sline_is_enabled() ? "yes" : "no");
+    N_("S :S-line enabled: %s"), sline_is_enabled() ? "yes" : "no");
   if (sline_is_enabled()) {
     send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-      "S :spamfilter server configured: %s", netconf_str(NETCONF_SLINE_SERVER));
+      N_("S :spamfilter server configured: %s"), netconf_str(NETCONF_SLINE_SERVER));
     send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-      "S :hold timeout: %u", netconf_int(NETCONF_SLINE_HOLD_TIMEOUT));
+      N_("S :hold timeout: %u"), netconf_int(NETCONF_SLINE_HOLD_TIMEOUT));
     send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-      "S :hold timeout block: %s", netconf_bool(NETCONF_SLINE_HOLD_TIMEOUT_BLOCK) ? "yes" : "no");
+      N_("S :hold timeout block: %s"), netconf_bool(NETCONF_SLINE_HOLD_TIMEOUT_BLOCK) ? "yes" : "no");
   }
 
   /* Send summary statistics */
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE, 
-             "S :--- S-line Summary ---");
+             N_("S :--- S-line Summary ---"));
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-             "S :S-line Hits: %u", sline_stats_counters.sline_hits);
+             N_("S :S-line Hits: %u"), sline_stats_counters.sline_hits);
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-             "S :Messages Held: %u", sline_stats_counters.messages_held);
+             N_("S :Messages Held: %u"), sline_stats_counters.messages_held);
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-             "S :Messages Released: %u", sline_stats_counters.messages_released);
+             N_("S :Messages Released: %u"), sline_stats_counters.messages_released);
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-             "S :Messages Blocked: %u", sline_stats_counters.messages_blocked);
+             N_("S :Messages Blocked: %u"), sline_stats_counters.messages_blocked);
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-             "S :XREPLY Accepted: %u", sline_stats_counters.xreply_accepted);
+             N_("S :XREPLY Accepted: %u"), sline_stats_counters.xreply_accepted);
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-             "S :XREPLY Rejected: %u", sline_stats_counters.xreply_rejected);
+             N_("S :XREPLY Rejected: %u"), sline_stats_counters.xreply_rejected);
   send_reply(sptr, SND_EXPLICIT | RPL_STATSSLINE,
-             "S :Timeout Expired: %u", sline_stats_counters.timeout_expired);
+             N_("S :Timeout Expired: %u"), sline_stats_counters.timeout_expired);
   
   Debug((DEBUG_DEBUG, "sline_stats: found %d S-lines total", count));
 }
@@ -461,9 +462,9 @@ sline_send_meminfo(struct Client* sptr)
   sline_count = sline_memory_count(&sline_size);
 
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":S-lines: %d entries using %zu bytes", sline_count, sline_size);
+             N_(":S-lines: %d entries using %zu bytes"), sline_count, sline_size);
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":S-line hold queue: %u entries using %zu bytes",
+             N_(":S-line hold queue: %u entries using %zu bytes"),
              hold_count, hold_size);
 }
 

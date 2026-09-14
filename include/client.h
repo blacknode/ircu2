@@ -297,6 +297,10 @@ struct Client {
   unsigned int   cli_hopcount;    /**< number of servers to this 0 = local */
   struct irc_in_addr cli_ip;      /**< Real IP of client */
   short          cli_status;      /**< Client type */
+  unsigned short cli_lang;        /**< Language preference: index into the
+                                     interned table of ircd_i18n.c, 0 for
+                                     none.  Set before registration, and
+                                     for remote users by LG. */
   char cli_name[HOSTLEN + 1];     /**< Unique name of the client, nick or host */
   char cli_username[USERLEN + 1]; /**< Username determined by ident lookup */
   char cli_info[REALLEN + 1];     /**< Free form additional client information */
@@ -348,6 +352,8 @@ struct Client {
 #define cli_ip(cli)		((cli)->cli_ip)
 /** Get status bitmask for client. */
 #define cli_status(cli)		((cli)->cli_status)
+/** Get client's language preference index (see ircd_i18n.h). */
+#define cli_lang(cli)		((cli)->cli_lang)
 /** Return non-zero if the client is local. */
 #define cli_local(cli)          (cli_from(cli) == cli)
 /** Get oper privileges for client. */

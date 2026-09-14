@@ -36,6 +36,7 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -453,7 +454,7 @@ int exit_client(struct Client *cptr,
             (acptr = findNUser(cli_serv(victim)->by))) {
           if (cli_user(acptr) == cli_serv(victim)->user) {
 	    sendcmdto_one(&me, CMD_NOTICE, acptr,
-			  "%C :Link with %s canceled: %s", acptr,
+			  _(acptr, "%C :Link with %s canceled: %s"), acptr,
 			  cli_name(victim), comment);
           }
           else {
@@ -623,46 +624,47 @@ void tstats(struct Client *cptr, const struct StatDesc *sd, char *param)
     + sp->is_not_hub + sp->is_crule_fail + sp->is_not_server
     + sp->is_bad_server + sp->is_bad_fingerprint + sp->is_wrong_server;
   maxconn = MAXCONNECTIONS;
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":accepts %u refused %u",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":accepts %u refused %u"),
 	     sp->is_ac, is_ref);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":inactive %u all in use %u bad ip %u collided %u",
+             N_(":inactive %u all in use %u bad ip %u collided %u"),
              sp->is_inactive, sp->is_all_inuse, sp->is_bad_ip,
              sp->is_reg_collided);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":bad username %u G/K-lined %u bad password %u no client block %u",
+             N_(":bad username %u G/K-lined %u bad password %u no client block %u"),
              sp->is_bad_username, sp->is_k_lined, sp->is_bad_password,
              sp->is_no_client);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":class full %u IP full %u bad socket %u throttled %u",
+             N_(":class full %u IP full %u bad socket %u throttled %u"),
              sp->is_class_full, sp->is_ip_full, sp->is_bad_socket,
              sp->is_throttled);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":not hub %u crule faile %u no server block %u bad password %u",
+             N_(":not hub %u crule faile %u no server block %u bad password %u"),
              sp->is_not_hub, sp->is_crule_fail, sp->is_not_server,
              sp->is_bad_server);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":bad client fingerprint %u bad server fingerprint %u",
+             N_(":bad client fingerprint %u bad server fingerprint %u"),
              sp->is_bad_fingerprint, sp->is_wrong_server);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":unknown commands %u prefixes %u", sp->is_unco, sp->is_unpf);
+	     N_(":unknown commands %u prefixes %u"), sp->is_unco, sp->is_unpf);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":nick collisions %u unknown closes %u", sp->is_kill, sp->is_ni);
+	     N_(":nick collisions %u unknown closes %u"), sp->is_kill, sp->is_ni);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":wrong direction %u empty %u", sp->is_wrdi, sp->is_empt);
+	     N_(":wrong direction %u empty %u"), sp->is_wrdi, sp->is_empt);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":numerics seen %u mode fakes %u", sp->is_num, sp->is_fake);
+	     N_(":numerics seen %u mode fakes %u"), sp->is_num, sp->is_fake);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":auth successes %u fails %u", sp->is_asuc, sp->is_abad);
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":local connections %u",
+	     N_(":auth successes %u fails %u"), sp->is_asuc, sp->is_abad);
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":local connections %u"),
 	     sp->is_loc);
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":Client server");
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":connected %u %u maxconn %u",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":Client server"));
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
+             N_(":connected %u %u maxconn %u"),
 	     sp->is_cl, sp->is_sv, maxconn);
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":bytes sent %Lu %Lu",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":bytes sent %Lu %Lu"),
 	     sp->is_cbs, sp->is_sbs);
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":bytes recv %Lu %Lu",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":bytes recv %Lu %Lu"),
 	     sp->is_cbr, sp->is_sbr);
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":time connected %Lu %Lu",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":time connected %Lu %Lu"),
 	     sp->is_cti, sp->is_sti);
 }

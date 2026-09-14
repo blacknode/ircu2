@@ -1,0 +1,140 @@
+# Spanish translations for the irc_services module of ircu2.
+# This file is distributed under the same license as the ircu2 package.
+#
+# Every msgid is a format for ircd_snprintf(): keep the directives as they
+# are, in the same order.  See doc/readme.translations.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: ircu2 irc_services\n"
+"Report-Msgid-Bugs-To: coder-com@undernet.org\n"
+"POT-Creation-Date: 2026-09-13 15:19-0500\n"
+"PO-Revision-Date: 2026-09-13 16:00-0500\n"
+"Last-Translator: ircu developers\n"
+"Language-Team: Spanish\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: modules/services/irc_services/dispatch.c:171
+#, no-c-format
+msgid "Unknown command %s.  Type HELP for a list of commands."
+msgstr "Comando desconocido: %s.  Escribe HELP para ver la lista de comandos."
+
+#: modules/services/irc_services/dispatch.c:181
+#, no-c-format
+msgid "Permission denied: %s is for IRC operators."
+msgstr "Permiso denegado: %s es sólo para operadores de IRC."
+
+#: modules/services/irc_services/dispatch.c:188
+#, no-c-format
+msgid "Not enough parameters.  Syntax: %s"
+msgstr "Faltan parámetros.  Sintaxis: %s"
+
+#: modules/services/irc_services/svc_chanserv.c:52
+#, no-c-format
+msgid "Which channel?  Syntax: %s"
+msgstr "¿Qué canal?  Sintaxis: %s"
+
+#: modules/services/irc_services/svc_chanserv.c:63
+#, no-c-format
+msgid "Channel %s does not exist."
+msgstr "El canal %s no existe."
+
+#: modules/services/irc_services/svc_chanserv.c:79
+#, no-c-format
+msgid "%s has %u user and was created %s."
+msgid_plural "%s has %u users and was created %s."
+msgstr[0] "%s tiene %u usuario y se creó el %s."
+msgstr[1] "%s tiene %u usuarios y se creó el %s."
+
+#: modules/services/irc_services/svc_chanserv.c:84
+#, no-c-format
+msgid "Topic: %s (set by %s)"
+msgstr "Tema: %s (puesto por %s)"
+
+#: modules/services/irc_services/svc_chanserv.c:88
+msgid "INFO <#channel>"
+msgstr "INFO <#canal>"
+
+#: modules/services/irc_services/svc_chanserv.c:89
+msgid "Show what the network knows about a channel."
+msgstr "Muestra lo que la red sabe de un canal."
+
+#: modules/services/irc_services/svc_chanserv.c:95
+msgid "Channel services"
+msgstr "Servicios de canales"
+
+#: modules/services/irc_services/svc_common.c:53
+#, no-c-format
+msgid "No help for %s."
+msgstr "No hay ayuda para %s."
+
+#: modules/services/irc_services/svc_common.c:57
+#, no-c-format
+msgid "Syntax: %s"
+msgstr "Sintaxis: %s"
+
+#: modules/services/irc_services/svc_common.c:60
+#, no-c-format
+msgid "May also be used as %c%s on a channel %s is on."
+msgstr "También se puede usar como %c%s en un canal donde esté %s."
+
+#: modules/services/irc_services/svc_common.c:67
+msgid "Commands:"
+msgstr "Comandos:"
+
+#: modules/services/irc_services/svc_common.c:70
+msgid "Type HELP <command> for the syntax of a command."
+msgstr "Escribe HELP <comando> para ver la sintaxis de un comando."
+
+#: modules/services/irc_services/svc_common.c:76
+#, no-c-format
+msgid "%s is irc services %s on %s (%s)"
+msgstr "%s son los servicios de IRC %s en %s (%s)"
+
+#: modules/services/irc_services/svc_common.c:81
+msgid "HELP [command]"
+msgstr "HELP [comando]"
+
+#: modules/services/irc_services/svc_common.c:81
+msgid "List the commands, or explain one."
+msgstr "Lista los comandos, o explica uno."
+
+#: modules/services/irc_services/svc_common.c:83
+msgid "Which services these are, and where they run."
+msgstr "Qué servicios son estos y dónde funcionan."
+
+#: modules/services/irc_services/svc_nickserv.c:43
+#, no-c-format
+msgid "%s is not online."
+msgstr "%s no está conectado."
+
+#: modules/services/irc_services/svc_nickserv.c:47
+#, no-c-format
+msgid "%s is %s@%s (%s), on %s."
+msgstr "%s es %s@%s (%s), en %s."
+
+#: modules/services/irc_services/svc_nickserv.c:51
+#, no-c-format
+msgid "%s is a registered user."
+msgstr "%s es un usuario registrado."
+
+#: modules/services/irc_services/svc_nickserv.c:53
+#, no-c-format
+msgid "%s is a service of the network."
+msgstr "%s es un servicio de la red."
+
+#: modules/services/irc_services/svc_nickserv.c:57
+msgid "INFO <nick>"
+msgstr "INFO <nick>"
+
+#: modules/services/irc_services/svc_nickserv.c:57
+msgid "Show what the network knows about a nick."
+msgstr "Muestra lo que la red sabe de un nick."
+
+#: modules/services/irc_services/svc_nickserv.c:64
+msgid "Nickname services"
+msgstr "Servicios de nicks"

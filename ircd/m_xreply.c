@@ -82,6 +82,7 @@
 
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -118,7 +119,7 @@ int ms_xreply(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   acptr = parv[1][2] ? findNUser(parv[1]) : FindNServer(parv[1]);
   if (!acptr)
     return send_reply(sptr, SND_EXPLICIT | ERR_NOSUCHSERVER,
-		      "* :Server has disconnected");
+		      N_("* :Server has disconnected"));
 
   /* If it's not to us, forward the reply */
   if (!IsMe(acptr)) {

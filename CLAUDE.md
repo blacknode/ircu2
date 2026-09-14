@@ -229,7 +229,32 @@ service bot on the channel). `Service{}` blocks (`struct ServiceConf`,
 creates them on `HOOK_CONFIG_LOADED` (fires after start-up and after each
 rehash — `mi_init`/`mi_rehash` run mid-parse and must not read config
 lists), reconciles them on rehash, and brings one back after a KILL or
-collision. `modules/commands/m_bot.c` is only the `/BOT` front end.
+collision. `modules/commands/m_bot/` is only the `/BOT` front end.
+
+**Translations** (`include/ircd_i18n.h`, `ircd/ircd_i18n.c`, `ircd/ircd_po.c`,
+`ircd/m_language.c`, `doc/readme.translations`, proposal 005). Plain GNU PO
+files the server reads itself — no msgfmt, no libintl — one `<code>.po` per
+language under a *domain*: `core` from `PO_PATH` (`IRCU_POPATH`, default
+`$DPATH/po`, sources in `po/`) and one per directory module with a `po/`
+resource dir (`module_i18n(mod)`; opened before `mi_init`, closed after
+`mi_fini`). `send_reply()` translates every numeric (context = the numeric's
+code, so `s_err.c` is written with `N(sym, "401", fmt)`) and every
+`SND_EXPLICIT` format; other text to one client is marked `_(to, s)` /
+`_n(to, s, p, n)`, `N_(s)` marks for later. Never translate the log,
+anything rendered once for many recipients, or anything that crosses P10 as
+text. The loader rejects any entry whose `ircd_snprintf` directives differ
+from the original's (order and bytes), or that has a line break, and keeps
+the previous catalog for a file that does not parse. A client's preference
+(`LANGUAGE`, IRCv3 `draft/languages`, numerics 687/690/981/982, up to
+`I18N_PREF_MAX` codes, before or after registration) is a 16-bit index into
+an interned table in `cli_lang()`; lookup is client codes (exact, then
+primary subtag) → `FEAT_DEFAULT_LANGUAGE` → original, and `en` stops the
+chain. It travels as the `LG` P10 token (on change, after the `N` at
+registration, and in the burst). `/REHASH` reloads every domain, `ircd -k`
+fails on a bad catalog, `/STATS n` lists what is loaded. `ircd_i18n_t` loads
+every `.po` in the tree and fails on any rejected entry; the `pot` target
+regenerates `po/core.pot` and each module's `po/<name>.pot` with xgettext.
+Nothing here may run on a worker thread.
 
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
@@ -238,10 +263,14 @@ notifications whose return value is ignored. All hooks run inline on the main th
 
 **Design docs.** `doc/proposals/` holds the accepted designs for the module API
 (001), the multithreading direction (002, in Spanish — option B is what
-`ircd/worker.c` implements) and the channel modes by module (003, in Spanish);
+`ircd/worker.c` implements), the channel modes by module (003, in Spanish),
+configuration from the environment (004) and translations with PO files (005,
+in Spanish);
 read the relevant one before changing either subsystem. Other useful docs:
 `doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
-`doc/readme.database`, `doc/readme.migrations`, `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root generates reference docs).
+`doc/readme.database`, `doc/readme.migrations`, `doc/readme.translations`,
+`doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
+generates reference docs).
 
 ## Conventions
 

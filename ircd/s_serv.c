@@ -36,6 +36,7 @@
 #include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_netconf.h"
 #include "ircd_reply.h"
@@ -161,7 +162,8 @@ int server_estab(struct Client *cptr, struct ConfItem *aconf)
   if (cli_serv(cptr)->user && *(cli_serv(cptr))->by &&
       (acptr = findNUser(cli_serv(cptr)->by))) {
     if (cli_user(acptr) == cli_serv(cptr)->user) {
-      sendcmdto_one(&me, CMD_NOTICE, acptr, "%C :Link with %s established.",
+      sendcmdto_one(&me, CMD_NOTICE, acptr,
+                    _(acptr, "%C :Link with %s established."),
                     acptr, inpath);
     }
     else {
@@ -267,6 +269,13 @@ int server_estab(struct Client *cptr, struct ConfItem *aconf)
 		    NumNick(acptr), cli_info(acptr));
       if (feature_bool(FEAT_AWAY_BURST) && cli_user(acptr)->away)
         sendcmdto_one(acptr, CMD_AWAY, cptr, ":%s", cli_user(acptr)->away);
+      /* The language preference, for the same reason as the AWAY and with
+       * no feature to turn it off: without it a reply generated on the
+       * other side of this link would come out in the wrong language.
+       */
+      if (i18n_languages_str(acptr))
+        sendcmdto_one(acptr, CMD_LANGUAGE, cptr, "%s",
+                      i18n_languages_str(acptr));
     }
   }
   /*

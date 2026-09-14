@@ -29,6 +29,7 @@
 #include "ircd_reply.h"
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_snprintf.h"
 #include "msg.h"
@@ -77,6 +78,13 @@ int need_more_params(struct Client* cptr, const char* cmd)
 }
 
 /** Send a generic reply to a user.
+ *
+ * This is the one place that knows the numeric, the format and the
+ * recipient at once, so it is where the format is translated: a numeric's
+ * own format is looked up in the core domain with the numeric's code as
+ * context, an explicit one (SND_EXPLICIT) with no context.  A client with
+ * no language preference on a server with no DEFAULT_LANGUAGE pays one
+ * comparison for this; see ircd_i18n.h.
  * @param[in] to Client that wants a reply.
  * @param[in] reply Numeric of message to send.
  * @return Zero.
@@ -95,9 +103,10 @@ int send_reply(struct Client *to, int reply, ...)
   va_start(vd.vd_args, reply);
 
   if (reply & SND_EXPLICIT) /* get right pattern */
-    vd.vd_format = (const char *) va_arg(vd.vd_args, char *);
+    vd.vd_format = i18n_text(i18n_core, to,
+                             (const char *) va_arg(vd.vd_args, char *));
   else
-    vd.vd_format = num->format;
+    vd.vd_format = i18n_ctext(i18n_core, to, num->str, num->format);
 
   assert(0 != vd.vd_format);
 

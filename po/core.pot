@@ -1,0 +1,2131 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the ircu2 package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: ircu2\n"
+"Report-Msgid-Bugs-To: coder-com@undernet.org\n"
+"POT-Creation-Date: 2026-09-13 15:18-0500\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: ircd/IPcheck.c:641
+#, no-c-format
+msgid "%C :on %u ca %u(%u) ft %u(%u)%s"
+msgstr ""
+
+#: ircd/channel.c:265
+#, no-c-format
+msgid ":Bans: inuse %zu(%zu) free %zu alloc %zu"
+msgstr ""
+
+#: ircd/class.c:380
+#, no-c-format
+msgid ":Classes: inuse: %d(%d)"
+msgstr ""
+
+#: ircd/gline.c:328 ircd/motd.c:336 ircd/s_auth.c:2030 ircd/s_auth.c:2706
+#: ircd/s_auth.c:2749 ircd/s_debug.c:186
+#, no-c-format
+msgid ":%s"
+msgstr ""
+
+#: ircd/hash.c:291
+#, no-c-format
+msgid "%C :Hash Table Statistics"
+msgstr ""
+
+#: ircd/hash.c:306
+#, no-c-format
+msgid "%C :Client: entries: %d buckets: %d max chain: %d"
+msgstr ""
+
+#: ircd/hash.c:326
+#, no-c-format
+msgid "%C :Channel: entries: %d buckets: %d max chain: %d"
+msgstr ""
+
+#: ircd/hash.c:466
+#, no-c-format
+msgid "%s %u %s %s :%s"
+msgstr ""
+
+#: ircd/ircd_features.c:212
+#, no-c-format
+msgid ":Log facility: %s"
+msgstr ""
+
+#: ircd/ircd_features.c:221
+#, no-c-format
+msgid ":Log %s for subsystem %s: %s"
+msgstr ""
+
+#: ircd/ircd_features.c:225
+#, no-c-format
+msgid ":No log %s is set for subsystem %s"
+msgstr ""
+
+#: ircd/ircd_features.c:775
+#, no-c-format
+msgid ":Integer value of %s: %d"
+msgstr ""
+
+#: ircd/ircd_features.c:780
+#, no-c-format
+msgid ":Boolean value of %s: %s"
+msgstr ""
+
+#: ircd/ircd_features.c:787
+#, no-c-format
+msgid ":String value of %s: %s"
+msgstr ""
+
+#: ircd/ircd_features.c:790
+#, no-c-format
+msgid ":String value for %s not set"
+msgstr ""
+
+#: ircd/ircd_features.c:913
+#, no-c-format
+msgid "%c %s %d"
+msgstr ""
+
+#: ircd/ircd_features.c:919 ircd/ircd_features.c:926
+#, no-c-format
+msgid "%c %s %s"
+msgstr ""
+
+#: ircd/ircd_features.c:929
+#, no-c-format
+msgid "%c %s"
+msgstr ""
+
+#: ircd/ircd_i18n.c:1276
+#, no-c-format
+msgid ":%s: no catalogs in %s%s"
+msgstr ""
+
+#: ircd/ircd_i18n.c:1280
+#, no-c-format
+msgid ":%s %s: %u entries loaded, %u rejected%s%s"
+msgstr ""
+
+#: ircd/ircd_i18n.c:1287
+#, no-c-format
+msgid ":%u language preference%s interned, default \"%s\", cap %s"
+msgstr ""
+
+#: ircd/ircd_log.c:972
+#, no-c-format
+msgid "F LOG %s FILE %s"
+msgstr ""
+
+#: ircd/ircd_log.c:977
+#, no-c-format
+msgid "F LOG %s FACILITY %s"
+msgstr ""
+
+#: ircd/ircd_log.c:981
+#, no-c-format
+msgid "F LOG %s SNOMASK %s"
+msgstr ""
+
+#: ircd/ircd_log.c:985
+#, no-c-format
+msgid "F LOG %s LEVEL %s"
+msgstr ""
+
+#: ircd/ircd_log.c:990
+#, no-c-format
+msgid "F LOG %s"
+msgstr ""
+
+#: ircd/ircd_netconf.c:300
+#, no-c-format
+msgid "%Tu %s :%s"
+msgstr ""
+
+#: ircd/ircd_relay.c:679
+#, no-c-format
+msgid "* :Target left %s. Failed to deliver: [%.20s]"
+msgstr ""
+
+#: ircd/ircd_res.c:1506
+#, no-c-format
+msgid ":Resolver: requests %d(%d)"
+msgstr ""
+
+#: ircd/list.c:508
+#, no-c-format
+msgid ":%s: inuse %zu(%zu) alloc %zu"
+msgstr ""
+
+#: ircd/m_asll.c:150 ircd/m_asll.c:183
+#, no-c-format
+msgid "%C :AsLL for %s: %d local servers matched"
+msgstr ""
+
+#: ircd/m_connect.c:151 ircd/m_connect.c:286
+#, no-c-format
+msgid "%C :Connect: Host %s not listed in ircd.conf"
+msgstr ""
+
+#: ircd/m_connect.c:160 ircd/m_connect.c:295
+#, no-c-format
+msgid "%C :Connect: Server %s already exists from %s"
+msgstr ""
+
+#: ircd/m_connect.c:172 ircd/m_connect.c:307
+#, no-c-format
+msgid "%C :Connect: Disallowed by rule: %s"
+msgstr ""
+
+#: ircd/m_connect.c:180 ircd/m_connect.c:315
+#, no-c-format
+msgid "%C :Connect: Server %s is juped: %s"
+msgstr ""
+
+#: ircd/m_connect.c:209 ircd/m_connect.c:347
+#, no-c-format
+msgid "%C :*** Connecting to %s."
+msgstr ""
+
+#: ircd/m_connect.c:214 ircd/m_connect.c:352
+#, no-c-format
+msgid "%C :*** Connection to %s failed"
+msgstr ""
+
+#: ircd/m_connect.c:332
+#, no-c-format
+msgid "%C :Connect: Invalid port number"
+msgstr ""
+
+#: ircd/m_defaults.c:104
+#, no-c-format
+msgid "%s :Register first."
+msgstr ""
+
+#: ircd/m_die.c:116
+#, no-c-format
+msgid "%C :Server Terminating. %s"
+msgstr ""
+
+#: ircd/m_gline.c:433 ircd/m_gline.c:471
+#, no-c-format
+msgid "%s :Bad expire time"
+msgstr ""
+
+#: ircd/m_info.c:119 ircd/m_info.c:157 ircd/m_info.c:194
+#, no-c-format
+msgid ":Birth Date: %s, compile # %s"
+msgstr ""
+
+#: ircd/m_info.c:121 ircd/m_info.c:159 ircd/m_info.c:196
+#, no-c-format
+msgid ":On-line since %s"
+msgstr ""
+
+#: ircd/m_info.c:125 ircd/m_info.c:163 ircd/m_info.c:200
+#, no-c-format
+msgid ":TLS library: %s"
+msgstr ""
+
+#: ircd/m_kill.c:203
+#, no-c-format
+msgid "%C :KILL target disconnected before I got him :("
+msgstr ""
+
+#: ircd/m_kill.c:271
+#, no-c-format
+msgid "%C :Changed KILL %s into %s"
+msgstr ""
+
+#: ircd/m_kill.c:289
+#, no-c-format
+msgid "%C :Nick %s isn't on your server"
+msgstr ""
+
+#: ircd/m_lusers.c:130 ircd/m_lusers.c:163
+#, no-c-format
+msgid "%C :Highest connection count: %d (%d clients)"
+msgstr ""
+
+#: ircd/m_module.c:59
+#, no-c-format
+msgid ":Module %s (%s %s, ABI %u): modules/%s -- %s [loaded by %s]"
+msgstr ""
+
+#: ircd/m_module.c:66
+#, no-c-format
+msgid ":%u module%s loaded"
+msgstr ""
+
+#: ircd/m_module.c:122 ircd/m_module.c:189
+#, no-c-format
+msgid "%C :MODULE MIGRATION subcommand must be LIST, STATUS, APPLY or REVERT"
+msgstr ""
+
+#: ircd/m_module.c:137
+#, no-c-format
+msgid "%C :MODULE MIGRATION %s needs a module name"
+msgstr ""
+
+#: ircd/m_module.c:147
+#, no-c-format
+msgid "%C :The server's own migrations run at start-up and are not applied or reverted by hand"
+msgstr ""
+
+#: ircd/m_module.c:154 ircd/m_module.c:258 ircd/m_module.c:278
+#, no-c-format
+msgid "%C :No module named %s is loaded"
+msgstr ""
+
+#: ircd/m_module.c:167
+#, no-c-format
+msgid "%C :%s is not a version; migrations are numbered v1, v2 and so on"
+msgstr ""
+
+#: ircd/m_module.c:244
+#, no-c-format
+msgid "%C :Could not load %s: %s"
+msgstr ""
+
+#: ircd/m_module.c:264 ircd/m_module.c:288
+#, no-c-format
+msgid "%C :Could not unload %s"
+msgstr ""
+
+#: ircd/m_module.c:298
+#, no-c-format
+msgid "%C :Unloaded %s but could not load it again: %s"
+msgstr ""
+
+#: ircd/m_module.c:316
+#, no-c-format
+msgid "%C :MODULE subcommand must be LIST, LOAD, UNLOAD, RELOAD or MIGRATION"
+msgstr ""
+
+#: ircd/m_rehash.c:116
+#, no-c-format
+msgid ":Flushing MOTD cache"
+msgstr ""
+
+#: ircd/m_rehash.c:121
+#, no-c-format
+msgid ":Reopening log files"
+msgstr ""
+
+#: ircd/m_rehash.c:126
+#, no-c-format
+msgid ":Reloading TLS files"
+msgstr ""
+
+#: ircd/m_rehash.c:131
+#, no-c-format
+msgid ":TLS reload failed"
+msgstr ""
+
+#: ircd/m_settime.c:131
+#, no-c-format
+msgid "%C :SETTIME: Bad value (%Tu, delta %ld)"
+msgstr ""
+
+#: ircd/m_settime.c:134 ircd/m_settime.c:239
+#, no-c-format
+msgid "%C :SETTIME: Bad value"
+msgstr ""
+
+#: ircd/m_settime.c:176
+#, no-c-format
+msgid "%C :clock is not set %ld seconds %s : RELIABLE_CLOCK is defined"
+msgstr ""
+
+#: ircd/m_settime.c:192 ircd/m_settime.c:267
+#, no-c-format
+msgid "%C :clock is set %ld seconds %s"
+msgstr ""
+
+#: ircd/m_settime.c:255
+#, no-c-format
+msgid "%C :clock is not set %ld seconds %s: RELIABLE_CLOCK is defined"
+msgstr ""
+
+#: ircd/m_uping.c:147
+#, no-c-format
+msgid "%C :UPING : Illegal number of packets: %s"
+msgstr ""
+
+#: ircd/m_uping.c:158 ircd/m_uping.c:243
+#, no-c-format
+msgid "%C :UPING: Host %s not listed in ircd.conf"
+msgstr ""
+
+#: ircd/m_uping.c:232
+#, no-c-format
+msgid "%C :UPING: Illegal number of packets: %s"
+msgstr ""
+
+#: ircd/m_whois.c:178
+#, no-c-format
+msgid "%s :%s"
+msgstr ""
+
+#: ircd/m_xquery.c:141 ircd/m_xreply.c:122 ircd/s_user.c:222
+#, no-c-format
+msgid "* :Server has disconnected"
+msgstr ""
+
+#: ircd/migration_run.c:642 ircd/migration_run.c:760
+#, no-c-format
+msgid "%C :Cannot reach the database: %s"
+msgstr ""
+
+#: ircd/migration_run.c:770 ircd/migration_run.c:791
+#, no-c-format
+msgid "%C :Module %s ships no migrations"
+msgstr ""
+
+#: ircd/migration_run.c:798
+#, no-c-format
+msgid "%C :Module %s has no v%u; it declares v1 to v%u"
+msgstr ""
+
+#: ircd/migration_run.c:805
+#, no-c-format
+msgid "%C :A migration of %s is already running; wait for it"
+msgstr ""
+
+#: ircd/module.c:1232
+#, no-c-format
+msgid ":Module %s %s: %u command%s, %u user mode%s%s%s, %u channel mode%s%s%s, from modules/%s, loaded by %s"
+msgstr ""
+
+#: ircd/module.c:1256
+#, no-c-format
+msgid ":Module %s: %u task%s in flight, %u dedicated worker%s"
+msgstr ""
+
+#: ircd/module.c:1262
+#, no-c-format
+msgid ":%u module%s loaded, ABI %u"
+msgstr ""
+
+#: ircd/module.c:1272
+#, no-c-format
+msgid ":Workers disabled (WORKER_THREADS is 0)"
+msgstr ""
+
+#: ircd/module.c:1275
+#, no-c-format
+msgid ":Workers: %u pool thread%s, %u dedicated"
+msgstr ""
+
+#: ircd/module.c:1284
+#, no-c-format
+msgid ":Workers: %u queued, %u running, %u waiting to be delivered"
+msgstr ""
+
+#: ircd/module.c:1287
+#, no-c-format
+msgid ":Workers: %u submitted, %u completed, %u rejected"
+msgstr ""
+
+#: ircd/module.c:1302
+#, no-c-format
+msgid ":Hook %s: %u registered, %u call%s"
+msgstr ""
+
+#: ircd/motd.c:295
+#, no-c-format
+msgid ":- %d-%d-%d %d:%02d"
+msgstr ""
+
+#: ircd/motd.c:337
+#, no-c-format
+msgid ":Type /MOTD to read the AUP before continuing using this service."
+msgstr ""
+
+#: ircd/motd.c:339
+#, no-c-format
+msgid ":The message of the day was last changed: %d-%d-%d %d:%d"
+msgstr ""
+
+#: ircd/motd.c:438
+#, no-c-format
+msgid "T %s %s"
+msgstr ""
+
+#: ircd/motd.c:489
+#, no-c-format
+msgid ":Motds %d(%zu) Cache %d(%zu) Free %d(%zu)"
+msgstr ""
+
+#: ircd/msgq.c:675
+#, no-c-format
+msgid ":Msgs allocated %d(%zu) used %d(%zu) text %zu"
+msgstr ""
+
+#: ircd/msgq.c:688
+#, no-c-format
+msgid ":MsgBufs of size %zu allocated %d(%zu) used %d(%zu)"
+msgstr ""
+
+#: ircd/msgq.c:724
+#, no-c-format
+msgid ":Histogram of message lengths (%lu messages)"
+msgstr ""
+
+#: ircd/msgq.c:726
+#, no-c-format
+msgid ":% 4d: %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u"
+msgstr ""
+
+#: ircd/s_auth.c:121
+#, no-c-format
+msgid "Looking up your hostname"
+msgstr ""
+
+#: ircd/s_auth.c:122
+#, no-c-format
+msgid "Found your hostname"
+msgstr ""
+
+#: ircd/s_auth.c:123
+#, no-c-format
+msgid "Couldn't look up your hostname"
+msgstr ""
+
+#: ircd/s_auth.c:124
+#, no-c-format
+msgid "Checking Ident"
+msgstr ""
+
+#: ircd/s_auth.c:125
+#, no-c-format
+msgid "Got ident response"
+msgstr ""
+
+#: ircd/s_auth.c:126
+#, no-c-format
+msgid "No ident response"
+msgstr ""
+
+#: ircd/s_auth.c:128
+#, no-c-format
+msgid "Your forward and reverse DNS do not match, ignoring hostname."
+msgstr ""
+
+#: ircd/s_auth.c:129
+#, no-c-format
+msgid "Invalid hostname"
+msgstr ""
+
+#: ircd/s_auth.c:383
+#, no-c-format
+msgid ":Your username is invalid."
+msgstr ""
+
+#: ircd/s_auth.c:385
+#, no-c-format
+msgid ":Connect with your real username, in lowercase."
+msgstr ""
+
+#: ircd/s_auth.c:387
+#, no-c-format
+msgid ":If your mail address were foo@bar.com, your username would be foo."
+msgstr ""
+
+#: ircd/s_auth.c:968
+#, no-c-format
+msgid ":Your client may not be compatible with this server."
+msgstr ""
+
+#: ircd/s_auth.c:970
+#, no-c-format
+msgid ":Compatible clients are available at %s"
+msgstr ""
+
+#: ircd/s_auth.c:1367
+#, no-c-format
+msgid ":To connect, type /QUOTE PONG %u"
+msgstr ""
+
+#: ircd/s_auth.c:2702
+#, no-c-format
+msgid " :%s"
+msgstr ""
+
+#: ircd/s_bsd.c:985
+#, no-c-format
+msgid "%C :Server %s already present from %s"
+msgstr ""
+
+#: ircd/s_bsd.c:993
+#, no-c-format
+msgid "%C :Connection to %s already in progress"
+msgstr ""
+
+#: ircd/s_bsd.c:1031
+#, no-c-format
+msgid "%C :Connect to host %s failed: no Connect block"
+msgstr ""
+
+#: ircd/s_bsd.c:1044
+#, no-c-format
+msgid "%C :Couldn't connect to %s"
+msgstr ""
+
+#: ircd/s_conf.c:112 ircd/s_conf.c:128 ircd/s_conf.c:1452
+#, no-c-format
+msgid ":Connection from your host is refused on this server."
+msgstr ""
+
+#: ircd/s_conf.c:1310
+#, no-c-format
+msgid ":TLS initialization failed"
+msgstr ""
+
+#: ircd/s_conf.c:1458 ircd/s_conf.c:1469
+#, no-c-format
+msgid ":%s."
+msgstr ""
+
+#: ircd/s_debug.c:199
+#, no-c-format
+msgid ":DBUF alloc %d used %d"
+msgstr ""
+
+#: ircd/s_debug.c:318
+#, no-c-format
+msgid ":Clients %d(%zu) Connections %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:320
+#, no-c-format
+msgid ":Users %zu(%zu) Registered %d Invites %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:324
+#, no-c-format
+msgid ":User channels %d(%zu) Aways %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:331
+#, no-c-format
+msgid ":Conflines %d(%zu) Attached %d(%zu) Classes %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:336
+#, no-c-format
+msgid ":Channels %d(%zu) Bans %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:338
+#, no-c-format
+msgid ":Channel Members %d(%zu) Invites %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:345
+#, no-c-format
+msgid ":Whowas Users %d(%zu) Away %d(%zu) Array %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:356
+#, no-c-format
+msgid ":Glines %d(%zu) Jupes %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:359
+#, no-c-format
+msgid ":Hash: client %d(%zu), chan is the same"
+msgstr ""
+
+#: ircd/s_debug.c:364
+#, no-c-format
+msgid ":Listeners allocated %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:375
+#, no-c-format
+msgid ":DBufs allocated %d(%zu) used %d(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:391
+#, no-c-format
+msgid ":Allocations: %zu(%zu)"
+msgstr ""
+
+#: ircd/s_debug.c:396
+#, no-c-format
+msgid ":Total: tot %zu ww %zu ch %zu cl %zu co %zu db %zu ms %zu mb %zu"
+msgstr ""
+
+#: ircd/s_err.c:47
+#, no-c-format
+msgctxt "001"
+msgid ":Welcome to the %s IRC Network%s%s, %s"
+msgstr ""
+
+#: ircd/s_err.c:49
+#, no-c-format
+msgctxt "002"
+msgid ":Your host is %s, running version %s"
+msgstr ""
+
+#: ircd/s_err.c:51
+#, no-c-format
+msgctxt "003"
+msgid ":This server was created %s"
+msgstr ""
+
+#: ircd/s_err.c:53
+#, no-c-format
+msgctxt "004"
+msgid "%s %s %s %s %s"
+msgstr ""
+
+#: ircd/s_err.c:55
+#, no-c-format
+msgctxt "005"
+msgid "%s :are supported by this server"
+msgstr ""
+
+#: ircd/s_err.c:61
+#, no-c-format
+msgctxt "008"
+msgid "%u :: Server notice mask (%#x)"
+msgstr ""
+
+#: ircd/s_err.c:75
+#, no-c-format
+msgctxt "015"
+msgid ":%s%s%s %s [%u clients]"
+msgstr ""
+
+#: ircd/s_err.c:77
+#, no-c-format
+msgctxt "016"
+msgid ":%s%s --> *more*"
+msgstr ""
+
+#: ircd/s_err.c:79
+#, no-c-format
+msgctxt "017"
+msgid ":End of /%s"
+msgstr ""
+
+#: ircd/s_err.c:105
+#, no-c-format
+msgctxt "030"
+msgid ":Channel Admin password (+A) set to '%s'.  Are you SURE you want to use this as Admin password? You will NOT be able to change this password anymore once the channel is more than 48 hours old!"
+msgstr ""
+
+#: ircd/s_err.c:107
+#, no-c-format
+msgctxt "031"
+msgid ":Use \"/MODE %s -A %s\" to remove the password and then immediately set a new one.  IMPORTANT: YOU CANNOT RECOVER THIS PASSWORD, EVER; WRITE THE PASSWORD DOWN (don't store this rescue password on disk)! Now set the channel user password (+U)."
+msgstr ""
+
+#: ircd/s_err.c:109
+#, no-c-format
+msgctxt "032"
+msgid ":WARNING: You removed the channel Admin password (+A). If you disconnect or leave the channel without setting a new password then you will not be able to set it again!  SET A NEW PASSWORD NOW!"
+msgstr ""
+
+#: ircd/s_err.c:445
+#, no-c-format
+msgctxt "200"
+msgid "Link %s.%s %s %s"
+msgstr ""
+
+#: ircd/s_err.c:447
+#, no-c-format
+msgctxt "201"
+msgid "Try. %s %s"
+msgstr ""
+
+#: ircd/s_err.c:449
+#, no-c-format
+msgctxt "202"
+msgid "H.S. %s %s"
+msgstr ""
+
+#: ircd/s_err.c:451
+#, no-c-format
+msgctxt "203"
+msgid "???? %s %s"
+msgstr ""
+
+#: ircd/s_err.c:453
+#, no-c-format
+msgctxt "204"
+msgid "Oper %s %s %ld"
+msgstr ""
+
+#: ircd/s_err.c:455
+#, no-c-format
+msgctxt "205"
+msgid "User %s %s %ld"
+msgstr ""
+
+#: ircd/s_err.c:457
+#, no-c-format
+msgctxt "206"
+msgid "Serv %s %dS %dC %s %s!%s@%s %ld %ld"
+msgstr ""
+
+#: ircd/s_err.c:461
+#, no-c-format
+msgctxt "208"
+msgid "<newtype> 0 %s"
+msgstr ""
+
+#: ircd/s_err.c:463
+#, no-c-format
+msgctxt "209"
+msgid "Class %s %u"
+msgstr ""
+
+#: ircd/s_err.c:469
+#, no-c-format
+msgctxt "212"
+msgid "%s %u %u"
+msgstr ""
+
+#: ircd/s_err.c:471
+#, no-c-format
+msgctxt "213"
+msgid "C %s * %d %d %s %s"
+msgstr ""
+
+#: ircd/s_err.c:475
+#, no-c-format
+msgctxt "215"
+msgid "I %s%s%s %d %s%s %d %s"
+msgstr ""
+
+#: ircd/s_err.c:477
+#, no-c-format
+msgctxt "216"
+msgid "%c %s@%s \"%s\" \"%s\" 0 0"
+msgstr ""
+
+#: ircd/s_err.c:479
+#, no-c-format
+msgctxt "217"
+msgid "P %d %d %s %s"
+msgstr ""
+
+#: ircd/s_err.c:481
+#, no-c-format
+msgctxt "218"
+msgid "%c %s %d %d %u %u %u %u %s"
+msgstr ""
+
+#: ircd/s_err.c:483
+#, no-c-format
+msgctxt "219"
+msgid "%s :End of /STATS report"
+msgstr ""
+
+#: ircd/s_err.c:485
+#, no-c-format
+msgctxt "220"
+msgid "W %s %d :%s"
+msgstr ""
+
+#: ircd/s_err.c:487
+#, no-c-format
+msgctxt "221"
+msgid "%s"
+msgstr ""
+
+#: ircd/s_err.c:489
+#, no-c-format
+msgctxt "222"
+msgid "J %s"
+msgstr ""
+
+#: ircd/s_err.c:497
+#, no-c-format
+msgctxt "226"
+msgid "%s"
+msgstr ""
+
+#: ircd/s_err.c:501
+#, no-c-format
+msgctxt "228"
+msgid "Q %s :%s"
+msgstr ""
+
+#: ircd/s_err.c:517
+#, no-c-format
+msgctxt "236"
+msgid "V :Sent as explicit"
+msgstr ""
+
+#: ircd/s_err.c:519
+#, no-c-format
+msgctxt "237"
+msgid "%s :Event loop engine"
+msgstr ""
+
+#: ircd/s_err.c:521
+#, no-c-format
+msgctxt "238"
+msgid "F %s %s"
+msgstr ""
+
+#: ircd/s_err.c:525
+#, no-c-format
+msgctxt "240"
+msgid "%Tu %Tu %Lu %s :%s"
+msgstr ""
+
+#: ircd/s_err.c:527
+#, no-c-format
+msgctxt "241"
+msgid "Module Description EntryPoint"
+msgstr ""
+
+#: ircd/s_err.c:529
+#, no-c-format
+msgctxt "242"
+msgid ":Server Up %d days, %d:%02d:%02d"
+msgstr ""
+
+#: ircd/s_err.c:531
+#, no-c-format
+msgctxt "243"
+msgid "%c %s@%s * %s %s"
+msgstr ""
+
+#: ircd/s_err.c:537
+#, no-c-format
+msgctxt "246"
+msgid "%c %s %s"
+msgstr ""
+
+#: ircd/s_err.c:539
+#, no-c-format
+msgctxt "247"
+msgid "%c %s%s%s %Tu %Tu %Tu %s%c :%s"
+msgstr ""
+
+#: ircd/s_err.c:541
+#, no-c-format
+msgctxt "248"
+msgid "U %s%s"
+msgstr ""
+
+#: ircd/s_err.c:545
+#, no-c-format
+msgctxt "250"
+msgid ":Highest connection count: %u (%u clients)"
+msgstr ""
+
+#: ircd/s_err.c:547
+#, no-c-format
+msgctxt "251"
+msgid ":There are %u users and %u invisible on %u servers"
+msgstr ""
+
+#: ircd/s_err.c:549
+#, no-c-format
+msgctxt "252"
+msgid "%u :operator(s) online"
+msgstr ""
+
+#: ircd/s_err.c:551
+#, no-c-format
+msgctxt "253"
+msgid "%u :unknown connection(s)"
+msgstr ""
+
+#: ircd/s_err.c:553
+#, no-c-format
+msgctxt "254"
+msgid "%u :channels formed"
+msgstr ""
+
+#: ircd/s_err.c:555
+#, no-c-format
+msgctxt "255"
+msgid ":I have %u clients and %u servers"
+msgstr ""
+
+#: ircd/s_err.c:557
+#, no-c-format
+msgctxt "256"
+msgid ":Administrative info about %s"
+msgstr ""
+
+#: ircd/s_err.c:559
+#, no-c-format
+msgctxt "257"
+msgid ":%s"
+msgstr ""
+
+#: ircd/s_err.c:561
+#, no-c-format
+msgctxt "258"
+msgid ":%s"
+msgstr ""
+
+#: ircd/s_err.c:563
+#, no-c-format
+msgctxt "259"
+msgid ":%s"
+msgstr ""
+
+#: ircd/s_err.c:569
+#, no-c-format
+msgctxt "262"
+msgid ":End of TRACE"
+msgstr ""
+
+#: ircd/s_err.c:585
+#, no-c-format
+msgctxt "270"
+msgid "%s :"
+msgstr ""
+
+#: ircd/s_err.c:587
+#, no-c-format
+msgctxt "271"
+msgid "%s %s%s"
+msgstr ""
+
+#: ircd/s_err.c:589
+#, no-c-format
+msgctxt "272"
+msgid "%s :End of Silence List"
+msgstr ""
+
+#: ircd/s_err.c:595
+#, no-c-format
+msgctxt "275"
+msgid "%c %s %s"
+msgstr ""
+
+#: ircd/s_err.c:597
+#, no-c-format
+msgctxt "276"
+msgid "%-9s %-9s %-10s %s"
+msgstr ""
+
+#: ircd/s_err.c:605
+#, no-c-format
+msgctxt "280"
+msgid "%s%s%s %Tu %Tu %Tu %s %s%c :%s"
+msgstr ""
+
+#: ircd/s_err.c:607
+#, no-c-format
+msgctxt "281"
+msgid ":End of G-line List"
+msgstr ""
+
+#: ircd/s_err.c:609
+#, no-c-format
+msgctxt "282"
+msgid "%s %Tu %s %c :%s"
+msgstr ""
+
+#: ircd/s_err.c:611
+#, no-c-format
+msgctxt "283"
+msgid ":End of Jupe List"
+msgstr ""
+
+#: ircd/s_err.c:647
+#, no-c-format
+msgctxt "301"
+msgid "%s :%s"
+msgstr ""
+
+#: ircd/s_err.c:649
+#, no-c-format
+msgctxt "302"
+msgid ":"
+msgstr ""
+
+#: ircd/s_err.c:651
+#, no-c-format
+msgctxt "303"
+msgid ":"
+msgstr ""
+
+#: ircd/s_err.c:655
+#, no-c-format
+msgctxt "305"
+msgid ":You are no longer marked as being away"
+msgstr ""
+
+#: ircd/s_err.c:657
+#, no-c-format
+msgctxt "306"
+msgid ":You have been marked as being away"
+msgstr ""
+
+#: ircd/s_err.c:659
+#, no-c-format
+msgctxt "307"
+msgid "%s :is a registered user"
+msgstr ""
+
+#: ircd/s_err.c:667
+#, no-c-format
+msgctxt "311"
+msgid "%s %s %s * :%s"
+msgstr ""
+
+#: ircd/s_err.c:669
+#, no-c-format
+msgctxt "312"
+msgid "%s %s :%s"
+msgstr ""
+
+#: ircd/s_err.c:671
+#, no-c-format
+msgctxt "313"
+msgid "%s :is an IRC Operator"
+msgstr ""
+
+#: ircd/s_err.c:673
+#, no-c-format
+msgctxt "314"
+msgid "%s %s %s * :%s"
+msgstr ""
+
+#: ircd/s_err.c:675
+#, no-c-format
+msgctxt "315"
+msgid "%s :End of /WHO list."
+msgstr ""
+
+#: ircd/s_err.c:679
+#, no-c-format
+msgctxt "317"
+msgid "%s %ld %ld :seconds idle, signon time"
+msgstr ""
+
+#: ircd/s_err.c:681
+#, no-c-format
+msgctxt "318"
+msgid "%s :End of /WHOIS list."
+msgstr ""
+
+#: ircd/s_err.c:683
+#, no-c-format
+msgctxt "319"
+msgid "%s :%s"
+msgstr ""
+
+#: ircd/s_err.c:685
+#, no-c-format
+msgctxt "320"
+msgid "%s :is connected via %s"
+msgstr ""
+
+#: ircd/s_err.c:687
+#, no-c-format
+msgctxt "321"
+msgid "Channel :Users  Name"
+msgstr ""
+
+#: ircd/s_err.c:689
+#, no-c-format
+msgctxt "322"
+msgid "%s %u :%s"
+msgstr ""
+
+#: ircd/s_err.c:691
+#, no-c-format
+msgctxt "323"
+msgid ":End of /LIST"
+msgstr ""
+
+#: ircd/s_err.c:693
+#, no-c-format
+msgctxt "324"
+msgid "%s %s %s"
+msgstr ""
+
+#: ircd/s_err.c:703
+#, no-c-format
+msgctxt "329"
+msgid "%s %Tu"
+msgstr ""
+
+#: ircd/s_err.c:707
+#, no-c-format
+msgctxt "331"
+msgid "%s :No topic is set."
+msgstr ""
+
+#: ircd/s_err.c:709
+#, no-c-format
+msgctxt "332"
+msgid "%s :%s"
+msgstr ""
+
+#: ircd/s_err.c:711
+#, no-c-format
+msgctxt "333"
+msgid "%s %s %Tu"
+msgstr ""
+
+#: ircd/s_err.c:713
+#, no-c-format
+msgctxt "334"
+msgid ":%s"
+msgstr ""
+
+#: ircd/s_err.c:715
+#, no-c-format
+msgctxt "335"
+msgid "%s :%s"
+msgstr ""
+
+#: ircd/s_err.c:721
+#, no-c-format
+msgctxt "338"
+msgid "%s %s@%s %s :Actual user@host, Actual IP"
+msgstr ""
+
+#: ircd/s_err.c:725
+#, no-c-format
+msgctxt "340"
+msgid ":"
+msgstr ""
+
+#: ircd/s_err.c:727
+#, no-c-format
+msgctxt "341"
+msgid "%s %s"
+msgstr ""
+
+#: ircd/s_err.c:735
+#, no-c-format
+msgctxt "345"
+msgid "%s %s %s :%s has been invited by %s"
+msgstr ""
+
+#: ircd/s_err.c:737
+#, no-c-format
+msgctxt "346"
+msgid ":%s"
+msgstr ""
+
+#: ircd/s_err.c:739
+#, no-c-format
+msgctxt "347"
+msgid ":End of Invite List"
+msgstr ""
+
+#: ircd/s_err.c:747
+#, no-c-format
+msgctxt "351"
+msgid "%s.%s %s :%s"
+msgstr ""
+
+#: ircd/s_err.c:749
+#, no-c-format
+msgctxt "352"
+msgid "%s"
+msgstr ""
+
+#: ircd/s_err.c:751
+#, no-c-format
+msgctxt "353"
+msgid "%s"
+msgstr ""
+
+#: ircd/s_err.c:753
+#, no-c-format
+msgctxt "354"
+msgid "%s"
+msgstr ""
+
+#: ircd/s_err.c:755
+#, no-c-format
+msgctxt "355"
+msgid "%s"
+msgstr ""
+
+#: ircd/s_err.c:769
+#, no-c-format
+msgctxt "362"
+msgid "%s :Operator enforced Close"
+msgstr ""
+
+#: ircd/s_err.c:771
+#, no-c-format
+msgctxt "363"
+msgid "%d :Connections Closed"
+msgstr ""
+
+#: ircd/s_err.c:773
+#, no-c-format
+msgctxt "364"
+msgid "%s %s :%u P%u %s"
+msgstr ""
+
+#: ircd/s_err.c:775
+#, no-c-format
+msgctxt "365"
+msgid "%s :End of /LINKS list."
+msgstr ""
+
+#: ircd/s_err.c:777
+#, no-c-format
+msgctxt "366"
+msgid "%s :End of /NAMES list."
+msgstr ""
+
+#: ircd/s_err.c:779
+#, no-c-format
+msgctxt "367"
+msgid "%s %s %s %Tu"
+msgstr ""
+
+#: ircd/s_err.c:781
+#, no-c-format
+msgctxt "368"
+msgid "%s :End of Channel Ban List"
+msgstr ""
+
+#: ircd/s_err.c:783
+#, no-c-format
+msgctxt "369"
+msgid "%s :End of WHOWAS"
+msgstr ""
+
+#: ircd/s_err.c:787
+#, no-c-format
+msgctxt "371"
+msgid ":%s"
+msgstr ""
+
+#: ircd/s_err.c:789
+#, no-c-format
+msgctxt "372"
+msgid ":- %s"
+msgstr ""
+
+#: ircd/s_err.c:793
+#, no-c-format
+msgctxt "374"
+msgid ":End of /INFO list."
+msgstr ""
+
+#: ircd/s_err.c:795
+#, no-c-format
+msgctxt "375"
+msgid ":- %s Message of the Day - "
+msgstr ""
+
+#: ircd/s_err.c:797
+#, no-c-format
+msgctxt "376"
+msgid ":End of /MOTD command."
+msgstr ""
+
+#: ircd/s_err.c:803
+#, no-c-format
+msgctxt "379"
+msgid "%s :using modes [%s]"
+msgstr ""
+
+#: ircd/s_err.c:807
+#, no-c-format
+msgctxt "381"
+msgid ":You are now an IRC Operator"
+msgstr ""
+
+#: ircd/s_err.c:809
+#, no-c-format
+msgctxt "382"
+msgid "%s :Rehashing"
+msgstr ""
+
+#: ircd/s_err.c:827
+#, no-c-format
+msgctxt "391"
+msgid "%s %Tu %ld :%s"
+msgstr ""
+
+#: ircd/s_err.c:837
+#, no-c-format
+msgctxt "396"
+msgid "%s :is now your hidden host"
+msgstr ""
+
+#: ircd/s_err.c:847
+#, no-c-format
+msgctxt "401"
+msgid "%s :No such nick"
+msgstr ""
+
+#: ircd/s_err.c:849
+#, no-c-format
+msgctxt "402"
+msgid "%s :No such server"
+msgstr ""
+
+#: ircd/s_err.c:851
+#, no-c-format
+msgctxt "403"
+msgid "%s :No such channel"
+msgstr ""
+
+#: ircd/s_err.c:853
+#, no-c-format
+msgctxt "404"
+msgid "%s :Cannot send to channel"
+msgstr ""
+
+#: ircd/s_err.c:855
+#, no-c-format
+msgctxt "405"
+msgid "%s :You have joined too many channels"
+msgstr ""
+
+#: ircd/s_err.c:857
+#, no-c-format
+msgctxt "406"
+msgid "%s :There was no such nickname"
+msgstr ""
+
+#: ircd/s_err.c:859
+#, no-c-format
+msgctxt "407"
+msgid "%s :Duplicate recipients. No message delivered"
+msgstr ""
+
+#: ircd/s_err.c:863
+#, no-c-format
+msgctxt "409"
+msgid ":No origin specified"
+msgstr ""
+
+#: ircd/s_err.c:865
+#, no-c-format
+msgctxt "410"
+msgid "%s :Unknown CAP subcommand"
+msgstr ""
+
+#: ircd/s_err.c:867
+#, no-c-format
+msgctxt "411"
+msgid ":No recipient given (%s)"
+msgstr ""
+
+#: ircd/s_err.c:869
+#, no-c-format
+msgctxt "412"
+msgid ":No text to send"
+msgstr ""
+
+#: ircd/s_err.c:871
+#, no-c-format
+msgctxt "413"
+msgid "%s :No toplevel domain specified"
+msgstr ""
+
+#: ircd/s_err.c:873
+#, no-c-format
+msgctxt "414"
+msgid "%s :Wildcard in toplevel Domain"
+msgstr ""
+
+#: ircd/s_err.c:877
+#, no-c-format
+msgctxt "416"
+msgid "%s :Too many lines in the output, restrict your query"
+msgstr ""
+
+#: ircd/s_err.c:879
+#, no-c-format
+msgctxt "417"
+msgid ":Input line was too long"
+msgstr ""
+
+#: ircd/s_err.c:887
+#, no-c-format
+msgctxt "421"
+msgid "%s :Unknown command"
+msgstr ""
+
+#: ircd/s_err.c:889
+#, no-c-format
+msgctxt "422"
+msgid ":MOTD File is missing"
+msgstr ""
+
+#: ircd/s_err.c:891
+#, no-c-format
+msgctxt "423"
+msgid "%s :No administrative info available"
+msgstr ""
+
+#: ircd/s_err.c:907
+#, no-c-format
+msgctxt "431"
+msgid ":No nickname given"
+msgstr ""
+
+#: ircd/s_err.c:909
+#, no-c-format
+msgctxt "432"
+msgid "%s :Erroneous Nickname"
+msgstr ""
+
+#: ircd/s_err.c:911
+#, no-c-format
+msgctxt "433"
+msgid "%s :Nickname is already in use."
+msgstr ""
+
+#: ircd/s_err.c:917
+#, no-c-format
+msgctxt "436"
+msgid "%s :Nickname collision KILL"
+msgstr ""
+
+#: ircd/s_err.c:919
+#, no-c-format
+msgctxt "437"
+msgid "%s :Cannot change nickname while banned on channel or channel is moderated"
+msgstr ""
+
+#: ircd/s_err.c:921
+#, no-c-format
+msgctxt "438"
+msgid "%s :Nick change too fast. Please wait %d seconds."
+msgstr ""
+
+#: ircd/s_err.c:923
+#, no-c-format
+msgctxt "439"
+msgid "%s :Target change too fast. Please wait %d seconds."
+msgstr ""
+
+#: ircd/s_err.c:925
+#, no-c-format
+msgctxt "440"
+msgid "%s :Services are currently unavailable."
+msgstr ""
+
+#: ircd/s_err.c:927
+#, no-c-format
+msgctxt "441"
+msgid "%s %s :They aren't on that channel"
+msgstr ""
+
+#: ircd/s_err.c:929
+#, no-c-format
+msgctxt "442"
+msgid "%s :You're not on that channel"
+msgstr ""
+
+#: ircd/s_err.c:931
+#, no-c-format
+msgctxt "443"
+msgid "%s %s :is already on channel"
+msgstr ""
+
+#: ircd/s_err.c:947
+#, no-c-format
+msgctxt "451"
+msgid ":You have not registered"
+msgstr ""
+
+#: ircd/s_err.c:967
+#, no-c-format
+msgctxt "461"
+msgid "%s :Not enough parameters"
+msgstr ""
+
+#: ircd/s_err.c:969
+#, no-c-format
+msgctxt "462"
+msgid ":You may not reregister"
+msgstr ""
+
+#: ircd/s_err.c:971
+#, no-c-format
+msgctxt "463"
+msgid ":Your host isn't among the privileged"
+msgstr ""
+
+#: ircd/s_err.c:973
+#, no-c-format
+msgctxt "464"
+msgid ":Password Incorrect"
+msgstr ""
+
+#: ircd/s_err.c:975
+#, no-c-format
+msgctxt "465"
+msgid ":You are banned from this server"
+msgstr ""
+
+#: ircd/s_err.c:977
+#, no-c-format
+msgctxt "466"
+msgid ""
+msgstr ""
+
+#: ircd/s_err.c:979
+#, no-c-format
+msgctxt "467"
+msgid "%s :Channel key already set"
+msgstr ""
+
+#: ircd/s_err.c:983
+#, no-c-format
+msgctxt "469"
+msgid "%s :Cannot join channel (+Z)"
+msgstr ""
+
+#: ircd/s_err.c:987
+#, no-c-format
+msgctxt "471"
+msgid "%s :Cannot join channel (+l)"
+msgstr ""
+
+#: ircd/s_err.c:989
+#, no-c-format
+msgctxt "472"
+msgid "%c :is unknown mode char to me"
+msgstr ""
+
+#: ircd/s_err.c:991
+#, no-c-format
+msgctxt "473"
+msgid "%s :Cannot join channel (+i)"
+msgstr ""
+
+#: ircd/s_err.c:993
+#, no-c-format
+msgctxt "474"
+msgid "%s :Cannot join channel (+b)"
+msgstr ""
+
+#: ircd/s_err.c:995
+#, no-c-format
+msgctxt "475"
+msgid "%s :Cannot join channel (+k)"
+msgstr ""
+
+#: ircd/s_err.c:997
+#, no-c-format
+msgctxt "476"
+msgid "%s :Bad Channel Mask"
+msgstr ""
+
+#: ircd/s_err.c:999
+#, no-c-format
+msgctxt "477"
+msgid "%s :Cannot join channel (+r): this channel requires authentication -- you can obtain an account from %s"
+msgstr ""
+
+#: ircd/s_err.c:1001
+#, no-c-format
+msgctxt "478"
+msgid "%s %s :Channel ban/ignore list is full"
+msgstr ""
+
+#: ircd/s_err.c:1003
+#, no-c-format
+msgctxt "479"
+msgid "%s :Cannot join channel (access denied on this server)"
+msgstr ""
+
+#: ircd/s_err.c:1007
+#, no-c-format
+msgctxt "481"
+msgid ":Permission Denied: Insufficient privileges"
+msgstr ""
+
+#: ircd/s_err.c:1009
+#, no-c-format
+msgctxt "482"
+msgid "%s :You're not channel operator"
+msgstr ""
+
+#: ircd/s_err.c:1011
+#, no-c-format
+msgctxt "483"
+msgid ":You cant kill a server!"
+msgstr ""
+
+#: ircd/s_err.c:1013
+#, no-c-format
+msgctxt "484"
+msgid "%s %s :Cannot kill, kick or deop a network service"
+msgstr ""
+
+#: ircd/s_err.c:1023
+#, no-c-format
+msgctxt "489"
+msgid "%s :You're neither voiced nor channel operator"
+msgstr ""
+
+#: ircd/s_err.c:1027
+#, no-c-format
+msgctxt "491"
+msgid ":No Operator block for your host"
+msgstr ""
+
+#: ircd/s_err.c:1031
+#, no-c-format
+msgctxt "493"
+msgid "%s :No such feature"
+msgstr ""
+
+#: ircd/s_err.c:1033
+#, no-c-format
+msgctxt "494"
+msgid "%s :Bad value for feature %s"
+msgstr ""
+
+#: ircd/s_err.c:1035
+#, no-c-format
+msgctxt "495"
+msgid "%s :No such log type"
+msgstr ""
+
+#: ircd/s_err.c:1037
+#, no-c-format
+msgctxt "496"
+msgid "%s :No such log subsystem"
+msgstr ""
+
+#: ircd/s_err.c:1039
+#, no-c-format
+msgctxt "497"
+msgid "%s :Bad value for log type"
+msgstr ""
+
+#: ircd/s_err.c:1041
+#, no-c-format
+msgctxt "498"
+msgid "%s %s :Cannot kick or deop an IRC Operator on a local channel"
+msgstr ""
+
+#: ircd/s_err.c:1047
+#, no-c-format
+msgctxt "501"
+msgid "%c :Unknown user MODE flag"
+msgstr ""
+
+#: ircd/s_err.c:1049
+#, no-c-format
+msgctxt "502"
+msgid ":Cant change mode for other users"
+msgstr ""
+
+#: ircd/s_err.c:1067
+#, no-c-format
+msgctxt "511"
+msgid "%s :Your silence list is full"
+msgstr ""
+
+#: ircd/s_err.c:1069
+#, no-c-format
+msgctxt "512"
+msgid "%s :No such gline"
+msgstr ""
+
+#: ircd/s_err.c:1073
+#, no-c-format
+msgctxt "514"
+msgid "%s :No such jupe"
+msgstr ""
+
+#: ircd/s_err.c:1075
+#, no-c-format
+msgctxt "515"
+msgid "%Tu :Bad expire time"
+msgstr ""
+
+#: ircd/s_err.c:1077
+#, no-c-format
+msgctxt "516"
+msgid "%s :Don't Cheat."
+msgstr ""
+
+#: ircd/s_err.c:1079
+#, no-c-format
+msgctxt "517"
+msgid "%s :Command disabled."
+msgstr ""
+
+#: ircd/s_err.c:1081
+#, no-c-format
+msgctxt "518"
+msgid ":Mask is too long"
+msgstr ""
+
+#: ircd/s_err.c:1083
+#, no-c-format
+msgctxt "519"
+msgid "%d :Too many users affected by mask"
+msgstr ""
+
+#: ircd/s_err.c:1085
+#, no-c-format
+msgctxt "520"
+msgid "%s :Mask is too wide"
+msgstr ""
+
+#: ircd/s_err.c:1093
+#, no-c-format
+msgctxt "524"
+msgid "%s :Channel is quarantined : %s"
+msgstr ""
+
+#: ircd/s_err.c:1095
+#, no-c-format
+msgctxt "525"
+msgid "%s :Key is not well-formed"
+msgstr ""
+
+#: ircd/s_err.c:1109
+#, no-c-format
+msgctxt "532"
+msgid ":TLS certificate fingerprint did not match"
+msgstr ""
+
+#: ircd/s_err.c:1165
+#, no-c-format
+msgctxt "560"
+msgid "%s %s %hu %hu :Cannot %s someone with %s op-level"
+msgstr ""
+
+#: ircd/s_err.c:1167
+#, no-c-format
+msgctxt "561"
+msgid "%s :You must be channel Admin to add or remove a password. Use /JOIN %s <AdminPass>."
+msgstr ""
+
+#: ircd/s_err.c:1169
+#, no-c-format
+msgctxt "562"
+msgid "%s :Channel is older than 48 hours and secured. Cannot change Admin pass anymore"
+msgstr ""
+
+#: ircd/s_err.c:1171
+#, no-c-format
+msgctxt "563"
+msgid "%s :Cannot remove Admin pass (+A) while User pass (+U) is still set. First use /MODE %s -U <userpass>"
+msgstr ""
+
+#: ircd/s_err.c:1173
+#, no-c-format
+msgctxt "564"
+msgid "%s :Cannot set user pass (+U) until Admin pass (+A) is set. First use /MODE %s +A <adminpass>"
+msgstr ""
+
+#: ircd/s_err.c:1177
+#, no-c-format
+msgctxt "566"
+msgid "%s :Re-create the channel. The channel must be completely empty for a period of %s before it can be recreated."
+msgstr ""
+
+#: ircd/s_err.c:1179
+#, no-c-format
+msgctxt "567"
+msgid "%s :Cannot use the same pass for both admin (+A) and user (+U) pass."
+msgstr ""
+
+#: ircd/s_err.c:1387
+#, no-c-format
+msgctxt "671"
+msgid "%s :is using a secure connection%s"
+msgstr ""
+
+#: ircd/s_err.c:1419
+#, no-c-format
+msgctxt "687"
+msgid "%s :Language preferences have been set."
+msgstr ""
+
+#: ircd/s_err.c:1425
+#, no-c-format
+msgctxt "690"
+msgid "%s %s :can speak these languages."
+msgstr ""
+
+#: ircd/s_err.c:2007
+#, no-c-format
+msgctxt "981"
+msgid "%u :You specified too many languages."
+msgstr ""
+
+#: ircd/s_err.c:2009
+#, no-c-format
+msgctxt "982"
+msgid "%s :Languages are not supported by this server."
+msgstr ""
+
+#: ircd/s_misc.c:457
+#, no-c-format
+msgid "%C :Link with %s canceled: %s"
+msgstr ""
+
+#: ircd/s_misc.c:627
+#, no-c-format
+msgid ":accepts %u refused %u"
+msgstr ""
+
+#: ircd/s_misc.c:630
+#, no-c-format
+msgid ":inactive %u all in use %u bad ip %u collided %u"
+msgstr ""
+
+#: ircd/s_misc.c:634
+#, no-c-format
+msgid ":bad username %u G/K-lined %u bad password %u no client block %u"
+msgstr ""
+
+#: ircd/s_misc.c:638
+#, no-c-format
+msgid ":class full %u IP full %u bad socket %u throttled %u"
+msgstr ""
+
+#: ircd/s_misc.c:642
+#, no-c-format
+msgid ":not hub %u crule faile %u no server block %u bad password %u"
+msgstr ""
+
+#: ircd/s_misc.c:646
+#, no-c-format
+msgid ":bad client fingerprint %u bad server fingerprint %u"
+msgstr ""
+
+#: ircd/s_misc.c:649
+#, no-c-format
+msgid ":unknown commands %u prefixes %u"
+msgstr ""
+
+#: ircd/s_misc.c:651
+#, no-c-format
+msgid ":nick collisions %u unknown closes %u"
+msgstr ""
+
+#: ircd/s_misc.c:653
+#, no-c-format
+msgid ":wrong direction %u empty %u"
+msgstr ""
+
+#: ircd/s_misc.c:655
+#, no-c-format
+msgid ":numerics seen %u mode fakes %u"
+msgstr ""
+
+#: ircd/s_misc.c:657
+#, no-c-format
+msgid ":auth successes %u fails %u"
+msgstr ""
+
+#: ircd/s_misc.c:658
+#, no-c-format
+msgid ":local connections %u"
+msgstr ""
+
+#: ircd/s_misc.c:660
+#, no-c-format
+msgid ":Client server"
+msgstr ""
+
+#: ircd/s_misc.c:662
+#, no-c-format
+msgid ":connected %u %u maxconn %u"
+msgstr ""
+
+#: ircd/s_misc.c:664
+#, no-c-format
+msgid ":bytes sent %Lu %Lu"
+msgstr ""
+
+#: ircd/s_misc.c:666
+#, no-c-format
+msgid ":bytes recv %Lu %Lu"
+msgstr ""
+
+#: ircd/s_misc.c:668
+#, no-c-format
+msgid ":time connected %Lu %Lu"
+msgstr ""
+
+#: ircd/s_serv.c:166
+#, no-c-format
+msgid "%C :Link with %s established."
+msgstr ""
+
+#: ircd/s_stats.c:313
+#, no-c-format
+msgid "Connection SendQ SendM SendKBytes RcveM RcveKBytes :Open since"
+msgstr ""
+
+#: ircd/s_stats.c:333
+#, no-c-format
+msgid "%s %u %u %Lu %u %Lu :%Tu"
+msgstr ""
+
+#: ircd/s_stats.c:352
+#, no-c-format
+msgid "Module  Description      Entry Point"
+msgstr ""
+
+#: ircd/s_stats.c:369
+#, no-c-format
+msgid "%s  %s     0x%X"
+msgstr ""
+
+#: ircd/s_stats.c:466
+#, no-c-format
+msgid ":%-20s %-20s Flags  Hops %-8s %5s %4s %4s %4s %5s %6s %-6s %-10s Info"
+msgstr ""
+
+#: ircd/s_stats.c:588
+#, no-c-format
+msgid "%C :%c (%s) - %s"
+msgstr ""
+
+#: ircd/s_user.c:894
+#, no-c-format
+msgid "%s :You need to be identified to a registered account to contact this user -- you can obtain an account from %s"
+msgstr ""
+
+#: ircd/sline.c:390
+#, no-c-format
+msgid "S :S-line enabled: %s"
+msgstr ""
+
+#: ircd/sline.c:393
+#, no-c-format
+msgid "S :spamfilter server configured: %s"
+msgstr ""
+
+#: ircd/sline.c:395
+#, no-c-format
+msgid "S :hold timeout: %u"
+msgstr ""
+
+#: ircd/sline.c:397
+#, no-c-format
+msgid "S :hold timeout block: %s"
+msgstr ""
+
+#: ircd/sline.c:402
+#, no-c-format
+msgid "S :--- S-line Summary ---"
+msgstr ""
+
+#: ircd/sline.c:404
+#, no-c-format
+msgid "S :S-line Hits: %u"
+msgstr ""
+
+#: ircd/sline.c:406
+#, no-c-format
+msgid "S :Messages Held: %u"
+msgstr ""
+
+#: ircd/sline.c:408
+#, no-c-format
+msgid "S :Messages Released: %u"
+msgstr ""
+
+#: ircd/sline.c:410
+#, no-c-format
+msgid "S :Messages Blocked: %u"
+msgstr ""
+
+#: ircd/sline.c:412
+#, no-c-format
+msgid "S :XREPLY Accepted: %u"
+msgstr ""
+
+#: ircd/sline.c:414
+#, no-c-format
+msgid "S :XREPLY Rejected: %u"
+msgstr ""
+
+#: ircd/sline.c:416
+#, no-c-format
+msgid "S :Timeout Expired: %u"
+msgstr ""
+
+#: ircd/sline.c:465
+#, no-c-format
+msgid ":S-lines: %d entries using %zu bytes"
+msgstr ""
+
+#: ircd/sline.c:467
+#, no-c-format
+msgid ":S-line hold queue: %u entries using %zu bytes"
+msgstr ""
+
+#: ircd/uping.c:268
+#, no-c-format
+msgid "%C :Sending %d ping%s to %s"
+msgstr ""
+
+#: ircd/uping.c:302
+#, no-c-format
+msgid "%C :UPING: send failed: %s"
+msgstr ""
+
+#: ircd/uping.c:336
+#, no-c-format
+msgid "%C :UPING: receive error: %s"
+msgstr ""
+
+#: ircd/uping.c:386
+#, no-c-format
+msgid "%C :UPING: Host lookup failed for %s"
+msgstr ""
+
+#: ircd/uping.c:411
+#, no-c-format
+msgid "%C :UPING: Can't queue fd for reading"
+msgstr ""
+
+#: ircd/uping.c:445
+#, no-c-format
+msgid "%C :UPING %s%s"
+msgstr ""
+
+#: ircd/uping.c:448
+#, no-c-format
+msgid "%C :UPING Stats: sent %d recvd %d ; min/avg/max = %u/%u/%u ms"
+msgstr ""
+
+#: ircd/uping.c:454
+#, no-c-format
+msgid "%C :UPING: no response from %s within %d seconds"
+msgstr ""
+
+#: ircd/uping.c:459
+#, no-c-format
+msgid "%C :UPING: Could not start ping to %s"
+msgstr ""
+
+#: ircd/userload.c:260
+#, no-c-format
+msgid "%C :%4d.%1d  %4d.%1d  %4d  %4d  %4d   %s"
+msgstr ""

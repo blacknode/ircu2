@@ -84,7 +84,8 @@ void svc_reply(const struct ServiceCall* call, const char* fmt, ...)
     return;
 
   va_start(vl, fmt);
-  ircd_vsnprintf(call->sc_source, buf, sizeof(buf), fmt, vl);
+  ircd_vsnprintf(call->sc_source, buf, sizeof(buf), _(call->sc_source, fmt),
+                 vl);
   va_end(vl);
 
   bot_send_user(call->sc_service->sv_client, call->sc_source, 1, buf);
@@ -189,7 +190,8 @@ void svc_dispatch(struct Service* sv, struct Client* source,
 
   if ((unsigned int) (call.sc_argc - 1) < cmd->cmd_min_args) {
     if (!notice)
-      svc_reply(&call, "Not enough parameters.  Syntax: %s", cmd->cmd_syntax);
+      svc_reply(&call, "Not enough parameters.  Syntax: %s",
+                _(source, cmd->cmd_syntax));
     return;
   }
 

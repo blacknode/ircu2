@@ -27,6 +27,7 @@
 #include "channel.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -286,7 +287,8 @@ int m_hash(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
   struct Channel* ch;
   int i;
   
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Hash Table Statistics", sptr);
+  sendcmdto_one(&me, CMD_NOTICE, sptr,
+                _(sptr, "%C :Hash Table Statistics"), sptr);
 
   for (i = 0; i < HASHSIZE; ++i) {
     if ((cl = clientTable[i])) {
@@ -300,8 +302,9 @@ int m_hash(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
     }
   } 
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Client: entries: %d buckets: %d "
-		"max chain: %d", sptr, count, buckets, max_chain);
+  sendcmdto_one(&me, CMD_NOTICE, sptr,
+                _(sptr, "%C :Client: entries: %d buckets: %d "
+		"max chain: %d"), sptr, count, buckets, max_chain);
 
   buckets = 0;
   count   = 0;
@@ -319,8 +322,9 @@ int m_hash(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
     }
   } 
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Channel: entries: %d buckets: %d "
-		"max chain: %d", sptr, count, buckets, max_chain);
+  sendcmdto_one(&me, CMD_NOTICE, sptr,
+                _(sptr, "%C :Channel: entries: %d buckets: %d "
+		"max chain: %d"), sptr, count, buckets, max_chain);
   return 0;
 }
 
@@ -459,7 +463,7 @@ void list_next_channels(struct Client *cptr)
 
           modebuf[0] = modebuf[1] = parabuf[0] = '\0';
           channel_modes(cptr, modebuf, parabuf, sizeof(parabuf), chptr, NULL);
-          send_reply(cptr, RPL_LIST | SND_EXPLICIT, "%s %u %s %s :%s",
+          send_reply(cptr, RPL_LIST | SND_EXPLICIT, N_("%s %u %s %s :%s"),
                      chptr->chname, chptr->users, modebuf, parabuf, chptr->topic);
         } else {
           send_reply(cptr, RPL_LIST, chptr->chname, chptr->users, chptr->topic);

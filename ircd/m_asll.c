@@ -83,6 +83,7 @@
 #include "client.h"
 #include "hash.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -145,7 +146,8 @@ int ms_asll(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       cli_serv(acptr)->asll_to, cli_serv(acptr)->asll_from);
     hits++;
   }
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :AsLL for %s: %d local servers matched", sptr, mask, hits);
+  sendcmdto_one(&me, CMD_NOTICE, sptr,
+                _(sptr, "%C :AsLL for %s: %d local servers matched"), sptr, mask, hits);
   return 0;
 }
 
@@ -177,6 +179,7 @@ int mo_asll(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       cli_serv(acptr)->asll_to, cli_serv(acptr)->asll_from);
     hits++;
   }
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :AsLL for %s: %d local servers matched", sptr, mask, hits);
+  sendcmdto_one(&me, CMD_NOTICE, sptr,
+                _(sptr, "%C :AsLL for %s: %d local servers matched"), sptr, mask, hits);
   return 0;
 }

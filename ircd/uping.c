@@ -27,6 +27,7 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_events.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_osdep.h"
 #include "ircd_string.h"
@@ -263,7 +264,8 @@ static void uping_start(struct UPing* pptr)
 	    TT_RELATIVE, UPINGTIMEOUT);
   pptr->freeable |= UPING_PENDING_SENDER | UPING_PENDING_KILLER;
 
-  sendcmdto_one(&me, CMD_NOTICE, pptr->client, "%C :Sending %d ping%s to %s",
+  sendcmdto_one(&me, CMD_NOTICE, pptr->client,
+                _(pptr->client, "%C :Sending %d ping%s to %s"),
 		pptr->client, pptr->count, (pptr->count == 1) ? "" : "s",
 		pptr->name);
   pptr->active = 1;
@@ -296,8 +298,9 @@ void uping_send(struct UPing* pptr)
     if (!msg)
       msg = "Unknown error";
     if (pptr->client)
-      sendcmdto_one(&me, CMD_NOTICE, pptr->client, "%C :UPING: send failed: "
-		    "%s", pptr->client, msg);
+      sendcmdto_one(&me, CMD_NOTICE, pptr->client,
+                    _(pptr->client, "%C :UPING: send failed: "
+		    "%s"), pptr->client, msg);
     Debug((DEBUG_DEBUG, "UPING: send_ping: sendto failed on %d: %s", pptr->fd, msg));
     uping_end(pptr);
     return;
@@ -329,8 +332,9 @@ void uping_read(struct UPing* pptr)
     const char* msg = strerror(errno);
     if (!msg)
       msg = "Unknown error";
-    sendcmdto_one(&me, CMD_NOTICE, pptr->client, "%C :UPING: receive error: "
-		  "%s", pptr->client, msg);
+    sendcmdto_one(&me, CMD_NOTICE, pptr->client,
+                  _(pptr->client, "%C :UPING: receive error: "
+		  "%s"), pptr->client, msg);
     uping_end(pptr);
     return;
   }
@@ -378,8 +382,9 @@ int uping_server(struct Client* sptr, struct ConfItem* aconf, int port, int coun
   assert(0 != aconf);
 
   if (!irc_in_addr_valid(&aconf->address.addr)) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :UPING: Host lookup failed for "
-		  "%s", sptr, aconf->name);
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :UPING: Host lookup failed for "
+		  "%s"), sptr, aconf->name);
     return 0;
   }
 
@@ -402,8 +407,9 @@ int uping_server(struct Client* sptr, struct ConfItem* aconf, int port, int coun
 
   if (!socket_add(&pptr->socket, uping_read_callback, (void*) pptr,
 		  SS_DATAGRAM, SOCK_EVENT_READABLE, fd)) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :UPING: Can't queue fd for "
-		  "reading", sptr);
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :UPING: Can't queue fd for "
+		  "reading"), sptr);
     close(fd);
     MyFree(pptr);
     return 0;
@@ -435,19 +441,23 @@ void uping_end(struct UPing* pptr)
   if (pptr->client) {
     if (pptr->lastsent) {
       if (0 < pptr->received) {
-	sendcmdto_one(&me, CMD_NOTICE, pptr->client, "%C :UPING %s%s",
+	sendcmdto_one(&me, CMD_NOTICE, pptr->client,
+                      _(pptr->client, "%C :UPING %s%s"),
 		      pptr->client, pptr->name, pptr->buf);
-	sendcmdto_one(&me, CMD_NOTICE, pptr->client, "%C :UPING Stats: "
-		      "sent %d recvd %d ; min/avg/max = %u/%u/%u ms",
+	sendcmdto_one(&me, CMD_NOTICE, pptr->client,
+                      _(pptr->client, "%C :UPING Stats: "
+		      "sent %d recvd %d ; min/avg/max = %u/%u/%u ms"),
 		      pptr->client, pptr->sent, pptr->received, pptr->ms_min,
 		      (2 * pptr->ms_ave) / (2 * pptr->received), pptr->ms_max);
       } else
-	sendcmdto_one(&me, CMD_NOTICE, pptr->client, "%C :UPING: no response "
-		      "from %s within %d seconds", pptr->client, pptr->name,
+	sendcmdto_one(&me, CMD_NOTICE, pptr->client,
+                      _(pptr->client, "%C :UPING: no response "
+		      "from %s within %d seconds"), pptr->client, pptr->name,
 		      UPINGTIMEOUT);
     } else
-      sendcmdto_one(&me, CMD_NOTICE, pptr->client, "%C :UPING: Could not "
-		    "start ping to %s", pptr->client, pptr->name);
+      sendcmdto_one(&me, CMD_NOTICE, pptr->client,
+                    _(pptr->client, "%C :UPING: Could not "
+		    "start ping to %s"), pptr->client, pptr->name);
   }
 
   close(pptr->fd);

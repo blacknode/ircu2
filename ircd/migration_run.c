@@ -47,6 +47,7 @@
 #include "db.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -638,7 +639,7 @@ static int migration_ask_applied(struct Client* sptr, const char* module,
   if (err != DB_OK) {
     if (sptr)
       sendcmdto_one(&me, CMD_NOTICE, sptr,
-                    "%C :Cannot reach the database: %s", sptr,
+                    _(sptr, "%C :Cannot reach the database: %s"), sptr,
                     db_strerror(err));
     else
       log_write(LS_SYSTEM, L_ERROR, 0,
@@ -755,7 +756,8 @@ void migration_cmd_list(struct Client* sptr)
   sql.params = 0;
 
   if ((err = db_query(0, &sql, migration_list_done, query)) != DB_OK) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Cannot reach the database: %s",
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :Cannot reach the database: %s"),
                   sptr, db_strerror(err));
     MyFree(query);
   }
@@ -764,7 +766,8 @@ void migration_cmd_list(struct Client* sptr)
 void migration_cmd_status(struct Client* sptr, struct ModuleHandle* mod)
 {
   if (!module_migrations(mod)) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Module %s ships no migrations",
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :Module %s ships no migrations"),
                   sptr, module_name(mod));
     return;
   }
@@ -784,21 +787,22 @@ static void migration_cmd_run(struct Client* sptr, struct ModuleHandle* mod,
   const struct MigrationSet* set = module_migrations(mod);
 
   if (!set) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Module %s ships no migrations",
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :Module %s ships no migrations"),
                   sptr, module_name(mod));
     return;
   }
 
   if (bound > set->ms_count) {
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :Module %s has no v%u; it declares v1 to v%u", sptr,
+                  _(sptr, "%C :Module %s has no v%u; it declares v1 to v%u"), sptr,
                   module_name(mod), bound, set->ms_count);
     return;
   }
 
   if (migration_job_running(module_name(mod))) {
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-                  "%C :A migration of %s is already running; wait for it",
+                  _(sptr, "%C :A migration of %s is already running; wait for it"),
                   sptr, module_name(mod));
     return;
   }

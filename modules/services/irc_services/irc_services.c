@@ -81,6 +81,9 @@ static const struct ServiceType* service_types[] = {
 /** Our handle; the owner of every bot we create. */
 static struct ModuleHandle* svc_mod;
 
+/** Our translations, or NULL if none were installed with us. */
+struct I18nDomain* svc_i18n;
+
 /** Services, in configuration order. */
 static struct Service* svc_list;
 
@@ -546,6 +549,7 @@ static enum HookResult svc_on_config(struct HookContext* ctx, void* user)
 static int svc_init(struct ModuleHandle* mod)
 {
   svc_mod = mod;
+  svc_i18n = module_i18n(mod);
   svc_unloading = 0;
   timer_init(&svc_timer);
 
@@ -583,6 +587,7 @@ static void svc_fini(struct ModuleHandle* mod)
     svc_remove(svc_list, "Services unloaded");
 
   svc_mod = NULL;
+  svc_i18n = NULL;
 }
 
 /** The one symbol the server looks for. */

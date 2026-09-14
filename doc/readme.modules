@@ -615,6 +615,40 @@ A DATABASE above.  Read doc/readme.migrations before shipping any of it --
 the rules are short and the loader enforces all of them.
 
 
+TRANSLATIONS
+============
+
+A module that talks to users can ship translations of what it says: one
+GNU PO file per language in a po/ subdirectory of its own directory,
+
+  modules/<type>/<name>/po/es.po
+  modules/<type>/<name>/po/pt.po
+
+They are ordinary resources -- copied beside the shared object, never
+compiled in -- and the loader opens them as the module's own domain before
+mi_init, so module_i18n(mod) is good from there.  Nothing crosses between
+domains: a module's text is looked up in the module's catalogs and nowhere
+else.  A single-file module has no directory and therefore no translations,
+the same rule that applies to its migrations.
+
+  #define I18N_DOMAIN mod_i18n           /* before the include */
+  #include "ircd_i18n.h"
+
+  static struct I18nDomain* mod_i18n;    /* = module_i18n(mod) in mi_init */
+
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s destroyed"),
+                sptr, name);
+
+_() and _n() then translate with the module's domain for the client given;
+a NULL domain -- no po/ installed -- returns the original, so a module never
+tests for it.  A broken catalog is reported and does not stop the load; a
+/REHASH reloads the module's catalogs with the core's, and /MODULE RELOAD
+reopens the domain.  The loader checks every translation's ircd_snprintf
+directives against the original before it is used, so a translator cannot
+crash a module.  doc/readme.translations has the rules, the marking
+conventions and the `pot` target that writes the module's template.
+
+
 A LIBRARY OF ITS OWN
 ====================
 
@@ -666,9 +700,11 @@ THE EXAMPLES
                          for a module with libraries of its own
                          (module.cmake), and for one whose worker threads
                          outlive a single task
-  commands/m_bot.c       adds /BOT, virtual bots operators create on
+  commands/m_bot/        adds /BOT, virtual bots operators create on
                          demand; the reference for using the bot API
-                         (see VIRTUAL CLIENTS below)
+                         (see VIRTUAL CLIENTS below) and for a module
+                         that ships translations (po/es.po) and marks
+                         its notices with _()
   services/irc_services/ network services -- NickServ, ChanServ --
                          embedded in the server: service bots from
                          Service{} blocks, answering users through

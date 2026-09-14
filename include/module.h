@@ -61,7 +61,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 6
+#define IRCU_MODULE_ABI 7
 
 /** Description of a module, exported by the shared object.
  *
@@ -122,6 +122,16 @@ extern const char* module_file(const struct ModuleHandle* mod);
  */
 extern const struct MigrationSet* module_migrations(
   const struct ModuleHandle* mod);
+/** The module's translation domain, loaded from <dir>/po/ when the
+ * module was, or NULL if it ships none.
+ *
+ * i18n_text() with a NULL domain returns the original, so a module with
+ * no translations never needs to test this.  Define I18N_DOMAIN to the
+ * variable holding it before including ircd_i18n.h and the _() and _n()
+ * macros go to it; see ircd_i18n.h and doc/readme.translations.
+ */
+struct I18nDomain;
+extern struct I18nDomain* module_i18n(const struct ModuleHandle* mod);
 /** Nick that loaded the module, or NULL if the configuration file did. */
 extern const char* module_loaded_by(const struct ModuleHandle* mod);
 extern const char* module_version(const struct ModuleHandle* mod);

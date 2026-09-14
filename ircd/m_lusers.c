@@ -84,6 +84,7 @@
 #include "client.h"
 #include "ircd.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -126,8 +127,8 @@ int m_lusers(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   send_reply(sptr, RPL_LUSERME, UserStats.local_clients,
 	     UserStats.local_servers);
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Highest connection count: "
-		"%d (%d clients)", sptr, max_connection_count,
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Highest connection count: "
+		"%d (%d clients)"), sptr, max_connection_count,
 		max_client_count);
 
   return 0;
@@ -159,8 +160,8 @@ int ms_lusers(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   send_reply(sptr, RPL_LUSERME, UserStats.local_clients,
 	     UserStats.local_servers);
 
-  sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Highest connection count: "
-		"%d (%d clients)", sptr, max_connection_count,
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Highest connection count: "
+		"%d (%d clients)"), sptr, max_connection_count,
 		max_client_count);
 
   return 0;

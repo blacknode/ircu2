@@ -124,6 +124,10 @@ enum Feature {
   FEAT_CAP_UHNAMES,
   FEAT_CAP_MESSAGE_TAGS,
   FEAT_CAP_SERVER_TIME,
+  FEAT_CAP_LANGUAGES,
+
+  /* Translations (see doc/readme.translations) */
+  FEAT_DEFAULT_LANGUAGE,
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags */
   FEAT_CLIENTTAGDENY,
@@ -151,6 +155,7 @@ enum Feature {
   FEAT_HIS_STATS_L,
   FEAT_HIS_STATS_m,
   FEAT_HIS_STATS_M,
+  FEAT_HIS_STATS_n,
   FEAT_HIS_STATS_o,
   FEAT_HIS_STATS_p,
   FEAT_HIS_STATS_q,

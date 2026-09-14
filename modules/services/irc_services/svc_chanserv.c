@@ -49,8 +49,9 @@ static struct Channel* call_channel(struct ServiceCall* call, int arg)
 
   if (call->sc_argc <= arg) {
     svc_reply(call, "Which channel?  Syntax: %s",
-              svc_find_command(call->sc_service->sv_type,
-                               call->sc_argv[0])->cmd_syntax);
+              _(call->sc_source,
+                svc_find_command(call->sc_service->sv_type,
+                                 call->sc_argv[0])->cmd_syntax));
     return NULL;
   }
 
@@ -74,21 +75,23 @@ static void cmd_info(struct ServiceCall* call)
   if (!chptr)
     return;
 
-  svc_reply(call, "%s has %u user%s and was created %s.", chptr->chname,
-            chptr->users, chptr->users == 1 ? "" : "s",
-            myctime(chptr->creationtime));
+  svc_reply(call, _n(call->sc_source,
+                     "%s has %u user and was created %s.",
+                     "%s has %u users and was created %s.", chptr->users),
+            chptr->chname, chptr->users, myctime(chptr->creationtime));
   if (chptr->topic[0])
     svc_reply(call, "Topic: %s (set by %s)", chptr->topic, chptr->topic_nick);
 }
 
 static const struct ServiceCommand commands[] = {
-  { "INFO", "INFO <#channel>", "Show what the network knows about a channel.",
+  { "INFO", N_("INFO <#channel>"),
+    N_("Show what the network knows about a channel."),
     0, SVC_CMD_FANTASY, cmd_info },
   { NULL, NULL, NULL, 0, 0, NULL }
 };
 
 const struct ServiceType svc_type_chanserv = {
   "chanserv",
-  "Channel services",
+  N_("Channel services"),
   commands
 };

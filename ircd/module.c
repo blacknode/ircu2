@@ -30,6 +30,7 @@
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
+#include "ircd_i18n.h"
 #include "migration.h"
 #include "module.h"
 #include "msg.h"
@@ -88,6 +89,7 @@ struct ModuleHandle {
   char *mh_relpath;              /**< The same, relative to #MOD_PATH. */
   char *mh_dir;                  /**< Directory of #mh_path. */
   struct MigrationSet *mh_migrations; /**< Its migrations, or NULL. */
+  struct I18nDomain *mh_i18n;    /**< Its translations, or NULL. */
   time_t mh_mtime;               /**< Modification time when loaded. */
   int mh_marked;                 /**< Seen in the running configuration. */
   struct ModuleCommand *mh_cmds; /**< Commands this module registered. */
@@ -164,6 +166,11 @@ const char *module_relpath(const struct ModuleHandle *mod) {
 const struct MigrationSet *module_migrations(const struct ModuleHandle *mod) {
   assert(0 != mod);
   return mod->mh_migrations;
+}
+
+struct I18nDomain *module_i18n(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+  return mod->mh_i18n;
 }
 
 const char *module_dir(const struct ModuleHandle *mod) {
@@ -1002,6 +1009,24 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
   mod->mh_mtime = module_mtime(path);
   mod->mh_marked = 1;
 
+  /* A module built from a directory may ship translations in po/ beside
+   * its shared object: they are a resource, copied there by the build.
+   * The domain is opened before mi_init so module_i18n() is good there.
+   * A single-file module has no directory of its own -- the type
+   * directory is shared -- and so no translations, the same rule that
+   * applies to its migrations.  A broken catalog does not stop the load:
+   * it is reported and that language is incomplete, as for the core.
+   */
+  if (strchr(relpath, '/') != strrchr(relpath, '/')) {
+    char podir[1024];
+    struct stat sb;
+
+    if (snprintf(podir, sizeof(podir), "%s/po", mod->mh_dir)
+        < (int)sizeof(podir)
+        && stat(podir, &sb) == 0 && S_ISDIR(sb.st_mode))
+      mod->mh_i18n = i18n_domain_open(info->mi_name, podir);
+  }
+
   /* Link before mi_init so that anything the module registers can find its
    * own handle in the list.
    */
@@ -1115,6 +1140,8 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
 
   dl = mod->mh_dl;
   migration_free(mod->mh_migrations);
+  /* After mi_fini, which may still have been answering somebody. */
+  i18n_domain_close(mod->mh_i18n);
   MyFree(mod->mh_file);
   MyFree(mod->mh_loaded_by);
   MyFree(mod->mh_path);
@@ -1202,8 +1229,8 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
 
   for (mod = manager->mod_list; mod; mod = mod->mh_next)
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Module %s %s: %u command%s, %u user mode%s%s%s, "
-               "%u channel mode%s%s%s, from modules/%s, loaded by %s",
+               N_(":Module %s %s: %u command%s, %u user mode%s%s%s, "
+               "%u channel mode%s%s%s, from modules/%s, loaded by %s"),
                mod->mh_info->mi_name, module_version(mod),
                module_command_count(mod),
                module_command_count(mod) == 1 ? "" : "s",
@@ -1226,12 +1253,13 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
 
     if (tasks || workers)
       send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-                 ":Module %s: %u task%s in flight, %u dedicated worker%s",
+                 N_(":Module %s: %u task%s in flight, %u dedicated worker%s"),
                  mod->mh_info->mi_name, tasks, tasks == 1 ? "" : "s",
                  workers, workers == 1 ? "" : "s");
   }
 
-  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%u module%s loaded, ABI %u",
+  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+             N_(":%u module%s loaded, ABI %u"),
              manager->mod_count, manager->mod_count == 1 ? "" : "s",
              (unsigned int)IRCU_MODULE_ABI);
 
@@ -1241,10 +1269,10 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
    */
   if (!worker_enabled())
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Workers disabled (WORKER_THREADS is 0)");
+               N_(":Workers disabled (WORKER_THREADS is 0)"));
   else {
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Workers: %u pool thread%s, %u dedicated",
+               N_(":Workers: %u pool thread%s, %u dedicated"),
                worker_thread_count(),
                worker_thread_count() == 1 ? "" : "s",
                worker_dedicated_count());
@@ -1253,10 +1281,10 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
      * something is taking far longer than it should.
      */
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Workers: %u queued, %u running, %u waiting to be delivered",
+               N_(":Workers: %u queued, %u running, %u waiting to be delivered"),
                worker_queued(), worker_running(), worker_undelivered());
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Workers: %u submitted, %u completed, %u rejected",
+               N_(":Workers: %u submitted, %u completed, %u rejected"),
                worker_submitted(), worker_completed(), worker_rejected());
   }
 
@@ -1271,7 +1299,7 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
       continue;
 
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":Hook %s: %u registered, %u call%s",
+               N_(":Hook %s: %u registered, %u call%s"),
                hook_type_name((enum HookType)type), registered, calls,
                calls == 1 ? "" : "s");
   }

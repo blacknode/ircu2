@@ -33,6 +33,7 @@
 #include "ircd_chattr.h"
 #include "ircd_defs.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -260,7 +261,8 @@ void bans_send_meminfo(struct Client *cptr)
   size_t num_free;
   for (num_free = 0, ban = free_bans; ban; ban = ban->next)
     num_free++;
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":Bans: inuse %zu(%zu) free %zu alloc %zu",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
+             N_(":Bans: inuse %zu(%zu) free %zu alloc %zu"),
 	     bans_inuse, bans_inuse * sizeof(*ban), num_free, bans_alloc);
 }
 

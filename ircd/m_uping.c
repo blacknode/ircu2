@@ -84,6 +84,7 @@
 #include "client.h"
 #include "hash.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -142,8 +143,9 @@ int ms_uping(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (EmptyString(parv[4]) || (count = atoi(parv[4])) <= 0)
   {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :UPING : Illegal number of "
-		  "packets: %s", sptr, parv[4]);
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :UPING : Illegal number of "
+		  "packets: %s"), sptr, parv[4]);
     return 0;
   }
   /* 
@@ -152,8 +154,9 @@ int ms_uping(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if ((aconf = conf_find_server(parv[1])))
     uping_server(sptr, aconf, port, count);
   else
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :UPING: Host %s not listed in "
-		  "ircd.conf", sptr, parv[1]);
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :UPING: Host %s not listed in "
+		  "ircd.conf"), sptr, parv[1]);
 
   return 0;
 }
@@ -226,8 +229,8 @@ int mo_uping(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (EmptyString(parv[4]) || (count = atoi(parv[4])) <= 0)
   {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :UPING: Illegal number of "
-		  "packets: %s", sptr, parv[4]);
+    sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :UPING: Illegal number of "
+		  "packets: %s"), sptr, parv[4]);
     return 0;
   }
   /* 
@@ -236,8 +239,9 @@ int mo_uping(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if ((aconf = conf_find_server(parv[1])))
     uping_server(sptr, aconf, port, count);
   else {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :UPING: Host %s not listed in "
-		  "ircd.conf", sptr, parv[1]);
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :UPING: Host %s not listed in "
+		  "ircd.conf"), sptr, parv[1]);
   }
   return 0;
 }

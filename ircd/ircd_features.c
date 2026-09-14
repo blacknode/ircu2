@@ -30,6 +30,7 @@
 #include "hash.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -172,6 +173,14 @@ feature_notify_clienttagdeny(void)
   msg_tag_clienttagdeny_rebuild();
 }
 
+/** Handle an update to FEAT_DEFAULT_LANGUAGE: the lookup chains and the
+ * draft/languages capability value depend on it. */
+static void
+feature_notify_default_language(void)
+{
+  i18n_resolve();
+}
+
 /** Handle an update to FEAT_HIS_SERVERNAME. */
 static void
 feature_notify_servername(void)
@@ -200,7 +209,7 @@ feature_log_get(struct Client* from, const char* const* fields, int count)
   assert(0 != from); /* never called by .conf parser */
 
   if (count < 1) /* return default facility */
-    send_reply(from, SND_EXPLICIT | RPL_FEATURE, ":Log facility: %s",
+    send_reply(from, SND_EXPLICIT | RPL_FEATURE, N_(":Log facility: %s"),
 	       log_get_default());
   else if (count < 2)
     need_more_params(from, "GET");
@@ -209,11 +218,11 @@ feature_log_get(struct Client* from, const char* const* fields, int count)
   } else if ((desc = feature_log_desc(from, fields[1]))) {
     if ((value = (*desc->get)(fields[0]))) /* send along value */
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":Log %s for subsystem %s: %s", desc->type, subsys,
+		 N_(":Log %s for subsystem %s: %s"), desc->type, subsys,
 		 (*desc->get)(subsys));
     else
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":No log %s is set for subsystem %s", desc->type, subsys);
+		 N_(":No log %s is set for subsystem %s"), desc->type, subsys);
   }
 }
 
@@ -400,6 +409,11 @@ static struct FeatureDesc {
   F_B(CAP_UHNAMES, 0, 1, 0),
   F_B(CAP_MESSAGE_TAGS, 0, 1, 0),
   F_B(CAP_SERVER_TIME, 0, 1, 0),
+  F_B(CAP_LANGUAGES, 0, 1, 0),
+
+  /* Translations: the language a client gets when it asked for none.
+   * Empty means the original text.  See doc/readme.translations. */
+  F_S(DEFAULT_LANGUAGE, FEAT_NULL, 0, feature_notify_default_language),
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags.
    * Default "*" denies all; empty (FEAT_NULL) allows all. Rebuilds via notify. */
@@ -428,6 +442,7 @@ static struct FeatureDesc {
   F_B(HIS_STATS_L, 0, 1, 0),
   F_B(HIS_STATS_m, 0, 1, 0),
   F_B(HIS_STATS_M, 0, 1, 0),
+  F_B(HIS_STATS_n, 0, 1, 0),
   F_B(HIS_STATS_o, 0, 1, 0),
   F_B(HIS_STATS_p, 0, 1, 0),
   F_B(HIS_STATS_q, 0, 1, 0),
@@ -457,12 +472,12 @@ static struct FeatureDesc {
   F_B(HIS_REWRITE, 0, 1, 0),
   F_B(HIS_REMOTE, 0, 1, 0),
   F_B(HIS_NETSPLIT, 0, 1, 0),
-  F_S(HIS_SERVERNAME, 0, "*.undernet.org", feature_notify_servername),
-  F_S(HIS_SERVERINFO, 0, "The Undernet Underworld", feature_notify_serverinfo),
+  F_S(HIS_SERVERNAME, 0, "*.undernode.org", feature_notify_servername),
+  F_S(HIS_SERVERINFO, 0, "UnderNode Networks", feature_notify_serverinfo),
   F_S(HIS_URLSERVERS, 0, "http://www.undernet.org/servers.php", 0),
 
   /* Misc. random stuff */
-  F_S(NETWORK, 0, "UnderNet", 0),
+  F_S(NETWORK, 0, "UnderNode", 0),
   F_S(URL_CLIENTS, 0, "ftp://ftp.undernet.org/pub/irc/clients", 0),
   F_S(URLREG, 0, "http://cservice.undernet.org/live/", 0),
 
@@ -470,7 +485,7 @@ static struct FeatureDesc {
    * by modules/commands/m_bot.c as "helper" gets helper.<BOT_HOSTNAME>.  Read at
    * creation; changing it later leaves existing bots as they are.
    */
-  F_S(BOT_HOSTNAME, 0, "bots.undernet.org", 0),
+  F_S(BOT_HOSTNAME, 0, "bots.undernode.org", 0),
 
 #undef F_S
 #undef F_B
@@ -757,22 +772,22 @@ feature_get(struct Client* from, const char* const* fields, int count)
 
     case FEAT_INT: /* integer, report integer value */
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":Integer value of %s: %d", feat->type, feat->v_int);
+		 N_(":Integer value of %s: %d"), feat->type, feat->v_int);
       break;
 
     case FEAT_BOOL: /* boolean, report boolean value */
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":Boolean value of %s: %s", feat->type,
+		 N_(":Boolean value of %s: %s"), feat->type,
 		 feat->v_int ? "TRUE" : "FALSE");
       break;
 
     case FEAT_STR: /* string, report string value */
       if (feat->v_str) /* deal with null case */
 	send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		   ":String value of %s: %s", feat->type, feat->v_str);
+		   N_(":String value of %s: %s"), feat->type, feat->v_str);
       else
 	send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		   ":String value for %s not set", feat->type);
+		   N_(":String value for %s not set"), feat->type);
       break;
     }
   }
@@ -895,23 +910,23 @@ feature_report(struct Client* to, const struct StatDesc* sd, char* param)
 
     case FEAT_INT: /* Report an F-line with integer values */
       if (report) /* it's been changed */
-	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s %d",
+	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s %d"),
 		   changed, features[i].type, features[i].v_int);
       break;
 
     case FEAT_BOOL: /* Report an F-line with boolean values */
       if (report) /* it's been changed */
-	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s %s",
+	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s %s"),
 		   changed, features[i].type, features[i].v_int ? "TRUE" : "FALSE");
       break;
 
     case FEAT_STR: /* Report an F-line with string values */
       if (report) { /* it's been changed */
 	if (features[i].v_str)
-	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s %s",
+	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s %s"),
 		     changed, features[i].type, features[i].v_str);
 	else /* Actually, F:<type> would reset it; you want F:<type>: */
-	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s",
+	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s"),
 		     changed, features[i].type);
       }
       break;

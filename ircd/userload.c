@@ -29,6 +29,7 @@
  */
 #include "config.h"
 
+#include "ircd_i18n.h"
 #include "userload.h"
 #include "client.h"
 #include "ircd.h"
@@ -256,7 +257,7 @@ calc_load(struct Client *sptr, const struct StatDesc *sd, char *param)
   sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :%s", sptr, header);
   for (i = 0; i < 3; ++i)
     sendcmdto_one(&me, CMD_NOTICE, sptr,
-		  "%C :%4d.%1d  %4d.%1d  %4d  %4d  %4d   %s", sptr,
+		  _(sptr, "%C :%4d.%1d  %4d.%1d  %4d  %4d  %4d   %s"), sptr,
 		  times[0][i] / 10, times[0][i] % 10,
 		  times[1][i] / 10, times[1][i] % 10,
 		  times[2][i], times[3][i], times[4][i], what[i]);

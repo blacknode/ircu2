@@ -682,6 +682,16 @@ struct Message msgtab[] = {
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_ignore, m_ignore, ms_config, m_ignore, m_ignore }
   }, 
+  /* Before registration too: the language is negotiated before NICK and
+   * USER so that the welcome comes out translated (doc/readme.translations).
+   */
+  {
+    MSG_LANGUAGE,
+    TOK_LANGUAGE,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_language, m_language, ms_language, m_language, m_ignore }
+  },
   { 0 }
 };
 

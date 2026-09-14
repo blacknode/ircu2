@@ -1,0 +1,166 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the ircu2 package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: ircu2\n"
+"Report-Msgid-Bugs-To: coder-com@undernet.org\n"
+"POT-Creation-Date: 2026-09-13 15:19-0500\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: modules/services/irc_services/dispatch.c:176
+#, no-c-format
+msgid "Unknown command %s.  Type HELP for a list of commands."
+msgstr ""
+
+#: modules/services/irc_services/dispatch.c:186
+#, no-c-format
+msgid "Permission denied: %s is for IRC operators."
+msgstr ""
+
+#: modules/services/irc_services/dispatch.c:193
+#, no-c-format
+msgid "Not enough parameters.  Syntax: %s"
+msgstr ""
+
+#: modules/services/irc_services/svc_chanserv.c:51
+#, no-c-format
+msgid "Which channel?  Syntax: %s"
+msgstr ""
+
+#: modules/services/irc_services/svc_chanserv.c:63
+#, no-c-format
+msgid "Channel %s does not exist."
+msgstr ""
+
+#: modules/services/irc_services/svc_chanserv.c:79
+#, no-c-format
+msgid "%s has %u user and was created %s."
+msgid_plural "%s has %u users and was created %s."
+msgstr[0] ""
+msgstr[1] ""
+
+#: modules/services/irc_services/svc_chanserv.c:83
+#, no-c-format
+msgid "Topic: %s (set by %s)"
+msgstr ""
+
+#: modules/services/irc_services/svc_chanserv.c:87
+#, no-c-format
+msgid "INFO <#channel>"
+msgstr ""
+
+#: modules/services/irc_services/svc_chanserv.c:88
+#, no-c-format
+msgid "Show what the network knows about a channel."
+msgstr ""
+
+#: modules/services/irc_services/svc_chanserv.c:95
+#, no-c-format
+msgid "Channel services"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:46
+#, no-c-format
+msgid "  %-12s %s"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:60
+#, no-c-format
+msgid "No help for %s."
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:64
+#, no-c-format
+msgid "Syntax: %s"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:65
+#, no-c-format
+msgid "%s"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:67
+#, no-c-format
+msgid "May also be used as %c%s on a channel %s is on."
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:72
+#, no-c-format
+msgid "%s - %s"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:74
+#, no-c-format
+msgid "Commands:"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:77
+#, no-c-format
+msgid "Type HELP <command> for the syntax of a command."
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:83
+#, no-c-format
+msgid "%s is irc services %s on %s (%s)"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:88
+#, no-c-format
+msgid "HELP [command]"
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:88
+#, no-c-format
+msgid "List the commands, or explain one."
+msgstr ""
+
+#: modules/services/irc_services/svc_common.c:90
+#, no-c-format
+msgid "Which services these are, and where they run."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:47
+#, no-c-format
+msgid "%s is not online."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:51
+#, no-c-format
+msgid "%s is %s@%s (%s), on %s."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:55
+#, no-c-format
+msgid "%s is a registered user."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:57
+#, no-c-format
+msgid "%s is a service of the network."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:61
+#, no-c-format
+msgid "INFO <nick>"
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:61
+#, no-c-format
+msgid "Show what the network knows about a nick."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:68
+#, no-c-format
+msgid "Nickname services"
+msgstr ""

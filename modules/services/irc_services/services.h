@@ -33,6 +33,13 @@
  * needs to know.
  */
 
+/* Every file of the module translates with the module's own domain,
+ * loaded from po/ beside the shared object; see doc/readme.translations.
+ * Text in a table is marked N_() and translated where it is shown.
+ */
+#define I18N_DOMAIN svc_i18n
+#include "ircd_i18n.h"
+
 #include "ircd_defs.h"    /* NICKLEN */
 
 #include <time.h>
@@ -135,6 +142,10 @@ extern const struct ServiceCommand* svc_find_command(
   const struct ServiceType* type, const char* name);
 
 /** Answer the user who made a call, by NOTICE from the service.
+ *
+ * The format is translated for the user before it is rendered, so a
+ * literal passed here is a msgid: xgettext extracts it with
+ * --keyword=svc_reply:2, and no _() is needed at the call site.
  * @param[in] call The call being answered.
  * @param[in] fmt printf-style format (ircd_snprintf conversions).
  */
@@ -146,5 +157,8 @@ extern void svc_reply(const struct ServiceCall* call, const char* fmt, ...);
 
 /** Version string of the module, for VERSION. */
 extern const char* svc_module_version(void);
+
+/** The module's translations, or NULL; what I18N_DOMAIN names. */
+extern struct I18nDomain* svc_i18n;
 
 #endif /* INCLUDED_services_h */

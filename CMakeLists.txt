@@ -152,6 +152,7 @@ enable_testing()
 add_subdirectory(ircd)
 add_subdirectory(ircd/test)
 add_subdirectory(modules)
+add_subdirectory(po)
 
 # ---------------------------------------------------------------------------
 # Configuration summary
@@ -174,6 +175,7 @@ message(STATUS "  DPath:               ${IRCU_DPATH}")
 message(STATUS "  CPath:               ${IRCU_CPATH}")
 message(STATUS "  LPath:               ${IRCU_LPATH}")
 message(STATUS "  MPath:               ${IRCU_MPATH}")
+message(STATUS "  POPath:              ${IRCU_POPATH}")
 message(STATUS "  Maximum connections: ${IRCU_MAXCON}")
 message(STATUS "  TLS implementation:  ${IRCU_TLS}")
 message(STATUS "  IPv6:                ${IRCU_ENABLE_IPV6}")

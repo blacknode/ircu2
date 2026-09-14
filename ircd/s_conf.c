@@ -31,6 +31,7 @@
 #include "crule.h"
 #include "db.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "fileio.h"
 #include "gline.h"
 #include "hash.h"
@@ -108,7 +109,7 @@ static void killcomment(struct Client* sptr, const char* filename)
   if (NULL == (file = fbopen(filename, "r"))) {
     send_reply(sptr, ERR_NOMOTD);
     send_reply(sptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
-               ":Connection from your host is refused on this server.");
+               N_(":Connection from your host is refused on this server."));
     return;
   }
   fbstat(&sb, file);
@@ -124,7 +125,7 @@ static void killcomment(struct Client* sptr, const char* filename)
     send_reply(sptr, RPL_MOTD, line);
   }
   send_reply(sptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
-             ":Connection from your host is refused on this server.");
+             N_(":Connection from your host is refused on this server."));
   fbclose(file);
 }
 
@@ -1291,6 +1292,13 @@ int rehash(struct Client *cptr, int sig)
    */
   module_sweep();
 
+  /* Every translation catalog, the core's and each module's, is read
+   * again with the same rules as at start-up: a file that will not parse
+   * keeps its previous version, and the opers hear about it the way they
+   * hear about a broken block.  /REHASH m, l and s never come here.
+   */
+  i18n_rehash();
+
   if (sig != 2)
     restart_resolver();
 
@@ -1299,7 +1307,7 @@ int rehash(struct Client *cptr, int sig)
     sendto_opmask_butone(0, SNO_OLDSNO, "TLS initialization failed during rehash");
     if (MyUser(cptr) && IsAnOper(cptr))
       send_reply(cptr, SND_EXPLICIT | RPL_REHASHING,
-                 ":TLS initialization failed");
+                 N_(":TLS initialization failed"));
   }
 
   auth_close_unused();
@@ -1441,12 +1449,13 @@ int find_kill(struct Client *cptr)
 
     if (EmptyString(deny->message))
       send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
-                 ":Connection from your host is refused on this server.");
+                 N_(":Connection from your host is refused on this server."));
     else {
       if (deny->flags & DENY_FLAGS_FILE)
         killcomment(cptr, deny->message);
       else
-        send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, ":%s.", deny->message);
+        send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
+                   N_(":%s."), deny->message);
     }
     return -1;
   }
@@ -1456,7 +1465,8 @@ int find_kill(struct Client *cptr)
      * find active glines
      * added a check against the user's IP address to find_gline() -Kev
      */
-    send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, ":%s.", GlineReason(agline));
+    send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
+               N_(":%s."), GlineReason(agline));
     return -2;
   }
 

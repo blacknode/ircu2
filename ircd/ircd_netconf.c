@@ -22,6 +22,7 @@
 
 #include "config.h"
 
+#include "ircd_i18n.h"
 #include "client.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
@@ -296,7 +297,7 @@ void config_stats(struct Client *sptr, const struct StatDesc *sd, char *param)
   struct ConfigEntry *entry;
   for (entry = config_list; entry; entry = entry->next) {
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               "%Tu %s :%s",
+               N_("%Tu %s :%s"),
                entry->timestamp, entry->key, entry->value);
   }
 }

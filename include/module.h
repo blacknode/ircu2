@@ -44,6 +44,9 @@
 #ifndef INCLUDED_channel_h
 #include "channel.h"    /* chanmode_t, HasCFlag() */
 #endif
+#ifndef INCLUDED_capab_h
+#include "capab.h"      /* CAPFL_*, CapHas() */
+#endif
 #ifndef INCLUDED_worker_h
 #include "worker.h"     /* struct WorkTask, WorkerMainFn */
 #endif
@@ -61,7 +64,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 7
+#define IRCU_MODULE_ABI 8
 
 /** Description of a module, exported by the shared object.
  *
@@ -260,6 +263,53 @@ extern int module_del_chan_mode(struct ModuleHandle* mod, char mode);
 
 /** Number of channel modes a module currently has registered. */
 extern unsigned int module_chan_mode_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering client capabilities (IRCv3 CAP).
+ *
+ * A module asks for a name and gets a bit position back.  Unlike a channel
+ * mode, the position does not follow from the name and a module must keep
+ * the value it is handed: capabilities are negotiated with a client and
+ * never cross a server link, so two servers have no reason to agree on the
+ * numbering and none is imposed.
+ *
+ * Registering one on a running server announces it with CAP NEW to every
+ * client that asked for cap-notify; removing it, or unloading the module,
+ * announces CAP DEL and clears it from every client that had it, so nobody
+ * is left believing a capability is in force that nothing implements.
+ *
+ * Test the position on a client with CapActive() or HasCap() (client.h).
+ */
+
+/** Register a client capability.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Name as it goes on the wire, e.g. "draft/react".  IRCv3
+ *   names are letters, digits, '-', '.' and '_', optionally prefixed by a
+ *   vendor and a '/'.
+ * @param[in] flags Bitwise combination of CAPFL_* values, or 0.
+ * @param[out] index Receives the position the server assigned, or
+ *   #CAP_NONE on failure.  May be NULL, though a module that never tests
+ *   its own capability has little use for it.
+ * @return Non-zero on success; zero if the name is malformed, if it is
+ *   already registered by the core or by another module, or if the server
+ *   has no free position left.
+ */
+extern int module_add_cap(struct ModuleHandle* mod, const char* name,
+                          unsigned long flags, int* index);
+
+/** Remove a capability this module registered.
+ *
+ * Every client that has it loses it, the same way an unload would do it.
+ * A module cannot remove one of the core's, nor one another module
+ * registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Name to remove.
+ * @return Non-zero if it was found and removed.
+ */
+extern int module_del_cap(struct ModuleHandle* mod, const char* name);
+
+/** Number of capabilities a module currently has registered. */
+extern unsigned int module_cap_count(const struct ModuleHandle* mod);
 
 /*
  * Handing work to another thread.

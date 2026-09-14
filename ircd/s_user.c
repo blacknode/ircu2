@@ -1029,9 +1029,9 @@ hide_hostmask(struct Client *cptr)
    * the new identity in CHGHOST parameters, and others get a later JOIN
    * under it.
    */
-  sendcmdto_capflag_common_channels_butone(cptr, CMD_QUIT, cptr, 0, CAP_CHGHOST,
+  sendcmdto_capflag_common_channels_butone(cptr, CMD_QUIT, cptr, CAP_NONE, CAP_CHGHOST,
                                            ":Registered");
-  sendcmdto_capflag_common_channels_butone(cptr, CMD_CHGHOST, NULL, CAP_CHGHOST, 0,
+  sendcmdto_capflag_common_channels_butone(cptr, CMD_CHGHOST, NULL, CAP_CHGHOST, CAP_NONE,
                                            "%s %s", new_user, new_host);
 
   SetHiddenHost(cptr);
@@ -1052,18 +1052,18 @@ hide_hostmask(struct Client *cptr)
     /* Send a JOIN unless the user's join has been delayed. */
     if (!IsDelayedJoin(chan))
     {
-      sendjointo_channel_butserv(cptr, chan->channel, 0, CAP_CHGHOST);
+      sendjointo_channel_butserv(cptr, chan->channel, CAP_NONE, CAP_CHGHOST);
       if (cli_user(cptr)->away)
         sendcmdto_capflag_channel_butserv_butone(cptr, CMD_AWAY, chan->channel,
           NULL, 0, CAP_AWAYNOTIFY, CAP_CHGHOST, ":%s", cli_user(cptr)->away);
     }
     if (IsChanOp(chan) && HasVoice(chan))
       sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
-                                       0, CAP_CHGHOST, "%H +ov %C %C", chan->channel, cptr,
+                                       CAP_NONE, CAP_CHGHOST, "%H +ov %C %C", chan->channel, cptr,
                                        cptr);
     else if (IsChanOp(chan) || HasVoice(chan))
       sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
-        0, CAP_CHGHOST, "%H +%c %C", chan->channel, IsChanOp(chan) ? 'o' : 'v', cptr);
+        CAP_NONE, CAP_CHGHOST, "%H +%c %C", chan->channel, IsChanOp(chan) ? 'o' : 'v', cptr);
   }
   return 0;
 }

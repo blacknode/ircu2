@@ -22,6 +22,7 @@
 
 #include "channel.h"
 #include "bot.h"
+#include "capab.h"
 #include "client.h"
 #include "db.h"
 #include "hooks.h"
@@ -29,6 +30,7 @@
 #include "ircd_alloc.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
+#include "ircd_snprintf.h"
 #include "ircd_string.h"
 #include "ircd_i18n.h"
 #include "migration.h"
@@ -656,6 +658,90 @@ static void module_drop_chan_modes(struct ModuleHandle *mod) {
   mod->mh_cmodes = 0;
 }
 
+/** Register a client capability on a module's behalf.
+ *
+ * The register in capab.c tracks which module owns each capability, so
+ * there is no per-module list here to keep in step with it: the three
+ * calls below are the module-facing names for what that register already
+ * does, and module_drop_caps() hands it the whole set at unload.
+ *
+ * @param[in] mod Module registering it.
+ * @param[in] name Name as it goes on the wire.
+ * @param[in] flags CAPFL_* flags.
+ * @param[out] index Receives the position assigned, or #CAP_NONE.
+ * @return Non-zero on success.
+ */
+int module_add_cap(struct ModuleHandle *mod, const char *name,
+                   unsigned long flags, int *index) {
+  assert(0 != mod);
+
+  if (index)
+    *index = CAP_NONE;
+
+  if (EmptyString(name))
+    return 0;
+
+  /* A module's capability is never gated by a feature: features are the
+   * core's, and a module that wants a switch of its own has its own
+   * configuration.  It can still take the capability out of service with
+   * cap_update_availability().
+   */
+  return cap_register(mod, name, 0, flags, index);
+}
+
+/** Remove a capability a module registered.
+ * @param[in] mod Module that owns it.
+ * @param[in] name Name to remove.
+ * @return Non-zero if it was found and removed.
+ */
+int module_del_cap(struct ModuleHandle *mod, const char *name) {
+  assert(0 != mod);
+
+  if (EmptyString(name))
+    return 0;
+
+  /* cap_unregister() only looks at this module's own: a module may not
+   * take a capability away from the core or from another module.
+   */
+  return cap_unregister(mod, name);
+}
+
+/** Return how many capabilities a module currently has registered. */
+unsigned int module_cap_count(const struct ModuleHandle *mod) {
+  assert(0 != mod);
+
+  return cap_module_count(mod);
+}
+
+/** Render a module's capability count as "[1 cap]" for /STATS M.
+ * @param[in] mod Module to describe.
+ * @return Pointer to a static buffer, empty if the module has none.
+ */
+static const char *module_cap_chars(const struct ModuleHandle *mod) {
+  static char buf[32];
+  unsigned int count = cap_module_count(mod);
+
+  if (!count)
+    return "";
+
+  ircd_snprintf(0, buf, sizeof(buf), "[%u cap%s]", count,
+                count == 1 ? "" : "s");
+  return buf;
+}
+
+/** Remove every capability a module registered.
+ *
+ * cap_drop_module() announces each one with CAP DEL and clears it from
+ * every client that had it: a client left believing a capability is in
+ * force when nothing implements it any more would go on sending what the
+ * server can no longer understand.
+ *
+ * @param[in] mod Module being torn down.
+ */
+static void module_drop_caps(struct ModuleHandle *mod) {
+  cap_drop_module(mod);
+}
+
 /** Submit a task to the worker pool on a module's behalf.
  * @param[in] mod Module submitting the work.
  * @param[in] task Task to run.
@@ -1129,6 +1215,10 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    */
   module_drop_user_modes(mod);
   module_drop_chan_modes(mod);
+  /* Capabilities go with them, and for the same reason: a client that
+   * negotiated one has to be told it is gone.
+   */
+  module_drop_caps(mod);
 
   for (mod_p = &manager->mod_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {
@@ -1230,7 +1320,8 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
   for (mod = manager->mod_list; mod; mod = mod->mh_next)
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
                N_(":Module %s %s: %u command%s, %u user mode%s%s%s, "
-               "%u channel mode%s%s%s, from modules/%s, loaded by %s"),
+               "%u channel mode%s%s%s, %u capabilit%s%s%s, "
+               "from modules/%s, loaded by %s"),
                mod->mh_info->mi_name, module_version(mod),
                module_command_count(mod),
                module_command_count(mod) == 1 ? "" : "s",
@@ -1241,7 +1332,11 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
                module_chan_mode_count(mod),
                module_chan_mode_count(mod) == 1 ? "" : "s",
                module_chan_mode_count(mod) ? " " : "",
-               module_chan_mode_chars(mod), mod->mh_relpath,
+               module_chan_mode_chars(mod),
+               module_cap_count(mod),
+               module_cap_count(mod) == 1 ? "y" : "ies",
+               module_cap_count(mod) ? " " : "",
+               module_cap_chars(mod), mod->mh_relpath,
                mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
 
   /* Only for modules that actually use workers: on a server where nothing

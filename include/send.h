@@ -14,7 +14,7 @@
 #endif
 
 #ifndef INCLUDED_client_h
-#include "client.h" /* capset_t */
+#include "capab.h" /* CAP_NONE */
 #endif
 
 struct Channel;
@@ -78,15 +78,15 @@ extern void sendcmdto_capflag_common_channels_butone(struct Client *from,
 						     const char *cmd,
 						     const char *tok,
 						     struct Client *one,
-						     capset_t require,
-						     capset_t forbid,
+						     int require,
+						     int forbid,
 						     const char *pattern, ...);
 
 /* Send command to all channel users on this server matching or not matching a capability flag */
 void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *cmd,
 					      const char *tok, struct Channel *to,
 					      struct Client *one, unsigned int skip,
-					      capset_t require, capset_t forbid,
+					      int require, int forbid,
 					      const char *pattern, ...);
 
 /* Send command to all channel users on this server */
@@ -117,8 +117,8 @@ extern void sendcmdto_channel_butone(struct Client *from, const char *cmd,
 /* Send JOIN to all local channel users matching or not matching capability flags */
 extern void sendjointo_channel_butserv(struct Client *from,
 				       struct Channel *chptr,
-				       capset_t require,
-				       capset_t forbid);
+				       int require,
+				       int forbid);
 
 /* Send JOIN to a single user */
 extern void sendjointo_one(struct Client *from,

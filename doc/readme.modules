@@ -365,6 +365,84 @@ Channel modes are counted and listed by /STATS M alongside commands and
 user modes.
 
 
+CLIENT CAPABILITIES
+===================
+
+A module can add an IRCv3 capability -- a name a client negotiates with
+CAP LS and CAP REQ, and that the server then knows is in force for that
+connection.
+
+  static int my_cap;
+
+  if (!module_add_cap(mod, "example.org/react", 0, &my_cap))
+    return -1;               /* name taken, malformed, or no slot left */
+
+Unlike a channel mode, the position is handed out and does NOT follow from
+the name: the server gives you the lowest free one and it can differ
+between servers, between restarts and between loads.  Keep what you are
+given.  A capability is negotiated with one client over one connection and
+never crosses a server link, so there is nothing for two servers to agree
+on and nothing is imposed.
+
+Read it on a client with the macros the core uses:
+
+  if (CapActive(cptr, my_cap))    /* did this client negotiate it? */
+  if (HasCap(cptr, my_cap))       /* did it ask for it? */
+
+The registered capabilities are readable as a list, sorted by name:
+
+  const struct Capability *cap;
+
+  for (cap = cap_first(); cap; cap = cap->cap_next)
+    ...                  /* cap->cap_name, cap->cap_index, cap->cap_flags */
+
+It is a pointer to const, and it is the server's list: a module reads it,
+and changes it only through module_add_cap() and module_del_cap().
+
+A name is what IRCv3 allows: letters, digits, '-', '.' and '_', optionally
+prefixed by a vendor and a single '/'.  Use a vendor prefix of your own --
+"example.org/react" -- or the "draft/" prefix for a specification that has
+one.  Registration fails if the core already has the name, if another
+module took it first, if the module asks twice, or if every position is
+taken (there are CAP_MAX of them, and the core's come first).
+
+Registering the name is half of a capability.  The server will advertise
+it in CAP LS, accept CAP REQ for it and remember that the client has it,
+but it means nothing until the module reads the flag and behaves
+differently -- sends an extra tag, an extra numeric, a message the client
+would not otherwise get.
+
+Two things the server does for you, and you should not do by hand:
+
+  * Registering on a running server sends CAP NEW to every client that
+    negotiated cap-notify, so a capability that appears mid-session is
+    announced rather than merely becoming true.
+
+  * The capability goes away with the module.  On unload the server sends
+    CAP DEL and clears the capability from every local client that had it,
+    so no client is left believing a capability is in force that nothing
+    implements any more -- which would have it go on sending what the
+    server can no longer understand.  A module can give one back while it
+    stays loaded:
+
+      module_del_cap(mod, "example.org/react");
+
+    which does the same.  A module can only remove its own.
+
+A module that wants to take its capability out of service without
+unregistering it -- a backend it depends on went away, say -- uses:
+
+  cap_update_availability(my_cap, 0);   /* CAP DEL; stops being advertised */
+  cap_update_availability(my_cap, 1);   /* CAP NEW; advertised again */
+
+and one that advertises a value to CAP LS 302 clients ("name=value") sets
+it with cap_set_value(my_cap, "..."); the core does this for
+draft/languages.
+
+Capabilities are counted by /STATS M alongside commands, user modes and
+channel modes.
+
+
 HOOKS
 =====
 

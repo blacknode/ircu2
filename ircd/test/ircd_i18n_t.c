@@ -45,7 +45,7 @@ const char* feature_str(enum Feature feat)
 /** The last capability value set. */
 static char stub_cap_value[256];
 
-void cap_set_value(enum Capab cap, const char* value)
+void cap_set_value(int cap, const char* value)
 {
   assert(cap == E_CAP_LANGUAGES);
   ircd_strncpy(stub_cap_value, value, sizeof(stub_cap_value) - 1);

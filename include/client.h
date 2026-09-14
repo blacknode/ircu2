@@ -49,7 +49,6 @@
 #define INCLUDED_sys_types_h
 #endif
 
-#include "capab.h"
 #include "user_flags.h"
 
 struct ConfItem;
@@ -91,9 +90,6 @@ struct UserMode {
  */
 extern const struct UserMode *client_user_modes(void);
 
-/** Value to hold a set of capability bits (from capab.h). */
-typedef unsigned short capset_t;
-
 /** Single element in a flag bitset array. */
 typedef unsigned long flagpage_t;
 
@@ -117,6 +113,26 @@ typedef unsigned long flagpage_t;
 #define FlagSet(set,flag) ((set)->bits[FLAGSET_INDEX(flag)] |= FLAGSET_MASK(flag))
 /** Clear a flag in a flagset. */
 #define FlagClr(set,flag) ((set)->bits[FLAGSET_INDEX(flag)] &= ~FLAGSET_MASK(flag))
+
+/** Number of capability slots, core plus the ones modules register.
+ *
+ * Fixed at compile time so that #Connection has a fixed size: a module
+ * registering a capability must not change the layout of a structure the
+ * server has already allocated.  See capab.h.
+ */
+#define CAP_MAX 128
+
+/** A set of client capabilities, indexed by #Capab (see capab.h). */
+DECLARE_FLAGSET(CapabSet, CAP_MAX);
+
+/** Value to hold a set of capability bits (from capab.h). */
+typedef struct CapabSet capset_t;
+
+/* After capset_t, not with the other includes at the top: capab.h builds
+ * on the set declared just above, and including it any earlier would have
+ * it reach back into a client.h that has not got there yet.
+ */
+#include "capab.h"
 
 /** Size of the buffer client_user_mode_chars() renders into.
  * A mode is one letter, so the list cannot outgrow the alphabet twice
@@ -512,10 +528,13 @@ struct Client {
 #define con_proc(con)		((con)->con_proc)
 /** Get the oper privilege set for the connection. */
 #define con_privs(con)          (&(con)->con_privs)
-/** Get the peer's capabilities for the connection. */
-#define con_capab(con)          ((con)->con_capab)
+/** Get the peer's capabilities for the connection.
+ * A pointer, like con_privs(): a capability set is a bitset that is read
+ * and written in place, never copied around by value.
+ */
+#define con_capab(con)          (&(con)->con_capab)
 /** Get the active capabilities for the connection. */
-#define con_active(con)         ((con)->con_active)
+#define con_active(con)         (&(con)->con_active)
 /** Get the auth request for the connection. */
 #define con_auth(con)		((con)->con_auth)
 /** Get the WebIRC block (if any) used by the connection. */

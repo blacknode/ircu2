@@ -732,7 +732,7 @@ void sendcmdto_common_channels_butone(struct Client *from, const char *cmd,
  */
 void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *cmd,
 					      const char *tok, struct Client *one,
-					      capset_t require, capset_t forbid, const char *pattern, ...)
+					      int require, int forbid, const char *pattern, ...)
 {
   struct VarData vd;
   struct MsgBuf *mb;
@@ -769,8 +769,8 @@ void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *c
           && -1 < cli_fd(cli_from(member->user))
           && member->user != one
           && cli_sentalong(member->user) != sentalong_marker
-          && (require == 0 || CapHas(cli_active(member->user), require))
-          && (forbid == 0 || !CapHas(cli_active(member->user), forbid)))
+          && (require == CAP_NONE || CapHas(cli_active(member->user), require))
+          && (forbid == CAP_NONE || !CapHas(cli_active(member->user), forbid)))
       {
           cli_sentalong(member->user) = sentalong_marker;
           send_buffer(member->user, from, mb, 0, NULL, &tcache);
@@ -780,8 +780,8 @@ void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *c
 
   if (MyConnect(from)
       && from != one
-      && (require == 0 || CapHas(cli_active(from), require))
-      && (forbid == 0 || !CapHas(cli_active(from), forbid)))
+      && (require == CAP_NONE || CapHas(cli_active(from), require))
+      && (forbid == CAP_NONE || !CapHas(cli_active(from), forbid)))
     send_buffer(from, from, mb, 0, NULL, &tcache);
 
   msgq_clean(mb);
@@ -801,7 +801,7 @@ void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *c
 void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *cmd,
 					      const char *tok, struct Channel *to,
 					      struct Client *one, unsigned int skip,
-					      capset_t require, capset_t forbid,
+					      int require, int forbid,
 					      const char *pattern, ...)
 {
   struct VarData vd;
@@ -825,8 +825,8 @@ void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *c
         || (skip & SKIP_DEAF && IsDeaf(member->user))
         || (skip & SKIP_NONOPS && !IsChanOp(member))
         || (skip & SKIP_NONVOICES && !IsChanOp(member) && !HasVoice(member))
-        || (require && !CapHas(cli_active(member->user), require))
-        || (forbid && CapHas(cli_active(member->user), forbid)))
+        || (require != CAP_NONE && !CapHas(cli_active(member->user), require))
+        || (forbid != CAP_NONE && CapHas(cli_active(member->user), forbid)))
         continue;
 
     send_buffer(member->user, from, mb, 0, NULL, &tcache);
@@ -843,8 +843,8 @@ void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *c
  * @param[in] forbid Capability mask to block this message for.
  */
 void sendjointo_channel_butserv(struct Client *from, struct Channel *chptr,
-				capset_t require,
-				capset_t forbid)
+				int require,
+				int forbid)
 {
   sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
     0, require, forbid, "%H", chptr);

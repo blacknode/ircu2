@@ -166,10 +166,19 @@ const char* feature_str(enum Feature feat)
 
 #include "capab.h"
 
-void cap_set_value(enum Capab cap, const char *value)
+/* capab.c is linked in for real, so that module_add_cap() registers into
+ * the register the server uses.  What it calls out to -- announcing a
+ * capability to connected clients -- is what is stubbed here: there are no
+ * clients in a unit test.
+ */
+void cap_new(int cap)
 {
   (void) cap;
-  (void) value;
+}
+
+void cap_del(int cap)
+{
+  (void) cap;
 }
 
 void sendto_opmask_butone(struct Client *one, unsigned int mask,

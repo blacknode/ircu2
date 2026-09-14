@@ -405,7 +405,7 @@ msgstr ""
 
 #: ircd/module.c:1232
 #, no-c-format
-msgid ":Module %s %s: %u command%s, %u user mode%s%s%s, %u channel mode%s%s%s, from modules/%s, loaded by %s"
+msgid ":Module %s %s: %u command%s, %u user mode%s%s%s, %u channel mode%s%s%s, %u capabilit%s%s%s, from modules/%s, loaded by %s"
 msgstr ""
 
 #: ircd/module.c:1256

@@ -25,6 +25,7 @@
 
 #include "ircd.h"
 #include "IPcheck.h"
+#include "capab.h"
 #include "channel.h"
 #include "class.h"
 #include "client.h"
@@ -742,6 +743,9 @@ int main(int argc, char **argv) {
   init_class();
   client_init_user_modes(); /* before module_init(): modules register modes */
   channel_init_chan_modes(); /* likewise, for the channel modes */
+  cap_init();   /* likewise, for the client capabilities: the core's take
+                   the positions enum Capab names before a module can ask
+                   for a free one */
   initwhowas();
   initmsgtree();
   initstats();
@@ -872,6 +876,7 @@ int main(int argc, char **argv) {
    * then stops whatever the core itself started.
    */
   module_close();
+  cap_close();
   worker_shutdown();
   migration_shutdown();
   db_shutdown();

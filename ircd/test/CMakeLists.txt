@@ -105,6 +105,12 @@ add_ircu_test(user_modes_t
   "${IRCU_IRCD_DIR}/client.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c")
 
+add_ircu_test(capab_t
+  capab_stub.c
+  "${IRCU_IRCD_DIR}/capab.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
 add_ircu_test(chan_modes_t
   chan_modes_stub.c
   "${IRCU_IRCD_DIR}/chan_modes.c"
@@ -128,6 +134,7 @@ add_ircu_test(module_t
   module_stub.c
   user_modes_stub.c
   worker_stub.c
+  "${IRCU_IRCD_DIR}/capab.c"
   "${IRCU_IRCD_DIR}/chan_modes.c"
   "${IRCU_IRCD_DIR}/client.c"
   "${IRCU_IRCD_DIR}/db.c"
@@ -164,7 +171,7 @@ function(_ircu_test_module target source subdir)
 endfunction()
 
 foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_umode
-                 mod_cmode mod_core)
+                 mod_cmode mod_cap mod_core)
   _ircu_test_module(${_fixture} ${_fixture} /test)
 endforeach()
 _ircu_test_module(mod_cmd mod_cmd /test/mod_cmd)

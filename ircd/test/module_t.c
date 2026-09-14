@@ -15,6 +15,7 @@
 
 #include "migration.h"
 #include "module.h"
+#include "capab.h"
 #include "channel.h"
 #include "client.h"
 #include "ircd_log.h"
@@ -40,6 +41,12 @@ flag_t mod_umode_flag_two;
  */
 chanmode_t mod_cmode_flag_one;
 chanmode_t mod_cmode_flag_two;
+
+/** Written by mod_cap with the positions the server assigned it, so the
+ * test can check they are real and distinct without knowing which ones.
+ */
+int mod_cap_index_one;
+int mod_cap_index_two;
 
 /* Defined by module_stub.c. */
 extern int stub_commands_live;
@@ -589,6 +596,107 @@ static void test_chan_mode_explicit_removal(void)
   printf("Passed: explicit channel mode removal\n");
 }
 
+/** A module's capabilities reach the register and are reverted on unload,
+ * whether or not the module removed them itself.
+ */
+static void test_cap_registration(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = cap_count();
+
+  mod = module_load("mod_cap", 0, 0);
+  assert(mod != 0);
+
+  assert(module_cap_count(mod) == 2);
+  assert(cap_count() == before + 2);
+
+  /* Unlike a channel mode, the position does not follow from the name:
+   * the server hands out whatever is free, so all the module may assume
+   * is that it got something real, distinct, and not one of the core's.
+   */
+  assert(mod_cap_index_one != CAP_NONE);
+  assert(mod_cap_index_two != CAP_NONE);
+  assert(mod_cap_index_one != mod_cap_index_two);
+  assert(mod_cap_index_one >= CAP_LAST_CORE_CAP && "a core position was reused");
+  assert(mod_cap_index_two >= CAP_LAST_CORE_CAP);
+
+  assert(cap_find("example.org/one") != 0);
+  assert(cap_find("example.org/one")->cap_index == mod_cap_index_one);
+  assert(cap_find("example.org/one")->cap_owner == mod);
+  assert(cap_find("example.org/two")->cap_index == mod_cap_index_two);
+  assert(cap_find("example.org/two")->cap_flags & CAPFL_STICKY);
+  assert(cap_find_index(mod_cap_index_one) == cap_find("example.org/one"));
+
+  assert(module_unload(mod) != 0);
+
+  assert(cap_count() == before);
+  assert(cap_find("example.org/one") == 0);
+  assert(cap_find("example.org/two") == 0);
+  assert(cap_find_index(mod_cap_index_one) == 0);
+  /* The core's are untouched. */
+  assert(cap_find("echo-message") != 0);
+
+  printf("Passed: module capabilities are reverted on unload\n");
+}
+
+/** A module can remove its own capability, and nobody else's. */
+static void test_cap_explicit_removal(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = cap_count();
+
+  mod = module_load("mod_cap", 0, 0);
+  assert(mod != 0);
+  assert(module_cap_count(mod) == 2);
+
+  assert(module_del_cap(mod, "example.org/one") != 0);
+  assert(module_cap_count(mod) == 1);
+  assert(cap_find("example.org/one") == 0);
+
+  /* Removing it again finds nothing, and neither does reaching for one
+   * the core owns.
+   */
+  assert(module_del_cap(mod, "example.org/one") == 0);
+  assert(module_del_cap(mod, "echo-message") == 0);
+  assert(cap_find("echo-message") != 0 && "a core capability survived the attempt");
+  assert(module_del_cap(mod, "") == 0);
+  assert(module_del_cap(mod, 0) == 0);
+
+  assert(module_unload(mod) != 0);
+  assert(cap_count() == before);
+
+  printf("Passed: explicit capability removal\n");
+}
+
+/** Repeated load/unload neither leaks positions nor strands them. */
+static void test_cap_cycles(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = cap_count();
+  int first_run;
+  int i;
+
+  mod = module_load("mod_cap", 0, 0);
+  assert(mod != 0);
+  first_run = mod_cap_index_one;
+  assert(module_unload(mod) != 0);
+
+  for (i = 0; i < 50; i++) {
+    mod = module_load("mod_cap", 0, 0);
+    assert(mod != 0);
+    assert(cap_count() == before + 2);
+    assert(module_unload(mod) != 0);
+    assert(cap_count() == before);
+  }
+
+  /* A freed position is handed straight back out, so fifty cycles do not
+   * walk the register up towards CAP_MAX.
+   */
+  assert(mod_cap_index_one == first_run);
+
+  printf("Passed: capability load/unload cycles reuse the position\n");
+}
+
 /** Repeated load/unload neither leaks slots nor changes the bit. */
 static void test_chan_mode_cycles(void)
 {
@@ -723,6 +831,7 @@ static void test_reject_reserved_name(void)
 int main(void)
 {
   channel_init_chan_modes();
+  cap_init();
   module_init();
   client_init_user_modes();
 
@@ -750,6 +859,9 @@ int main(void)
   test_chan_mode_explicit_removal();
   test_chan_mode_cycles();
   test_chan_mode_advertised();
+  test_cap_registration();
+  test_cap_explicit_removal();
+  test_cap_cycles();
   test_migrations_loaded();
   test_module_without_migrations();
   test_reject_bad_migrations();

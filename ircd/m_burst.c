@@ -559,10 +559,10 @@ int ms_burst(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
 	  {
 	    add_user_to_channel(chptr, acptr, current_mode, oplevel);
 	    if (!(current_mode & CHFL_DELAYED)) {
-	      sendjointo_channel_butserv(acptr, chptr, 0, 0);
+	      sendjointo_channel_butserv(acptr, chptr, CAP_NONE, CAP_NONE);
               if (cli_user(acptr)->away)
                 sendcmdto_capflag_channel_butserv_butone(acptr, CMD_AWAY, chptr,
-                  NULL, 0, CAP_AWAYNOTIFY, 0, ":%s", cli_user(acptr)->away);
+                  NULL, 0, CAP_AWAYNOTIFY, CAP_NONE, ":%s", cli_user(acptr)->away);
               }
 	  }
 	  else

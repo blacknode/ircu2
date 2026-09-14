@@ -256,6 +256,24 @@ every `.po` in the tree and fails on any rejected entry; the `pot` target
 regenerates `po/core.pot` and each module's `po/<name>.pot` with xgettext.
 Nothing here may run on a worker thread.
 
+**Client capabilities** (`include/capab.h`, `ircd/capab.c`, `ircd/m_cap.c`).
+IRCv3 CAP names a client negotiates. A capability is a bit position in the two
+`capset_t` bitsets every connection carries — `cli_capab()` (asked for) and
+`cli_active()` (in force), both `CAP_MAX` bits wide — tested with `CapHas()` /
+`CapActive()`. `ircd/capab.c` is the run-time register (`cap_first()`,
+`cap_find()`, `cap_register()`), the same shape as the user- and channel-mode
+registers, so a module adds its own with `module_add_cap()`; `ircd/m_cap.c` is
+only the protocol on top (CAP LS/REQ/ACK/LIST, and `cap_new()`/`cap_del()`,
+which is why the register can be unit-tested without a client — `capab_t`).
+The core's own come from `CAPLIST` and take the positions `enum Capab` names
+before any module can ask; a module's position is handed out, does *not*
+follow from the name (capabilities never cross a server link, so nothing has
+to agree on it) and must be kept, not recomputed. Registering on a running
+server sends `CAP NEW`; unregistering, or unloading the module, sends `CAP DEL`
+and clears the bit from every local client. The `require`/`forbid` arguments of
+the `sendcmdto_*_capab_*()` calls are positions, with `CAP_NONE` for "no
+requirement" — never `0`, which is a valid position.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact

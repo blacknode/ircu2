@@ -1,22 +1,24 @@
 # Propuesta 006 — De IRC a comunicaciones unificadas: texto enriquecido, voz, vídeo y pantalla compartida
 
-**Estado:** hoja de ruta, aceptada parcialmente (revisión 2)
+**Estado:** hoja de ruta, aprobada con correcciones (revisión 3).
+Fase 0 **en curso**: el registro de capacidades está implementado (§5.1).
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
-**Introduce:** nada todavía; define el orden en que se introduce lo demás
+**Introduce:** `include/capab.h` + `ircd/capab.c` (ya); el resto, por fases
 
-**Cambios respecto a la revisión 1** (decisiones tomadas):
-1. Se añaden **hooks genéricos de comando** (`HOOK_COMMAND_PRE`/`POST`), §5.7.
-2. El historial evalúa **MongoDB** además de PostgreSQL, §7.1.
-3. Las cuentas se basan en **email**; un email agrupa varias cuentas, §6.2.
-4. **Workspaces/namespaces: descartado por ahora**, §6.3.
-5. **SASL y `ACCOUNT` vuelven, y van al core**, §6.1.
-6. **SHA-256, AES-256, Argon2 y bcrypt al core** con prefijo `ircd_*`, §5.8.
-7. **RTC con implementación propia**, sin adoptar un SFU de terceros, §7.5.
-8. **Cliente web y móvil entran en el roadmap** como fase propia, §7.7.
-9. **HTTP es un módulo**, con registro en el core y comprobación por el
-   consumidor, §7.4.
-10. **Aislamiento de módulos** pasa a ser una fase, §7.8.
+**Correcciones sobre la revisión 2** (aprobación con cambios):
+1. Una cuenta **es un nickname, sin excepción**, y un email agrupa **como
+   máximo tres**, §6.2.
+2. **MongoDB descartado.** El historial va sobre PostgreSQL y sólo sobre
+   PostgreSQL, §7.1.
+3. **WebRTC aplazado.** Voz, vídeo y pantalla compartida salen del roadmap
+   activo y se retomarán más adelante, §7.5.
+
+**Decisiones que vienen de la revisión 2 y siguen en pie:** hooks genéricos
+de comando (§5.7), workspaces descartados (§6.3), SASL y `ACCOUNT` en el core
+(§6.1), criptografía `ircd_*` en el core (§5.8), HTTP como módulo con registro
+en el core (§7.4), clientes web y móvil en el roadmap (§7.7), aislamiento de
+módulos como fase (§7.7).
 
 ---
 
@@ -89,7 +91,7 @@ SASL, ni `ACCOUNT`. Se revierte esta decisión; ver §6.
 mensaje es `char rewrite[BUFSIZE]` (`ircd_relay.c:147`). Los tags sí tienen
 8191 bytes (`TAGSLEN`), pero el cuerpo no.
 
-### 3.4 `capset_t` es de 16 bits — el bloqueo duro
+### 3.4 `capset_t` es de 16 bits — el bloqueo duro (**resuelto**, §5.1)
 `typedef unsigned short capset_t;` (`include/client.h:95`), y la lista de
 capacidades es una macro-X en tiempo de compilación (`include/capab.h`). Hay
 **9 capacidades usadas de 16: quedan 7 libres**, y un módulo no puede registrar
@@ -119,7 +121,7 @@ El WebSocket es sólo un *upgrade* que transporta líneas IRC.
 
 ### 3.9 Los módulos no tienen aislamiento
 Un módulo con un fallo de memoria corrompe el estado del core y tumba el
-servidor — y, por el efecto de un split, perturba la red. Ver §7.8.
+servidor — y, por el efecto de un split, perturba la red. Ver §7.7.
 
 ---
 
@@ -151,13 +153,47 @@ Esto aplica igual al HTTP (§7.4) y a cualquier servicio futuro entre módulos.
 
 Todo lo de esta sección es trabajo de core y sube `IRCU_MODULE_ABI` a 8.
 
-### 5.1 Capacidades dinámicas
-- `capset_t` de 16 bits → mapa de bits de tamaño fijo (como `flag_t` en
-  `user_flags.h`), con 64–128 posiciones.
-- Tabla de capacidades en tiempo de ejecución, como se hizo con los modos en
-  003: `module_add_cap(mod, "draft/react", flags, &cap)` devuelve la posición,
-  y se revierte al descargar el módulo con `CAP DEL` a quien tenga
-  `cap-notify`. `cap_new()`/`cap_del()`/`cap_update_availability()` ya existen.
+### 5.1 Capacidades dinámicas — **implementado**
+
+Era el bloqueo duro y ya no lo es. Lo que hay en el árbol:
+
+- `capset_t` pasa de `unsigned short` a un mapa de bits de **128 posiciones**
+  (`DECLARE_FLAGSET(CapabSet, CAP_MAX)` en `client.h`, la misma maquinaria que
+  `struct Privs`). `cli_capab()` y `cli_active()` devuelven un puntero, como
+  `con_privs()`, de modo que los ~30 `CapHas(cli_active(x), CAP_Y)` del árbol
+  no cambiaron ni una letra.
+- `CAP_*` deja de ser una máscara y pasa a ser una **posición**. Donde una
+  capacidad es opcional — los argumentos `require`/`forbid` de
+  `sendcmdto_*_capab_*()` — se pasa `CAP_NONE`, nunca `0`: cero es ahora una
+  posición válida (`away-notify`).
+- **`ircd/capab.c`** es el registro en tiempo de ejecución, con la misma forma
+  que los registros de modos de 003: `cap_first()`, `cap_find()`,
+  `cap_find_index()`, `cap_register()`, `cap_unregister()`,
+  `cap_drop_module()`. Ordenado por nombre, así que `CAP LS` sale igual se
+  cargue el módulo cuando se cargue.
+- **`ircd/m_cap.c`** queda como sólo el protocolo por encima: `CAP LS/REQ/
+  ACK/LIST`, `cap_new()`, `cap_del()`. La separación es la de
+  `migration.c` frente a `migration_run.c`, y es lo que permite probar el
+  registro sin cliente ninguno (`capab_t`).
+- **`module_add_cap()` / `module_del_cap()` / `module_cap_count()`** en el API,
+  `IRCU_MODULE_ABI` a **8**. Al descargar el módulo se manda `CAP DEL` y se
+  quita el bit a todos los clientes locales.
+- La posición de una capacidad de módulo **se reparte, no se deriva del
+  nombre**: una capacidad se negocia con un cliente y no cruza un enlace, así
+  que no hay nada en que dos servidores tengan que coincidir. Es la diferencia
+  con los modos de canal de 003, y está dicha en `doc/readme.modules`.
+
+Pruebas: `capab_t` (registro: siembra del core en las posiciones que nombra
+`enum Capab`, validación de nombres, reparto y devolución de posiciones,
+agotamiento a `CAP_MAX`, los bitsets), `module_t` (registro desde módulo, borrado
+explícito, reversión al descargar, 50 ciclos de carga/descarga) y comprobación
+del protocolo contra un servidor real: `CAP LS`, `CAP LS 302` con valor,
+`CAP REQ`/`ACK`, `CAP LIST`, negación y `NAK`.
+
+De paso, un fallo que estaba ahí: `cap_new()` y `cap_del()` recorrían
+`i < HighestFd`, saltándose el descriptor más alto — el resto del árbol usa
+`i <= HighestFd`. Ese cliente no se enteraba de un `CAP NEW` ni perdía la
+capacidad en un `CAP DEL`.
 
 ### 5.2 Longitud de línea
 - `draft/multiline` + `BATCH`: la respuesta estándar y federable a los 512
@@ -183,7 +219,7 @@ operación queda suspendida con su contexto, y el módulo la reanuda con
 Requiere congelar el estado del cliente mientras tanto y un plazo máximo.
 Es lo que hace posible autenticar contra un almacén externo sin parar el
 servidor — y, más adelante, lo que hace viable el aislamiento de módulos
-(§7.8), porque un módulo fuera de proceso responde por fuerza de forma
+(§7.7), porque un módulo fuera de proceso responde por fuerza de forma
 asíncrona.
 
 ### 5.6 Puntos de extensión que faltan
@@ -412,41 +448,66 @@ política, vive en un módulo `identity` con sus propias migraciones, y se
 resuelve por el hook asíncrono de §5.5 más el hash en un worker (§5.8). El core
 habla el protocolo; el módulo decide si la contraseña es correcta.
 
-### 6.2 El modelo: un email, varias cuentas
+### 6.2 El modelo: un email, hasta tres cuentas, y una cuenta es un nick
 
-**Decisión tomada.** La credencial es el **email**; una cuenta es una identidad
-en la red; **un email agrupa varias cuentas**.
+**Decisión tomada.** La credencial es el **email**; una cuenta **es un
+nickname, sin excepción**; un email agrupa **como máximo tres cuentas**.
 
 ```
   identity (email)                    account
   ────────────────                    ───────
-  email          ◄── credencial       name        ◄── lo que se ve en la red
+  email          ◄── credencial       nick        ◄── ES el nickname
   password_hash      (argon2)         identity_id
-  mfa_secret         (aes-256-gcm)    display_name
-  sso_subject                         created_at
-  verified_at                         is_default
-  created_at                          suspended_at
+  mfa_secret         (aes-256-gcm)    created_at
+  sso_subject                         is_default
+  verified_at                         suspended_at
+  created_at
        │                                   ▲
-       └───────────── 1 : N ───────────────┘
+       └──────────── 1 : N ────────────────┘
+                   N <= 3
 ```
 
-Consecuencias, todas deliberadas:
+Que la cuenta **sea** el nick, y no un nombre aparte, quita de en medio la
+pregunta que más complica un sistema de cuentas sobre IRC — «¿qué relación hay
+entre el nick que uso y la cuenta a la que estoy identificado?». Aquí no hay
+relación que mantener: son lo mismo. Lo que se sigue de ahí:
 
-- **Una persona, varias identidades en la red.** Cuenta personal y cuenta de
-  bot bajo el mismo email; una persona con dos roles; alias separados. Es lo
-  que Undernet nunca permitió y lo que un producto moderno da por supuesto.
+- **Registrar una cuenta es registrar un nick.** El nombre de la cuenta pasa
+  las mismas comprobaciones que un nick (`NICKLEN`, el juego de caracteres de
+  `ircd_chattr`, la comparación insensible a mayúsculas de `ircd_strcmp`) y
+  colisiona con los nicks en uso exactamente igual.
+- **`+r` recupera su significado literal.** Hoy `+r` significa «identificado al
+  nick que uso» (`doc/readme.accounting`), y con este modelo eso sigue siendo
+  cierto sin excepciones: si estás identificado, el nick que llevas es tu
+  cuenta. Lo que cambia no es el significado de `+r`, es quién puede
+  concederlo y cómo se prueba.
+- **Cambiar de nick es cambiar de cuenta, o dejar de estar identificado.** Es
+  la regla que hay que decidir explícitamente y documentar; la actual
+  (`doc/readme.accounting`: un cambio de nick limpia `+r` en todos los
+  servidores) sigue siendo la correcta y no hay que tocar nada.
+- **El límite de tres es del email, no del servidor.** Se comprueba al
+  registrar, en el módulo `identity`, y el número es configuración.
+
+**Consecuencia que conviene ver ahora y no al implementar:** una persona no
+tiene un nombre de visualización libre. Su nombre visible es un nick de
+`NICKLEN` caracteres, único en la red. Un producto tipo Slack normalmente
+enseña «María García» junto a un `@handle`; aquí el `@handle` es la identidad y
+el nombre bonito hay que llevarlo aparte, por `setname` o `metadata-2`, sin que
+nada dependa de él. Es coherente con haber descartado los workspaces (§6.3):
+mientras el espacio de nombres sea plano y global, el nick es la identidad.
+
+Lo demás del modelo no cambia:
+
 - **La recuperación, la verificación, el 2FA y el SSO cuelgan del email**, no
-  de la cuenta. Se implementan una vez.
-- **Al autenticar hay que elegir cuenta.** `ACCOUNT LOGIN <email> <password>
-  [<cuenta>]`; sin el tercer parámetro se usa la marcada por defecto. En SASL
-  el mismo dato viaja en el `authzid` (la identidad que se quiere asumir),
-  que es exactamente para lo que existe ese campo en el protocolo.
+  de la cuenta. Se implementan una vez para las tres.
+- **Al autenticar hay que elegir cuál de las tres.** `ACCOUNT LOGIN <email>
+  <password> [<nick>]`; sin el tercer parámetro se usa la marcada por defecto.
+  En SASL el mismo dato viaja en el `authzid`, que es exactamente para lo que
+  ese campo existe.
 - **El email no se publica nunca.** No aparece en `WHOIS`, ni en ningún
-  numeric, ni cruza P10. Lo que viaja por la red es el nombre de cuenta. Esto
-  es requisito de privacidad y hay que imponerlo en el código, no confiarlo al
-  criterio de quien escriba el siguiente módulo.
-- **El nick sigue siendo el identificador de enrutado**, distinto de la cuenta.
-  El nombre visible va por `setname`/`metadata-2`.
+  numeric, ni cruza P10. Lo que viaja por la red es el nick. Es requisito de
+  privacidad y hay que imponerlo en el código y verificarlo con pruebas, no
+  confiarlo al criterio de quien escriba el siguiente módulo.
 
 ### 6.3 Workspaces y namespaces: descartado por ahora
 
@@ -466,84 +527,50 @@ alta, porque condiciona el modelo de negocio.
 
 ---
 
-## 7. Fases 2 a 8 — El producto
+## 7. Fases 2 a 7 — El producto
 
-### 7.1 Fase 2 — Historial, y la evaluación de MongoDB
+### 7.1 Fase 2 — Historial, sobre PostgreSQL
 
-#### La corrección técnica primero
+**Decisión tomada: MongoDB descartado.** El historial va sobre PostgreSQL y
+sólo sobre PostgreSQL. Queda anotado por qué, para no volver a discutirlo
+dentro de un año:
 
-**La búsqueda en MongoDB no es O(1).** Conviene fijarlo antes de decidir sobre
-esa base:
+- **La complejidad no distingue a los dos motores.** Los índices de MongoDB son
+  B-tree, igual que los de PostgreSQL: una búsqueda por igualdad es O(log n) en
+  ambos. Los índices `hashed` de Mongo sí son de dispersión, pero sólo sirven
+  para igualdad exacta — no para rangos ni para ordenar — y su propósito real
+  es repartir *shards*. El acceso del historial es intrínsecamente un rango
+  ordenado (`CHATHISTORY BEFORE <msgid> LIMIT 50`), así que un índice de
+  dispersión no es aplicable en ninguno de los dos. La búsqueda de texto es un
+  índice invertido en ambos y tampoco es O(1) en ninguno.
+- **Lo que Mongo aportaría es sharding de escritura, TTL y change streams.** Lo
+  que PostgreSQL aporta y ya está aquí es particionado declarativo por tiempo,
+  índices BRIN — minúsculos y hechos para datos ordenados en el tiempo —,
+  búsqueda de texto integrada (`tsvector` + GIN), y la misma base que las
+  cuentas, con lo que un borrado por usuario es una transacción y no una
+  coreografía entre dos motores.
+- **El coste no es escribir el driver, es `include/db.h`.** Está diseñado sobre
+  SQL: `struct DbQuery` es texto con marcadores `$n`, `struct DbParam` son
+  parámetros posicionales, y una migración es un *script* SQL con `up`/`down`
+  dentro de una transacción. Un driver de Mongo obliga a generalizar todo eso a
+  una segunda forma, con el riesgo de dejar la abstracción en el mínimo común
+  denominador de dos motores que no se parecen.
 
-- Los índices de MongoDB son **B-tree**: una búsqueda por igualdad es
-  **O(log n)**, igual que en PostgreSQL.
-- MongoDB tiene índices `hashed`, que sí son de dispersión, pero **sólo sirven
-  para igualdad exacta**: no sirven para rangos ni para ordenar. Su propósito
-  real es repartir *shards*, no acelerar consultas.
-- El acceso del historial **es intrínsecamente un rango**: `CHATHISTORY BEFORE
-  <msgid|timestamp> LIMIT 50` es «los 50 anteriores a este punto, en orden».
-  Eso necesita un índice **ordenado**, de forma que un índice de dispersión no
-  es aplicable ni en Mongo ni en ningún otro motor.
-- La **búsqueda de texto** no es O(1) en ningún motor: es un índice invertido.
-  Mongo ofrece `$text` (limitado) o Atlas Search (Lucene, servicio aparte);
-  PostgreSQL ofrece `tsvector` + GIN. Comparables.
+**El diseño, entonces:**
 
-Con la consulta real del producto — un rango ordenado por tiempo dentro de un
-canal — **los dos motores dan lo mismo: O(log n) para localizar el extremo del
-rango y lectura secuencial del resto**. La elección, por tanto, no se decide
-por complejidad algorítmica.
-
-#### Dónde sí se diferencian
-
-| | PostgreSQL (ya integrado) | MongoDB |
-|---|---|---|
-| Escalado de escritura | Vertical; particionado declarativo por tiempo | **Sharding horizontal nativo** |
-| Índices para series temporales | **BRIN**: minúsculo y perfecto para datos ordenados en el tiempo | Índices normales |
-| Retención automática | Borrado de particiones (instantáneo) | **Índices TTL** |
-| Esquema flexible por mensaje | JSONB | Nativo |
-| Búsqueda de texto | GIN + `tsvector`, integrado | `$text` (flojo) o Atlas Search (aparte) |
-| Transacción con las cuentas | **Sí, es la misma base** | No (bases distintas) |
-| Notificación de cambios | `LISTEN`/`NOTIFY` | **Change streams** |
-| Coste de integración aquí | **Cero: ya está hecho** | Alto, ver abajo |
-
-#### El coste real de un driver MongoDB
-
-No es escribir el driver: es que **`include/db.h` está diseñado sobre SQL**.
-`struct DbQuery` es texto SQL con marcadores `$n`; `struct DbParam` son
-parámetros posicionales; `include/migration.h` son *scripts* SQL con `up`/`down`
-y cada migración es una transacción. Nada de eso describe una operación de
-Mongo. Un driver de Mongo obliga a:
-
-1. generalizar `struct DbQuery` a una segunda forma (documento/comando), con el
-   riesgo de convertir la abstracción en el mínimo común denominador de dos
-   motores que no se parecen;
-2. decidir qué significa una migración cuando no hay esquema;
-3. añadir `libmongoc` como dependencia de compilación del módulo.
-
-#### Recomendación
-
-**Empezar en PostgreSQL. No descartar Mongo, aplazarlo.** En concreto:
-
-- El módulo `history` define **su propia interfaz interna de almacén** y la
-  implementa primero sobre el driver PostgreSQL. La forma de la consulta —
-  `latest`, `before`, `after`, `around`, `between`, `targets` — se expresa en
-  esa interfaz, no en SQL suelto por el código.
-- Tabla particionada por mes, índice BRIN sobre el tiempo, GIN para búsqueda,
-  clave primaria `msgid`.
-- **El criterio para traer Mongo es medido, no estético:** cuando el volumen de
-  escritura sostenido exceda lo que una instancia de PostgreSQL con
-  particionado absorbe, y el cuello sea de escritura y no de consulta. En ese
-  punto el trabajo es una implementación más de la interfaz interna, y la
-  generalización de `db.h` se hace con un caso de uso real delante en vez de
-  por anticipado.
-- Si se decide adoptar Mongo igualmente desde el principio, **el prerrequisito
-  es la generalización de `struct DbQuery`**, y eso pertenece a la fase 0.
-
-#### El resto de la fase
-
-- Captura en `HOOK_MESSAGE_DELIVERED` (§5.6), no en el hook de origen local.
+- Tabla **particionada por mes**, clave primaria `msgid`, índice **BRIN** sobre
+  el tiempo, **GIN** sobre el texto para la búsqueda.
+- El módulo `history` define **su propia interfaz interna de almacén** — la
+  forma de la consulta (`latest`, `before`, `after`, `around`, `between`,
+  `targets`) se expresa ahí, no en SQL suelto repartido por el código. No es
+  por dejar la puerta abierta a otro motor: es que el código de la sala no
+  tiene por qué saber SQL, y una interfaz explícita es lo que hace que la
+  retención y el borrado tengan un único sitio donde ocurrir.
+- Captura en `HOOK_MESSAGE_DELIVERED` (§5.6), no en el hook de origen local,
+  que no ve lo que llega de otros servidores (§3.5).
 - Escrituras por el driver asíncrono; **nunca** en el hilo del event loop.
-- `CHATHISTORY LATEST|BEFORE|AFTER|AROUND|BETWEEN|TARGETS`, dentro de un `BATCH`.
+- `CHATHISTORY LATEST|BEFORE|AFTER|AROUND|BETWEEN|TARGETS`, dentro de un
+  `BATCH`.
 - Retención, purga, exportación y **borrado por cuenta**: requisito legal, se
   diseña aquí y no se añade al final.
 - **Topología:** cada servidor escribe lo que entrega y la deduplicación por
@@ -618,86 +645,55 @@ Sobre esto se construyen los ficheros:
 Lo mismo vale para webhooks entrantes y para una API REST de integraciones: son
 rutas sobre el mismo proveedor.
 
-### 7.5 Fase 6 — Voz, vídeo y pantalla compartida, con implementación propia
+### 7.5 Voz, vídeo y pantalla compartida — **aplazado**
 
-**Decisión tomada: no se adopta un SFU de terceros.** Lo que sigue respeta esa
-decisión y la hace ejecutable, con una advertencia dicha una sola vez y en
-serio: **un SFU completo es un producto por derecho propio** — ICE, DTLS-SRTP,
-RTP/RTCP, simulcast, estimación de ancho de banda, NACK/PLI, jitter, recuperación
-de pérdidas. Escrito desde cero, de verdad desde cero, son años. La manera de
-hacerlo propio sin que eso ocurra es la de esta fase: **implementación propia
-sobre primitivas, no sobre un SFU ajeno**, y en tres saltos que entregan valor
-cada uno.
+**Decisión tomada: fuera del roadmap activo.** WebRTC se retomará más adelante,
+con su propia propuesta. Lo que sigue es lo que hay que conservar de la
+discusión para que retomarlo no sea empezar de cero.
 
-```
-  Cliente ──── señalización (WebSocket/IRC) ────►  ircd  ── módulo rtc
-     │                                               │     (quién puede, a qué sala)
-     │                                               └──►  emite credenciales TURN
-     │                                                     y tokens de sala
-     │
-     └──────────── medios (SRTP/DTLS) ──────────►  F6a: el otro cliente (P2P)
-                                                   F6b: nuestro SFU
-```
+**Por qué aplazarlo es razonable.** Es la única parte del producto que no
+depende de ninguna otra y de la que ninguna otra depende: la señalización se
+apoya en el estado de canal, que ya existe, y nada de lo que se construya en
+las fases 2 a 7 cambia por haberlo pospuesto. Aplazarlo no crea deuda; hacerlo
+antes que el historial y la identidad, sí habría desplazado esfuerzo desde lo
+que sostiene el producto hacia lo que lo enseña.
 
-#### F6a — Señalización y llamadas P2P. **Aquí ya hay producto.**
+**Lo que quedó decidido y sigue valiendo cuando se retome:**
 
-La observación que ordena toda la fase: **una llamada de 1 a 1, y un grupo
-pequeño en malla, no necesitan SFU en absoluto.** WebRTC conecta a los pares
-directamente. Con sólo el módulo de señalización y un TURN, se tienen llamadas
-de voz, de vídeo **y pantalla compartida** funcionando entre dos personas y en
-grupos de hasta tres o cuatro.
-
-- Módulo `rtc` con comando y token P10 propios:
-  `RTC START|JOIN|LEAVE|OFFER|ANSWER|CANDIDATE|END`.
-- **Autorización:** quién puede iniciar una llamada en un canal y quién puede
-  unirse sale de la pertenencia y de los modos — el estado que el ircd ya tiene
-  y que nadie más tiene. Ésta es la razón de que la señalización viva aquí.
-- **Estado visible:** modo de canal registrado por el módulo, lista de
-  participantes, presencia en la UI.
-- **TURN:** credenciales REST efímeras (HMAC-SHA1, ya disponible; o SHA-256 de
-  §5.8). Se usa **coturn**: un TURN es un relé UDP autenticado, está resuelto
-  desde hace quince años, y escribir uno propio no aporta nada al producto.
+- **El ircd es señalización y autorización, nunca medios.** Un módulo `rtc` con
+  comando y token P10 propios (`RTC START|JOIN|LEAVE|OFFER|ANSWER|CANDIDATE|
+  END`). Quién puede iniciar una llamada en un canal y quién puede unirse sale
+  de la pertenencia y de los modos: el estado que el ircd ya tiene y que nadie
+  más tiene. Ésa es la razón de que la señalización viva aquí y no fuera.
+- **Implementación propia, y se descartaron los SFU de terceros.** Implementación
+  propia quiere decir que **el router es nuestro**, no que reimplementemos los
+  transportes: ICE (`libjuice`/`libnice`), DTLS (OpenSSL), SRTP (`libsrtp2`),
+  SCTP (`usrsctp`). Lo que se escribe es lo diferencial — router de paquetes,
+  selección de capa en simulcast, estimación de ancho de banda, keyframes,
+  salas. Y el SFU es un **proceso aparte**: un fallo en el camino de medios no
+  puede tumbar la red.
+- **Lo primero que se haría al retomarlo no necesita SFU.** Una llamada de 1 a
+  1, y un grupo pequeño en malla, conectan a los pares directamente. Con el
+  módulo de señalización y un TURN ya hay voz, vídeo **y pantalla compartida**
+  entre dos personas y en grupos de tres o cuatro. El SFU es el salto que hace
+  falta a partir de ahí, no el punto de partida.
 - **Pantalla compartida no es una función aparte:** es una pista de vídeo más
-  (`getDisplayMedia`) con su etiqueta. Si la llamada funciona, compartir
-  pantalla es trabajo de cliente.
+  (`getDisplayMedia`) con su etiqueta. Si la llamada funciona, compartirla es
+  trabajo de cliente.
+- **TURN sigue siendo coturn.** Un TURN es un relé UDP autenticado, está
+  resuelto desde hace quince años, y escribir uno propio no aporta nada al
+  producto. Las credenciales REST efímeras se emiten desde el ircd con HMAC
+  (`ircd_sha1.c`, o el `ircd_sha256.c` de §5.8).
+- **El riesgo que motivó aplazarlo:** un SFU completo es un producto por
+  derecho propio, del orden de 12 a 24 meses-persona. Retomarlo será una
+  decisión con usuarios reales delante, no una estimación.
 
-#### F6b — SFU propio
+**Lo que esto cambia en el resto del roadmap:** nada, salvo que §5.8 pierde una
+de sus justificaciones — el sellado de tokens de sala. Las otras tres (hash de
+contraseñas, 2FA, tokens de subida de ficheros) siguen en pie y la fase 0 no se
+toca.
 
-El salto necesario cuando una sala pasa de cuatro personas: en malla, cada
-participante envía su vídeo a todos los demás, y el ancho de banda de subida
-crece con el cuadrado del grupo.
-
-**Implementación propia significa que el router es nuestro, no que
-reimplementemos los protocolos de transporte.** Sobre estas primitivas:
-
-| Pieza | Con qué | Por qué no propio |
-|---|---|---|
-| ICE / STUN | `libjuice` o `libnice` | Protocolo cerrado, sin valor diferencial |
-| DTLS | OpenSSL | Igual |
-| SRTP | `libsrtp2` | Igual; además es la referencia del IETF |
-| SCTP (data channels) | `usrsctp` | Igual |
-| Todo lo anterior junto | `libdatachannel` (C++, API en C) | Atajo razonable para F6b |
-
-**Lo que sí escribimos nosotros, y es donde está el producto:** el router de
-paquetes, la selección de capa en simulcast, la estimación de ancho de banda
-(TWCC), la gestión de keyframes (PLI/FIR), la pertenencia a salas y su enlace
-con la autorización del ircd, y las métricas.
-
-El SFU es un **proceso aparte**, no un módulo del ircd: un fallo en el camino
-de medios no puede tumbar la red. Habla con el ircd por la interfaz que el
-módulo `rtc` defina, y valida los tokens de sala que el ircd emite.
-
-#### F6c — Grabación, transcripción, salas grandes
-
-Sale del SFU hacia afuera y no toca el ircd.
-
-### 7.6 Ordenación realista de la fase 6
-
-F6a depende sólo de la fase 0 y de la autenticación. **Es el camino más corto a
-una demostración con efecto** y conviene hacerlo pronto, incluso antes que el
-historial. F6b es un proyecto en sí mismo y merece su propia propuesta.
-
-### 7.7 Fase 7 — Clientes web y móvil. **Obligatorios**
+### 7.6 Fase 6 — Clientes web y móvil. **Obligatorios**
 
 **Decisión tomada: entran en el roadmap, no son «trabajo de otro equipo».**
 Ningún cliente IRC existente sirve para esto, y un servidor sin cliente no es
@@ -723,7 +719,7 @@ Con los clientes llega el resto del producto: búsqueda sobre el historial,
 integraciones y bots (`bot.c` y `Service{}` ya son la base correcta), consola de
 administración, auditoría (sobre §5.7), retención y exportación.
 
-### 7.8 Fase 8 — Aislamiento de módulos
+### 7.7 Fase 7 — Aislamiento de módulos
 
 **Decisión tomada: hay que considerarlo.** El planteamiento es correcto: hoy un
 módulo con un fallo de memoria corrompe el estado del core, y por el efecto de
@@ -769,77 +765,77 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
 
 ```
   F0 Cimientos (core, ABI 8)
-   │   caps dinámicas · batch/labeled · msgid · multiline
+   │   capacidades dinámicas ✅ · batch/labeled · msgid · multiline
    │   hooks async · hooks de comando · cripto ircd_*
    │
-   ├──► F1 Identidad (SASL + ACCOUNT en core, cuentas por email)
+   ├──► F1 Identidad (SASL + ACCOUNT en core, email → hasta 3 nicks)
    │     │
-   │     ├──► F2 Historial ──► F3 Conversación ──┐
-   │     │                                        │
-   │     ├──► F5 HTTP + ficheros ─────────────────┤
-   │     │                                        ├──► F7 Clientes web y móvil
-   │     └──► F6a Señalización + P2P ─────────────┤
-   │                │                             │
-   │                └──► F6b SFU propio ──────────┘
+   │     ├──► F2 Historial (PostgreSQL) ──► F3 Conversación ──┐
+   │     │                                                     │
+   │     └──► F5 HTTP + ficheros ───────────────────────────────┤
+   │                                                            ├──► F6 Clientes
+   ├──► F4 Texto enriquecido ───────────────────────────────────┘     web y móvil
    │
-   ├──► F4 Texto enriquecido
-   │
-   └──► (F0 §5.5) ──► F8 Aislamiento de módulos
+   └──► (F0 §5.5) ──► F7 Aislamiento de módulos
+
+  Aplazado, sin dependencias en ningún sentido: voz, vídeo y pantalla
+  compartida (§7.5).
 ```
 
-- **F0 bloquea todo.** Con 7 bits de capacidad libres no caben las extensiones.
-- **F6a puede ir justo después de F0 y de la autenticación de F1.** Es el
-  camino más corto a una demostración con voz, vídeo y pantalla compartida.
-- **F4 sólo depende de F0.**
-- **F8 depende de §5.5**, no se puede adelantar.
+- **F0 bloquea todo**, y su primer tramo ya está hecho: con 7 posiciones de
+  capacidad libres no cabía nada, y ahora hay 119.
+- **F4 sólo depende de F0.** Puede ir en paralelo a F1 y F2 con otra persona.
+- **F7 depende de §5.5**, no se puede adelantar.
+- **El equipo de cliente puede empezar en F0** contra un servidor de pruebas.
 
 Órdenes de magnitud, como orientación y no como compromiso (equipo pequeño,
 desarrollador con soltura en el código):
 
 | Fase | Esfuerzo aprox. | Riesgo |
 |---|---|---|
-| F0 Cimientos | 3–4 meses-persona | Medio. Toca el core; los hooks de comando y la cripto suman |
-| F1 Identidad | 2–3 | Medio. El modelo email→cuentas es nuevo, no un port |
+| F0 Cimientos | 3–4 meses-persona (§5.1 hecho) | Medio. Toca el core; los hooks de comando y la cripto suman |
+| F1 Identidad | 2–3 | Medio. El modelo email → nicks es nuevo, no un port |
 | F2 Historial | 3–4 | Medio-alto. Escala y retención |
 | F3 Conversación | 2–3 | Bajo, una vez hay `msgid` |
 | F4 Texto enriquecido | 1–2 | Medio. La degradación a texto plano |
 | F5 HTTP + ficheros | 2–3 | Medio. Infraestructura nueva |
-| F6a Señalización + P2P | 2–3 | Medio. WebRTC y NAT |
-| F6b SFU propio | **12–24** | **Alto. Es un producto aparte** |
-| F7 Clientes web y móvil | 8–14 | Medio-alto. Dos plataformas más el SDK |
-| F8 Aislamiento | 4–6 | Alto. Duplica la superficie de la API de módulos |
+| F6 Clientes web y móvil | 8–14 | Medio-alto. Dos plataformas más el SDK |
+| F7 Aislamiento | 4–6 | Alto. Duplica la superficie de la API de módulos |
+
+Sin WebRTC, el camino hasta un producto usable es **una mensajería de equipo
+completa**: cuentas, historial buscable, hilos, reacciones, texto enriquecido,
+ficheros y clientes en web y móvil. Que es, de hecho, lo que casi todo el mundo
+usa de Slack casi todo el tiempo.
 
 ### Camino corto recomendado (demostración)
-**F0 → autenticación de F1 → F6a.** Un servidor en el que un equipo entra con
-su cuenta, habla en canales y hace llamadas con vídeo y pantalla compartida,
-sin SFU y sin historial. Es la demostración que justifica el resto.
-
----
+**Terminar F0 → F1 → F2 → el cliente web de F6.** Un servidor donde un equipo
+entra con su cuenta, habla en canales, y al reconectar encuentra lo que se dijo
+mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 
 ## 9. Riesgos y decisiones que quedan abiertas
 
-1. **F6b es el riesgo principal del proyecto.** Un SFU propio puede consumir
-   más esfuerzo que todo el resto del roadmap junto. La mitigación es F6a: se
-   entrega producto antes de comprometerse con F6b, y la decisión se toma con
-   usuarios reales delante.
-2. **Un despliegue por organización** mientras no exista el modelo de
-   workspaces (§6.3). Condiciona el modelo de negocio.
-3. **¿Se mantiene la compatibilidad con clientes IRC estándar?** Si es
+1. **¿Se mantiene la compatibilidad con clientes IRC estándar?** Si es
    requisito, toda extensión debe degradar limpiamente y nada puede ser
    obligatorio. Si no lo es, se puede ir más rápido y con un protocolo más
-   limpio. **Afecta a todas las fases y sigue sin decidirse.**
+   limpio. **Afecta a todas las fases y sigue sin decidirse.** Es la única
+   decisión pendiente que puede obligar a rehacer trabajo.
+2. **Un despliegue por organización** mientras no exista el modelo de
+   workspaces (§6.3). Condiciona el modelo de negocio.
+3. **El nick es el nombre visible** (§6.2). `NICKLEN` caracteres, único en toda
+   la red, y sin un nombre de visualización que el producto pueda dar por
+   bueno. Conviene comprobar pronto que la UI se sostiene con eso.
 4. **Escala de P10.** El estado de canal se replica entero en cada servidor.
    Hay que medirlo antes de F2, no después.
 5. **Un core de un solo hilo.** Mientras la persistencia, el hashing y el HTTP
    saliente vayan a *workers*, el modelo aguanta. La regla de que un worker no
    toca estado del core no se negocia.
-6. **Cumplimiento normativo.** Historial + adjuntos + grabación = datos
-   personales, y con el email como credencial, datos identificativos.
-   Retención, exportación, borrado y cifrado en reposo se diseñan en F1 y F2.
+6. **Cumplimiento normativo.** Historial + adjuntos = datos personales, y con
+   el email como credencial, datos identificativos. Retención, exportación,
+   borrado y cifrado en reposo se diseñan en F1 y F2.
 7. **El email no puede filtrarse nunca** (§6.2). Es una propiedad que hay que
    verificar con pruebas, no confiarla a la revisión.
-
----
+8. **Retomar WebRTC** (§7.5) será una propuesta nueva, con la advertencia de
+   esfuerzo que ya quedó escrita allí.
 
 ## 10. Lo que este documento recomienda no hacer
 
@@ -854,27 +850,38 @@ sin SFU y sin historial. Es la demostración que justifica el resto.
   reescriben enteras en cuanto exista `msgid`.
 - **No** ampliar `ircd_parser.y` módulo a módulo: el registro de bloques de
   configuración se hace en F0 y se paga una sola vez.
-- **No** adoptar MongoDB antes de tener una medida que lo justifique (§7.1).
-- **No** escribir un TURN propio: coturn resuelve eso y no es diferencial.
+- **No** volver sobre MongoDB: la decisión está tomada y el razonamiento
+  anotado en §7.1.
+- **No** retomar WebRTC de forma oportunista dentro de otra fase: cuando se
+  retome, será con su propia propuesta (§7.5).
 
 ---
 
-## 11. Primer paso concreto
+## 11. Estado y siguiente paso
 
-El primer cambio de código es pequeño, aislado y verificable:
+**Hecho** (§5.1): capacidades dinámicas. `capset_t` es un mapa de bits de 128
+posiciones, el registro está en `ircd/capab.c`, `m_cap.c` es sólo el protocolo
+por encima, `module_add_cap()` está en el API y `IRCU_MODULE_ABI` es 8.
+Cubierto por `capab_t`, por `module_t` y por una comprobación del protocolo
+contra un servidor real.
 
-1. `capset_t` de 16 bits → mapa de bits, con la lista de capacidades en tiempo
-   de ejecución (el patrón que la propuesta 003 usó para los modos de canal).
-2. `module_add_cap()` en el API, ABI 8.
-3. Prueba unitaria del registro de capacidades y prueba de integración que
-   cargue un módulo con una capacidad propia, verifique `CAP LS`, `CAP NEW` y
-   `CAP DEL`, y compruebe que la descarga la retira de todos los clientes
-   conectados.
+**Siguiente**, en este orden y cada uno verificable por separado:
 
-En paralelo, y sin dependencias con lo anterior, los hooks de comando (§5.7):
-son dos puntos en `ircd/parse.c`, un descriptor en `struct Message` y el
-registro por comando, con `KICK`, `KILL` y `GLINE` como casos de prueba.
+1. **Hooks genéricos de comando** (§5.7). Dos puntos en `ircd/parse.c` — los
+   dos únicos despachos, líneas 1118 y 1433 —, el descriptor `MsgSubject` en
+   `struct Message`, el registro por comando, y las reglas que ya están
+   escritas: origen `+S` excluido, veto sólo válido en local, `POST` omitido
+   tras `CPTR_KILLED`, guardia de reentrada. Casos de prueba: `KICK`, `KILL`,
+   `GLINE`. No depende de nada de lo anterior.
+2. **`msgid`** (§5.4). Es la clave primaria de las cinco cosas que vienen
+   después, así que cuanto antes exista, menos se rehace.
+3. **`BATCH`, `labeled-response` y `draft/multiline`** (§5.2, §5.3). Ahora sí
+   caben: hay 119 posiciones de capacidad libres.
+4. **Criptografía `ircd_*`** (§5.8), con el hashing en *workers* desde el
+   primer día.
+5. **Hooks asíncronos** (§5.5). El más delicado de la fase 0, y el que abre F1
+   y F7.
 
-A partir de ahí, cada fase es una propuesta con su propio documento. Las que ya
-se sabe que lo necesitan: los hooks de comando (§5.7), el modelo de identidad
-(§6), el SFU propio (§7.5) y el aislamiento de módulos (§7.8).
+Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
+necesitan: los hooks de comando (§5.7), el modelo de identidad (§6), el
+aislamiento de módulos (§7.7) y, cuando se retome, WebRTC (§7.5).

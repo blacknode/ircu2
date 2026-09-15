@@ -109,6 +109,11 @@ add_ircu_test(user_modes_t
   "${IRCU_IRCD_DIR}/client.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c")
 
+add_ircu_test(batch_t
+  batch_stub.c
+  "${IRCU_IRCD_DIR}/batch.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
 add_ircu_test(capab_t
   capab_stub.c
   "${IRCU_IRCD_DIR}/capab.c"

@@ -102,6 +102,10 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
     test_msgid.py            # the IRCv3 msgid tag: one name per message across
                              # the network, none at all for a client that did
                              # not ask for message-tags
+  labeled/
+    test_labeled.py          # IRCv3 batch and labeled-response: the answer to a
+                             # named request, and nothing at all for a client
+                             # that did not ask
   trust_username/            # visible vs. real identity: WHOIS, bans, SILENCE, G-lines
 vhost.py               # Python port of the hidden-host cipher (ircd/ircd_vhost.c)
 ```

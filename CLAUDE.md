@@ -297,6 +297,27 @@ whole network agree. It reaches a client only with `message-tags`, so a
 traditional client sees byte-identical lines to before, and S2S only under
 `FEAT_NETWORK_FEATURES`.
 
+**Batches and labeled responses** (`include/batch.h`, `ircd/batch.c`). IRCv3
+`batch` (these messages belong together) and `labeled-response` (a client names
+its request with `@label=`, the server names the answer). The design point is
+that **nothing is buffered**: the batch opens *lazily*, on the first message the
+command actually sends (`label_before_send()`, called from `send_buffer()`), so
+the server never has to know in advance how many replies there will be — if none
+arrives, `label_end()` sends the bare `ACK` instead. `parse_dispatch()` brackets
+the handler with `label_begin()`/`label_end()`, the same window as the msgid.
+Only one label is in flight at a time — a command is dispatched, handled and
+finished before the next line is read — so the state is a single context, not a
+table. `batch_current()`/`batch_label_tag()` are what `msg_tag_format()` renders
+as `@batch=`/`@label=`; the label rides on the opening `BATCH +id` line and on
+the `ACK`, never on the messages inside nor on the closing line. A client needs
+*both* `batch` and `labeled-response` or the label is ignored entirely (the spec
+builds one on the other, and half of it is unreadable). `batch_client_exiting()`
+clears the state for a connection that dies mid-response. Note `MSG_IRCBATCH`
+in `msg.h`: glibc's `<bits/socket.h>` already has an `MSG_BATCH`, so the macro
+is spelled differently while the wire command stays `BATCH`. `label` is the one
+non-`+` tag a client may send — `msg_tag_client_may_send()` in `msg_tag.c` — and
+it goes no further than the command it arrived on.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact

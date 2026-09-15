@@ -25,6 +25,7 @@
 
 #include "parse.h"
 #include "client.h"
+#include "batch.h"
 #include "channel.h"
 #include "handlers.h"
 #include "hash.h"
@@ -1072,6 +1073,17 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
    */
   msg_tag_line_begin(mptr->tok, parse_tags(), htype == SERVER_HANDLER);
 
+  /* A labeled command is answered under its label, so the label is opened
+   * around the handler for the same reason the identifier is: everything
+   * the command sends belongs to it.
+   */
+  if (htype != SERVER_HANDLER) {
+    struct MsgTag *label = msg_tag_find(parse_tags(), "label");
+
+    if (label && label->value)
+      label_begin(from, label->value);
+  }
+
   if (hook_command_active(HOOK_COMMAND_PRE)) {
     memset(&hcc, 0, sizeof(hcc));
     hcc.hcc_cmd = mptr->cmd;
@@ -1091,6 +1103,7 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
        * refusing a join or a nick.
        */
       hook_deny_reply(from, &ctx, ERR_UNKNOWNCOMMAND, mptr->cmd);
+      label_end();
       msg_tag_line_end();
       return 0;
     }
@@ -1118,6 +1131,11 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
 
     hook_run_command(HOOK_COMMAND_POST, &ctx);
   }
+
+  /* Before msg_tag_line_end(), so the BATCH line that closes a labeled
+   * response is still part of the line that opened it.
+   */
+  label_end();
 
   msg_tag_line_end();
 

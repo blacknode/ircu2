@@ -12,6 +12,7 @@
 #include "config.h"
 
 #include "msg_tag.h"
+#include "batch.h"
 #include "capab.h"
 #include "client.h"
 #include "ircd.h"
@@ -401,6 +402,28 @@ msg_tag_have_client_relay(struct MsgTag *tags)
   return 0;
 }
 
+/** Return non-zero if a client is allowed to send \a key.
+ *
+ * Everything else a client puts in front of a line is dropped before the
+ * command is dispatched: a client may not set a server tag, because a tag
+ * the server vouches for is worth nothing if anybody can write it.
+ *
+ * The one non-client tag a client may send is @c label.  It is the whole
+ * point of labeled-response -- the client names its own request so the
+ * server can name the answer -- and it goes no further than the command it
+ * arrived on: msg_tag_format() forwards only client-only tags to other
+ * clients, and msg_tag_format_s2s() only federated ones, so a label never
+ * reaches anybody but the client that wrote it.
+ */
+static int
+msg_tag_client_may_send(const char *key)
+{
+  if (msg_tag_key_client_only(key))
+    return msg_tag_client_allowed(key);
+
+  return key && !ircd_strcmp(key, "label");
+}
+
 struct MsgTag *
 msg_tag_filter_client(struct MsgTag *tags)
 {
@@ -408,8 +431,7 @@ msg_tag_filter_client(struct MsgTag *tags)
   struct MsgTag **tail = &head;
 
   for (; tags; tags = tags->next) {
-    if (msg_tag_key_client_only(tags->key)
-        && msg_tag_client_allowed(tags->key)) {
+    if (msg_tag_client_may_send(tags->key)) {
       *tail = tags;
       tail = &tags->next;
     }
@@ -586,6 +608,13 @@ msg_tag_profile(struct Client *to, const char *msgid)
   if (msgid && CapHas(cli_active(to), CAP_MESSAGE_TAGS))
     profile |= TAGP_MSGID;
 
+  /* Likewise for a client that is inside a batch.  At most one client is,
+   * so this never collapses two recipients into one bucket wrongly.
+   */
+  if (CapHas(cli_active(to), CAP_BATCH)
+      && (batch_current(to) || batch_label_tag(to)))
+    profile |= TAGP_BATCH;
+
   return profile;
 }
 
@@ -633,6 +662,29 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
     pos = msg_tag_append(pos, end, &wrote, "msgid", msgid);
     if (!pos)
       return 0;
+  }
+
+  /* batch and label.
+   *
+   * A client that did not ask for batches is sent neither: it gets the
+   * messages loose, which is the line it has always got.  The label rides
+   * only on the BATCH line that opens a labeled response, or on the bare
+   * ACK; the messages inside are identified by the batch.
+   */
+  if (CapHas(cli_active(to), CAP_BATCH)) {
+    const char *id = batch_current(to);
+    const char *label = batch_label_tag(to);
+
+    if (label) {
+      pos = msg_tag_append(pos, end, &wrote, "label", label);
+      if (!pos)
+        return 0;
+    }
+    if (id) {
+      pos = msg_tag_append(pos, end, &wrote, "batch", id);
+      if (!pos)
+        return 0;
+    }
   }
 
   /* client-only tags */

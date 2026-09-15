@@ -32,6 +32,7 @@ enum MsgTagProfile {
   TAGP_NONE    = 0,
   TAGP_TIME    = 0x01,
   TAGP_MSGID   = 0x02,
+  TAGP_BATCH   = 0x04,
 };
 
 /*

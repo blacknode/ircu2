@@ -196,6 +196,24 @@ struct Client;
 #define TOK_NOTICE              "O"
 #define CMD_NOTICE		MSG_NOTICE, TOK_NOTICE
 
+/* Server to client only: opens and closes an IRCv3 batch.  Never crosses a
+ * server link, so the token is the name.
+ *
+ * Spelled IRCBATCH and not BATCH because glibc's <bits/socket.h> already
+ * has an MSG_BATCH, as a flag for sendmsg(): a macro of that name here
+ * expands inside their enum and the file stops compiling, in whichever
+ * translation units happen to include both.  The command on the wire is
+ * BATCH; only the macro is spelled differently. */
+#define MSG_IRCBATCH            "BATCH"
+#define TOK_IRCBATCH            "BATCH"
+#define CMD_IRCBATCH		MSG_IRCBATCH, TOK_IRCBATCH
+
+/* Server to client only: the answer to a labeled command that produced no
+ * messages of its own. */
+#define MSG_ACK                 "ACK"
+#define TOK_ACK                 "ACK"
+#define CMD_ACK			MSG_ACK, TOK_ACK
+
 #define MSG_TAGMSG              "TAGMSG"
 #define TOK_TAGMSG              "TM"
 #define CMD_TAGMSG		MSG_TAGMSG, TOK_TAGMSG

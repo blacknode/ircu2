@@ -71,6 +71,8 @@ struct ModuleHandle;
 	_CAP(MESSAGE_TAGS, FEAT_CAP_MESSAGE_TAGS, 0, "message-tags"), \
 	_CAP(SERVER_TIME, FEAT_CAP_SERVER_TIME, 0, "server-time"), \
 	_CAP(LANGUAGES, FEAT_CAP_LANGUAGES, 0, "draft/languages"), \
+	_CAP(BATCH, FEAT_CAP_BATCH, 0, "batch"), \
+	_CAP(LABELEDRESPONSE, FEAT_CAP_LABELEDRESPONSE, 0, "labeled-response"), \
 	_CAP(CAPNOTIFY, 0, CAPFL_HIDDEN_302 | CAPFL_STICKY_302, "cap-notify")
 
 /** The core's capabilities, as bit positions. */

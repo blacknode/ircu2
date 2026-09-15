@@ -28,6 +28,7 @@
 
 #include "s_misc.h"
 #include "IPcheck.h"
+#include "batch.h"
 #include "bot.h"
 #include "channel.h"
 #include "client.h"
@@ -392,6 +393,10 @@ int exit_client(struct Client *cptr,
    */
   hook_notify(HOOK_CLIENT_EXITING, victim, killer, NULL, comment);
   bot_client_exiting(victim);
+  /* A client that dies in the middle of a labeled response leaves a batch
+   * open against a pointer that is about to be freed.
+   */
+  batch_client_exiting(victim);
 
   if (MyConnect(victim))
   {

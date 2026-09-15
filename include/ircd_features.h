@@ -125,6 +125,8 @@ enum Feature {
   FEAT_CAP_MESSAGE_TAGS,
   FEAT_CAP_SERVER_TIME,
   FEAT_CAP_LANGUAGES,
+  FEAT_CAP_BATCH,
+  FEAT_CAP_LABELEDRESPONSE,
 
   /* Translations (see doc/readme.translations) */
   FEAT_DEFAULT_LANGUAGE,

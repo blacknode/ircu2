@@ -26,6 +26,7 @@
 #include "send.h"
 #include "channel.h"
 #include "class.h"
+#include "batch.h"
 #include "client.h"
 #include "ircd.h"
 #include "ircd_features.h"
@@ -366,6 +367,16 @@ void send_buffer(struct Client* to, struct Client* from, struct MsgBuf* buf, int
      * This socket has already been marked as dead
      */
     return;
+
+  /* If this is the first message of a labeled response, the BATCH line
+   * that opens it has to go out before this one does.  Costs one
+   * comparison when no label is in flight, which is nearly always.
+   *
+   * Here and not in send_raw_buffer(): that one is the websocket framing
+   * path, which carries no tags and so cannot be inside a batch.
+   */
+  if (!IsServer(to))
+    label_before_send(to);
 
   if (MsgQLength(&(cli_sendQ(to))) > get_sendq(to)) {
     if (IsServer(to))

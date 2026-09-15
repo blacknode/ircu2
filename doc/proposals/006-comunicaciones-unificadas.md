@@ -2,7 +2,8 @@
 
 **Estado:** hoja de ruta, aprobada con correcciones (revisión 3).
 Fase 0 **en curso**: el registro de capacidades (§5.1), los hooks genéricos de
-comando (§5.7) y los identificadores de mensaje (§5.4) están implementados.
+comando (§5.7), los identificadores de mensaje (§5.4) y `BATCH` con
+`labeled-response` (§5.3) están implementados.
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
 **Introduce:** `include/capab.h` + `ircd/capab.c`, los hooks de comando y
@@ -212,10 +213,66 @@ capacidad en un `CAP DEL`.
 - Subir el buffer de reescritura de hooks por encima de `BUFSIZE`.
 - `TOPICLEN`/`AWAYLEN` como *features*, no como constantes.
 
-### 5.3 `BATCH` y `labeled-response`
-`BATCH` es prerrequisito de multiline, de chathistory y de cualquier entrega
-agrupada. `labeled-response` es lo que permite a un cliente correlacionar
-petición y respuesta — imprescindible para una UI que no sea un terminal.
+### 5.3 `BATCH` y `labeled-response` — **implementado**
+
+`BATCH` dice «estos mensajes van juntos» y es prerrequisito de `multiline`, de
+`chathistory` y de cualquier entrega agrupada. `labeled-response` es lo que
+permite a un cliente correlacionar petición y respuesta: sin eso una UI que no
+sea un terminal no se puede escribir, porque no hay forma de saber qué
+respuesta pertenece a qué comando.
+
+**La decisión de diseño: no se almacena nada.** La especificación fija la forma
+de la respuesta — nada enviado se contesta con un `ACK`, algo enviado va dentro
+de un batch — y la lectura obvia de eso es que el servidor tiene que saber de
+antemano cuántos mensajes va a producir el comando, es decir, almacenarlos y
+contarlos. No hace falta: **el batch se abre de forma perezosa, en el primer
+mensaje que el comando envía de verdad** (`label_before_send()`, llamado desde
+`send_buffer()`). Si no llega ninguno, `label_end()` manda el `ACK` en su
+lugar. Coste: una comparación por mensaje cuando no hay ninguna etiqueta en
+vuelo, que es prácticamente siempre.
+
+**Una etiqueta en vuelo a la vez**, y no es una simplificación sino la forma del
+servidor: un comando se lee, se despacha, se maneja y se termina antes de mirar
+la siguiente línea, así que una segunda etiqueta no puede empezar mientras la
+primera está abierta. El estado es un contexto, no una tabla.
+
+```
+[C] @label=abc123 LUSERS
+[S] @label=abc123 :irc.example.net BATCH +1 labeled-response
+[S] @batch=1 :irc.example.net 251 lab :There are 1 users ...
+[S] @batch=1 :irc.example.net 255 lab :I have 1 clients ...
+[S] :irc.example.net BATCH -1
+
+[C] @label=quiet PONG :nada
+[S] @label=quiet ACK
+```
+
+La etiqueta va en la línea que abre el batch y en el `ACK`; no se repite en cada
+mensaje ni en la línea de cierre, que ya queda identificada por el batch.
+
+**Compatibilidad**, que es la regla del proyecto: un cliente que no negoció nada
+recibe las líneas de siempre, y su `@label=` se descarta con el resto de tags de
+servidor que un cliente no puede fijar. Un cliente que pidió `labeled-response`
+pero no `batch` **se contesta como antes, no a medias**: la especificación
+construye una sobre otra y media respuesta no la sabe leer ningún cliente.
+
+**Dos cosas que salieron de implementarlo:**
+
+1. `msg_tag_filter_client()` descartaba todo tag de cliente que no fuera `+`, y
+   `label` con él — la línea etiquetada ni siquiera llegaba al despacho. Es la
+   política correcta (un cliente no puede fijar un tag de servidor) y `label` es
+   la única excepción legítima: es el cliente nombrando su propia petición, y no
+   va más allá del comando en que llegó.
+2. `MSG_BATCH` choca con el flag de socket de glibc (`<bits/socket.h>`), que lo
+   define como miembro de un `enum`: la macro se expandía dentro de él y el
+   fichero dejaba de compilar. La macro se llama `MSG_IRCBATCH`; el comando en
+   el cable sigue siendo `BATCH`.
+
+**Pruebas:** `batch_t` (el `ACK` cuando no se envía nada, la apertura perezosa,
+la etiqueta sólo en la línea de apertura, un batch pertenece a un cliente, las
+dos capacidades hacen falta, el cliente que se va a mitad de respuesta) y
+`tests/labeled/` para la suite de integración. Comprobado contra un servidor
+real en las tres ramas de la especificación.
 
 ### 5.4 Identificadores de mensaje (`msgid`) — **implementado**
 
@@ -791,7 +848,7 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
 ```
   F0 Cimientos (core, ABI 8)
    │   capacidades dinámicas ✅ · hooks de comando ✅ · msgid ✅
-   │   batch/labeled · multiline · hooks async · cripto ircd_*
+   │   batch + labeled-response ✅ · multiline · hooks async · cripto ircd_*
    │
    ├──► F1 Identidad (SASL + ACCOUNT en core, email → hasta 3 nicks)
    │     │
@@ -888,34 +945,28 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 **Hecho:**
 
 - **§5.1, capacidades dinámicas.** `capset_t` es un mapa de bits de 128
-  posiciones, el registro está en `ircd/capab.c`, `m_cap.c` es sólo el protocolo
-  por encima, `module_add_cap()` está en el API y `IRCU_MODULE_ABI` es 8.
+  posiciones, el registro en `ircd/capab.c`, `module_add_cap()` en el API,
+  `IRCU_MODULE_ABI` a 8.
 - **§5.7, hooks genéricos de comando.** `HOOK_COMMAND_PRE`/`POST` en los dos
-  despachos de `parse.c`, el sujeto declarado por cada comando en `msgtab[]` y
-  resuelto una vez, `module_add_command_hook()` en el API, y
-  `modules/hooks/cmdaudit.c` como módulo de referencia.
-- **§5.4, identificadores de mensaje.** `ircd/msgid.c` genera, la línea es la
-  unidad, sólo el comando de la propia línea lo lleva, un cliente nunca elige el
-  suyo, y cruza P10 para que toda la red llame igual al mismo mensaje.
+  despachos de `parse.c`, el sujeto declarado por cada comando y resuelto una
+  vez, `modules/hooks/cmdaudit.c` de referencia.
+- **§5.4, identificadores de mensaje.** La línea es la unidad, sólo el comando
+  de la propia línea lo lleva, un cliente nunca elige el suyo, y cruza P10.
+- **§5.3, `BATCH` y `labeled-response`.** Sin almacenar nada: el batch se abre
+  en el primer mensaje que el comando envía.
 
-Los tres cubiertos por pruebas unitarias y comprobados contra un servidor real;
-el último, además, contra un enlace P10 con el servidor falso de la suite. Y los
-tres respetan la regla de compatibilidad: un cliente que no negocia nada recibe
-la línea de siempre, byte a byte.
+Los cuatro cubiertos por pruebas unitarias y comprobados contra un servidor
+real; el msgid, además, contra un enlace P10. Y los cuatro respetan la regla de
+compatibilidad: un cliente que no negocia nada recibe la línea de siempre.
 
 **Siguiente**, en este orden y cada uno verificable por separado:
 
-1. **`BATCH` y `labeled-response`** (§5.3). `BATCH` es prerrequisito de
-   `multiline`, de `chathistory` y de cualquier entrega agrupada;
-   `labeled-response` es lo que permite a un cliente correlacionar petición y
-   respuesta, sin lo cual una UI que no sea un terminal no se puede escribir.
-   Ahora caben: hay 119 posiciones de capacidad libres.
-2. **`draft/multiline`** (§5.2), que es la respuesta federable a los 512 bytes
-   y no rompe a ningún cliente antiguo — exactamente la forma que pide la regla
-   de compatibilidad.
-3. **Criptografía `ircd_*`** (§5.8), con el hashing en *workers* desde el
+1. **`draft/multiline`** (§5.2), la respuesta federable a los 512 bytes. Ya
+   tiene debajo lo que necesitaba: `BATCH` está, y un cliente antiguo sigue
+   recibiendo una línea por mensaje.
+2. **Criptografía `ircd_*`** (§5.8), con el hashing en *workers* desde el
    primer día.
-4. **Hooks asíncronos** (§5.5). El más delicado de la fase 0, y el que abre F1
+3. **Hooks asíncronos** (§5.5). El más delicado de la fase 0, y el que abre F1
    y F7.
 
 Con eso la fase 0 queda cerrada y empieza la identidad (§6).

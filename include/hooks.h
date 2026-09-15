@@ -36,10 +36,14 @@
 #ifndef INCLUDED_ircd_defs_h
 #include "ircd_defs.h"
 #endif
+#ifndef INCLUDED_ircd_handler_h
+#include "ircd_handler.h"
+#endif
 
 struct Client;
 struct Channel;
 struct ModuleHandle;
+struct Message;
 
 /** Points in the lifecycle a module can hook.
  *
@@ -75,6 +79,10 @@ enum HookType {
   HOOK_SERVER_LINKED,         /**< A server finished linking. */
   HOOK_SERVER_SPLIT,          /**< A server left the network. */
 
+  /* --- any command --- */
+  HOOK_COMMAND_PRE,           /**< Veto: may this command run?  See below. */
+  HOOK_COMMAND_POST,          /**< A command finished running. */
+
   /* --- the server itself --- */
   HOOK_CONFIG_LOADED,         /**< The configuration file was read in full:
                                    once at start-up, with the server ready,
@@ -99,6 +107,26 @@ enum HookResult {
   HOOK_PENDING     /**< Reserved; not yet implemented. */
 };
 
+/** What a command hook is told about the command being dispatched.
+ *
+ * Reached through HookContext::hc_command, which is NULL for every hook
+ * point other than #HOOK_COMMAND_PRE and #HOOK_COMMAND_POST.
+ *
+ * The parameters are the parser's own, and they are read-only: rewriting
+ * an arbitrary parameter of a command in flight is not something the
+ * server can bound the consequences of.  What a module may change is in
+ * the context -- a reason when it denies, and nothing else.
+ */
+struct HookCommand {
+  const char*      hcc_cmd;     /**< Command name, e.g. "KICK". */
+  const char*      hcc_tok;     /**< Its P10 token, e.g. "K". */
+  enum HandlerType hcc_handler; /**< Which handler runs, or ran. */
+  int              hcc_parc;    /**< Number of parameters. */
+  char* const*     hcc_parv;    /**< The parameters; parv[0] is the source. */
+  int              hcc_result;  /**< #HOOK_COMMAND_POST only: what the
+                                     handler returned. */
+};
+
 /** Everything a hook is told about the operation it is judging.
  *
  * Which fields are meaningful depends on the hook; each one is documented
@@ -121,6 +149,11 @@ struct HookContext {
   char*           hc_rewrite;
   size_t          hc_rewrite_len;  /**< Size of #hc_rewrite in bytes. */
   int             hc_rewritten;    /**< Set by a module that rewrote. */
+
+  /** The command being dispatched, for #HOOK_COMMAND_PRE and
+   * #HOOK_COMMAND_POST; NULL at every other hook point.
+   */
+  const struct HookCommand* hc_command;
 
   /** Numeric to send when denying, or 0 to let the server pick. */
   int             hc_numeric;
@@ -148,6 +181,72 @@ typedef enum HookResult (*HookFn)(struct HookContext* ctx, void* user);
  */
 extern int hook_add(struct ModuleHandle* mod, const char* owner,
                     enum HookType type, HookFn fn, int priority, void* user);
+
+/*
+ * Command hooks.
+ *
+ * #HOOK_COMMAND_PRE and #HOOK_COMMAND_POST are the two points every
+ * command passes through, so that a module can see one user act on
+ * another -- KICK, KILL, WHOIS, INVITE, MODE, GLINE, SLINE, JUPE -- without
+ * a hook per command and without the core growing one every time a command
+ * is added.  They are registered through hook_add_command() rather than
+ * hook_add(), because a hook on every command is rarely what is wanted:
+ * naming one keeps the rest of the traffic out of the module.
+ *
+ * Five rules, and the reason for each:
+ *
+ *  - A command whose source is a service bot (+S) reaches neither point.
+ *    A service acts on the server's behalf; auditing or vetoing it is
+ *    auditing the server.  A module that does want to see them -- an audit
+ *    log, say -- asks with #HOOK_CMD_INCLUDE_SERVICES.
+ *
+ *  - #HOOK_DENY at #HOOK_COMMAND_PRE is honoured only when the source is a
+ *    client of this server.  For a command that arrived from another
+ *    server the point is a notification: the rest of the network has
+ *    already applied it, and refusing it here would desynchronise this
+ *    server rather than prevent anything.
+ *
+ *  - #HOOK_COMMAND_POST does not run when the handler returned
+ *    @c CPTR_KILLED.  The client is gone and the pointers in the context
+ *    are freed memory; a module learns about the exit from
+ *    #HOOK_CLIENT_EXITING, which is where it belongs.
+ *
+ *  - HookCommand::hcc_parv is read-only.  See #HookCommand.
+ *
+ *  - A hook that causes another command to be dispatched is bounded: past
+ *    a small depth the server refuses to recurse and logs it.
+ */
+
+/** Flags for hook_add_command(). */
+#define HOOK_CMD_INCLUDE_SERVICES 0x0001 /**< Also see commands from a +S
+                                              service bot. */
+
+/** Attach a callback to a command hook.
+ * @param[in] mod Module registering the hook.
+ * @param[in] owner The module's name, for log messages.
+ * @param[in] type #HOOK_COMMAND_PRE or #HOOK_COMMAND_POST.
+ * @param[in] cmd Command to watch, e.g. "KICK", or NULL for every command.
+ *   Matched case-insensitively against the command's name, never its P10
+ *   token: a module names the command, not the wire encoding.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @param[in] flags Bitwise combination of HOOK_CMD_* values, or 0.
+ * @return Non-zero on success.
+ */
+extern int hook_add_command(struct ModuleHandle* mod, const char* owner,
+                            enum HookType type, const char* cmd, HookFn fn,
+                            int priority, void* user, unsigned int flags);
+
+/** Detach a command hook.
+ * @param[in] mod Module that owns it.
+ * @param[in] type Hook point it was attached to.
+ * @param[in] cmd Command it was attached for, or NULL if it watched all.
+ * @param[in] fn The callback.
+ * @return Non-zero if it was found and detached.
+ */
+extern int hook_del_command(struct ModuleHandle* mod, enum HookType type,
+                            const char* cmd, HookFn fn);
 extern int hook_del(struct ModuleHandle* mod, enum HookType type, HookFn fn);
 extern void hook_del_module(struct ModuleHandle* mod);
 
@@ -189,6 +288,27 @@ extern enum HookResult hook_run(enum HookType type, struct HookContext* ctx);
 extern void hook_notify(enum HookType type, struct Client* client,
                         struct Client* source, struct Channel* chan,
                         const char* arg);
+
+/** Run the command hooks for one dispatch.
+ *
+ * Called from ircd/parse.c, around the handler, and from nowhere else.
+ * The context arrives filled in, HookContext::hc_command included: the
+ * parser owns the message table and resolves the command's declared
+ * subject, so this only dispatches.
+ *
+ * @param[in] type #HOOK_COMMAND_PRE or #HOOK_COMMAND_POST.
+ * @param[in,out] ctx Context, with HookContext::hc_command set.
+ * @return #HOOK_DENY if the command must not run, #HOOK_CONTINUE otherwise.
+ */
+extern enum HookResult hook_run_command(enum HookType type,
+                                        struct HookContext* ctx);
+
+/** Return non-zero if anything is listening at a command hook point.
+ *
+ * The gate in front of hook_run_command(); parse.c uses it to keep the
+ * dispatch path free on a server where no module watches commands.
+ */
+extern int hook_command_active(enum HookType type);
 
 /** Tell a client why a hook refused an operation.
  *

@@ -1,10 +1,12 @@
 # Propuesta 006 — De IRC a comunicaciones unificadas: texto enriquecido, voz, vídeo y pantalla compartida
 
 **Estado:** hoja de ruta, aprobada con correcciones (revisión 3).
-Fase 0 **en curso**: el registro de capacidades está implementado (§5.1).
+Fase 0 **en curso**: el registro de capacidades (§5.1) y los hooks genéricos
+de comando (§5.7) están implementados.
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
-**Introduce:** `include/capab.h` + `ircd/capab.c` (ya); el resto, por fases
+**Introduce:** `include/capab.h` + `ircd/capab.c` y los hooks de comando (ya);
+el resto, por fases
 
 **Correcciones sobre la revisión 2** (aprobación con cambios):
 1. Una cuenta **es un nickname, sin excepción**, y un email agrupa **como
@@ -111,7 +113,7 @@ historial sólo vería lo que se dijo en su propio servidor.
 `HOOK_PENDING` está reservado y sin implementar (`hooks.h`). Autenticar contra
 una base de datos, o verificar un token SSO, hoy bloquearía el servidor entero.
 
-### 3.7 No hay visibilidad sobre los comandos
+### 3.7 No hay visibilidad sobre los comandos (**resuelto**, §5.7)
 No existe ningún punto donde un módulo vea «este usuario va a hacer X sobre
 este otro usuario». Auditoría, antiabuso, permisos por rol y registro de
 acciones son hoy imposibles sin parchear cada `m_*.c`. Ver §5.7.
@@ -231,156 +233,112 @@ asíncrona.
 - Hooks nuevos: `HOOK_MESSAGE_DELIVERED` (incluido el origen remoto, §3.5),
   `HOOK_CHANNEL_TOPIC_CHANGED`, `HOOK_CLIENT_AWAY`, `HOOK_PRESENCE_CHANGED`.
 
-### 5.7 Hooks genéricos de comando — propuesta
+### 5.7 Hooks genéricos de comando — **implementado**
 
-**Problema.** Hoy no hay forma de que un módulo observe o vete una acción de un
-usuario sobre otro: `KICK`, `KILL`, `WHOIS`, `GLINE`, `SLINE`, `JUPE`, `MODE`,
-`INVITE`, `SILENCE`. Añadir un hook por comando no escala: son decenas, y cada
+**El problema.** No había forma de que un módulo observara o vetara una acción
+de un usuario sobre otro: `KICK`, `KILL`, `WHOIS`, `GLINE`, `SLINE`, `JUPE`,
+`MODE`, `INVITE`, `SILENCE`. Un hook por comando no escala: son decenas, y cada
 comando nuevo — del core o de un módulo — necesitaría el suyo.
 
-**Diseño.** Dos puntos genéricos en el despacho, no en cada `m_*.c`:
+**Lo que hay en el árbol:**
 
-```c
-enum HookType {
-  ...
-  HOOK_COMMAND_PRE,    /* antes del handler; puede vetar */
-  HOOK_COMMAND_POST,   /* después del handler; notificación */
-};
-```
+- **Dos puntos, `HOOK_COMMAND_PRE` y `HOOK_COMMAND_POST`**, instrumentados en
+  los dos únicos despachos que tiene `ircd/parse.c` — uno en `parse_client()` y
+  otro en `parse_server()` —, ambos reunidos en `parse_dispatch()` para que las
+  reglas estén escritas una sola vez. Ningún `m_*.c` se tocó.
 
-`ircd/parse.c` tiene exactamente **dos** puntos de despacho, y los dos son un
-`return (*handler)(cptr, from, i, para)` — uno en `parse_client()` (línea 1118)
-y otro en `parse_server()` (línea 1433). Los hooks se instrumentan ahí y en
-ningún otro sitio.
+- **`struct HookCommand`** en `ctx->hc_command`: nombre, token P10,
+  `HandlerType`, `parc`, `parv` y, en `POST`, lo que devolvió el handler.
 
-**Qué recibe el módulo.** `struct HookContext` gana un puntero a un descriptor
-del comando:
+- **El sujeto lo declara cada comando**, en `msgtab[]`, con un descriptor en
+  `struct Message`:
 
-```c
-/** El comando que se está despachando. */
-struct HookCommand {
-  const char*       hcc_cmd;      /**< "KICK". */
-  const char*       hcc_tok;      /**< "K". */
-  enum HandlerType  hcc_handler;  /**< Qué handler corre (CLIENT, OPER, ...). */
-  int               hcc_parc;     /**< Número de parámetros. */
-  char* const*      hcc_parv;     /**< Los parámetros, de sólo lectura. */
-  int               hcc_result;   /**< Sólo en POST: lo que devolvió el handler. */
-};
-```
+  ```c
+  struct MsgSubject {
+    unsigned char ms_target;   /* parv[] con un nick o numnick */
+    unsigned char ms_channel;  /* parv[] con un canal */
+    unsigned char ms_mask;     /* parv[] con una máscara user@host */
+    unsigned char ms_reason;   /* parv[] con el texto libre */
+  };
+  ```
 
-y el contexto que ya existe se rellena con lo que el comando declare:
+  Tres detalles que salieron de escribirlo y no del diseño sobre papel:
 
-- `hc_source`  — quién ejecuta (el usuario de origen, local o remoto).
-- `hc_client`  — sobre quién se ejecuta, ya resuelto a `struct Client*`.
-- `hc_channel` — el canal implicado, si lo hay.
-- `hc_arg`     — el texto libre (la razón de un `KICK`, de un `KILL`, de un
-                 `GLINE`), si el comando lo declara.
-- `hc_command` — el `struct HookCommand` de arriba.
+  1. **El índice cero significa «no aplica»**, no `-1`. `parv[0]` es el origen,
+     nunca un sujeto, así que un comando que no declara nada acierta por
+     omisión — y `msgtab[]` se inicializa por posición, de modo que las ~200
+     entradas que no declaran sujeto no se tocaron.
+  2. **`MS_LAST`** para un objetivo cuya posición se mueve con el número de
+     parámetros. `WHOIS` es `WHOIS <nick>` y `WHOIS <servidor> <nick>`: en
+     ambos el nick es el último. Un índice fijo habría acertado la mitad de las
+     veces, que es peor que no decir nada.
+  3. **`subject_s`**, un segundo descriptor para cuando el comando no tiene la
+     misma forma en los dos lados. Un `GLINE` de un oper empieza por la
+     máscara; uno de un servidor empieza por el servidor al que va dirigido y
+     lleva la máscara una posición más allá. Todo a cero significa «igual que
+     la forma de cliente», que es el caso normal.
 
-**Cómo se resuelve el objetivo.** El despachador no puede saber genéricamente
-qué parámetro nombra a la víctima: eso lo declara cada comando. `struct
-Message` gana un descriptor pequeño:
+  | Comando | target | channel | mask | reason |
+  |---|---|---|---|---|
+  | `KICK`    | 2 | 1 | — | 3 |
+  | `KILL`    | 1 | — | — | 2 |
+  | `WHOIS`   | `MS_LAST` | — | — | — |
+  | `INVITE`  | 1 | 2 | — | — |
+  | `MODE`    | 1 | 1 | — | — |
+  | `SILENCE` | — / 1 | — | 1 / 2 | — |
+  | `GLINE`   | — | — | 1 / 2 | — |
+  | `JUPE`    | — | — | 1 / 2 | — |
+  | `SLINE`   | — | — | — / 5 | — |
 
-```c
-/** Qué parámetro de este comando nombra a qué.  -1 = no aplica. */
-struct MsgSubject {
-  signed char ms_target;    /**< parv[] con un nick o numnick. */
-  signed char ms_channel;   /**< parv[] con un canal. */
-  signed char ms_mask;      /**< parv[] con una máscara user@host. */
-  signed char ms_reason;    /**< parv[] con el texto libre. */
-};
-```
+  (donde hay dos valores, el primero es la forma de cliente y el segundo la de
+  servidor.)
 
-y `msgtab[]` se rellena para los comandos que son una acción de alguien sobre
-alguien:
+- **La resolución vive en `parse.c`, no en `hooks.c`.** Fue una corrección
+  durante la implementación: poner la búsqueda en `hooks.c` acoplaba el
+  despachador a `hash.c` y `numnicks.c` y rompía la prueba unitaria de los
+  hooks, que no enlaza el servidor. `parse.c` es dueña de `msgtab[]`, ya incluye
+  las dos, y es el sitio natural. `hooks.c` sigue siendo un despachador puro.
+  Y esa resolución es lo que se está comprando: **qué búsqueda usar depende de
+  por dónde llegó la línea, no del comando** — el mismo `KICK` lleva un nick
+  desde un cliente y un numnick desde un servidor, que es la distinción que
+  hace cada `ms_*()` del árbol y que ningún módulo debería tener que repetir.
 
-| Comando | target | channel | mask | reason |
-|---|---|---|---|---|
-| `KICK`    | 2  | 1  | -1 | 3  |
-| `KILL`    | 1  | -1 | -1 | 2  |
-| `WHOIS`   | 1/2| -1 | -1 | -1 |
-| `INVITE`  | 1  | 2  | -1 | -1 |
-| `MODE`    | 1  | 1  | -1 | -1 |
-| `SILENCE` | 1  | -1 | -1 | -1 |
-| `GLINE`   | -1 | -1 | 1  | 3  |
-| `SLINE`   | -1 | -1 | 1  | 3  |
-| `JUPE`    | -1 | -1 | 1  | 4  |
+- **Registro por comando**: `module_add_command_hook(mod, tipo, "KICK", fn,
+  prioridad, user, flags)`. `hook_add()` rechaza los tipos de comando y
+  `hook_add_command()` rechaza los de ciclo de vida: registrar un hook de
+  comando sin nombrar comando es recibir cada línea que el servidor parsea,
+  tráfico entre servidores incluido, para tirar casi todo. Se puede hacer
+  pasando `NULL`, pero hay que quererlo.
 
-`module_add_command()` gana una variante que acepta el mismo descriptor, de
-forma que un comando de módulo participa en los hooks igual que uno del core.
-El descriptor sirve además, gratis, para auditoría y para registro estructurado.
+- **Coste.** `hook_command_active()` delante de todo: una lectura y una
+  comparación por línea cuando ningún módulo escucha, que es el caso normal.
+  Cuando alguno escucha, se recorre una cadena corta comparando el nombre. El
+  contador por comando que proponía la revisión 2 no se implementó: en el
+  camino caliente, donde ya hay una búsqueda en árbol, varias `feature_bool()`
+  y una reserva de `msgq`, un par de `ircd_strcmp` no se miden.
 
-**Coste.** Un hook que se dispare en cada línea de un enlace P10 saturado es
-inaceptable. Por eso el registro es **por comando**:
+**Las cinco reglas, tal como quedaron:**
 
-```c
-extern int hook_add_command(struct ModuleHandle* mod, enum HookType type,
-                            const char* cmd,   /* NULL = todos */
-                            HookFn fn, int priority, void* user,
-                            unsigned int flags);
-```
+1. **Origen `+S` excluido** de los dos puntos, salvo que el hook pase
+   `HOOK_CMD_INCLUDE_SERVICES`.
+2. **El veto sólo vale en local.** `HOOK_DENY` en `PRE` se honra únicamente si
+   `MyConnect(sptr)`. Para un comando llegado de otro servidor el punto es sólo
+   notificación y el intento se registra en el log: el resto de la red ya lo
+   aplicó, y rechazarlo aquí desincroniza este servidor en vez de impedir nada.
+3. **`POST` no corre tras `CPTR_KILLED`** — los punteros serían memoria
+   liberada — ni tras un veto: no ha pasado nada que contar.
+4. **`parv` de sólo lectura.** Lo que un módulo puede cambiar es el contexto: un
+   numeric y una razón al denegar.
+5. **Recursión acotada** a ocho niveles, con registro en el log.
 
-Cada `struct Message` lleva un contador de escuchantes que se incrementa al
-registrar. El despachador comprueba ese contador: es **O(1) y cuesta cero
-cuando nadie escucha ese comando**, que es el caso normal.
-
-**Reglas, y por qué cada una:**
-
-1. **Origen `+S` excluido.** Ni `PRE` ni `POST` se disparan cuando
-   `IsServiceBot(sptr)`. Un servicio actúa en nombre del servidor y no debe ser
-   auditado ni vetado por un módulo. Un módulo de auditoría que sí los necesite
-   lo pide explícitamente con `HOOK_CMD_INCLUDE_SERVICES` en `flags`.
-2. **El veto sólo vale en local.** `HOOK_DENY` en `PRE` se honra únicamente
-   cuando el origen es un cliente de este servidor (`MyConnect(sptr)`). Para un
-   comando que llega de otro servidor el hook es **sólo notificación**, y un
-   `DENY` se registra en el log y se ignora: vetar en un solo servidor un
-   cambio de estado que el resto de la red ya aplicó es desincronizarla.
-3. **`POST` no corre si el handler devolvió `CPTR_KILLED`.** El cliente ya no
-   existe y los punteros del contexto son memoria liberada. El módulo se entera
-   de la salida por `HOOK_CLIENT_EXITING`, que es donde corresponde.
-4. **`parv` es de sólo lectura en la versión 1.** Reescribir parámetros
-   arbitrarios de un comando en vuelo es una fuente de fallos difícil de
-   acotar. La reescritura del texto libre (`ms_reason`), que sí es tratable,
-   queda para una versión posterior con el mecanismo de `hc_rewrite` que ya
-   existe.
-5. **Guardia de reentrada.** Un hook que provoque el despacho de otro comando
-   incrementa una profundidad; pasado un límite pequeño se aborta y se registra.
-6. **`HOOK_PENDING` en `PRE`** queda habilitado en cuanto exista §5.5: suspende
-   el comando hasta que el módulo responda. Es lo que permite un permiso
-   consultado en base de datos sin bloquear.
-
-**Ejemplo.**
-
-```c
-static enum HookResult
-audit_pre(struct HookContext* ctx, void* user)
-{
-  if (0 == ircd_strcmp(ctx->hc_command->hcc_cmd, "KICK")
-      && es_protegido(ctx->hc_client)) {
-    ctx->hc_numeric = ERR_CHANOPRIVSNEEDED;
-    ircd_strncpy(ctx->hc_reason, "ese usuario está protegido",
-                 sizeof(ctx->hc_reason) - 1);
-    return HOOK_DENY;
-  }
-  return HOOK_CONTINUE;
-}
-
-static int
-mi_init(struct ModuleHandle* mod)
-{
-  hook_add_command(mod, HOOK_COMMAND_PRE, "KICK", audit_pre,
-                   HOOK_PRIORITY_DEFAULT, NULL, 0);
-  hook_add_command(mod, HOOK_COMMAND_POST, NULL, audit_post,
-                   HOOK_PRIORITY_DEFAULT, NULL, 0);
-  return 0;
-}
-```
-
-**Lo que esto habilita sin más trabajo de core:** auditoría completa,
-antiabuso, permisos por rol (necesario para un producto con administradores),
-protección de usuarios, límites de tasa por comando, y registro estructurado de
-toda acción de un usuario sobre otro — que en un producto de empresa es
-requisito, no mejora.
+**Pruebas.** `hooks_t` cubre las cinco reglas (filtro por comando, exclusión de
+`+S`, veto local frente a remoto, la recursión que se detiene sola, y que los
+dos registros se rechazan mutuamente), `module_t` el registro desde módulo y su
+reversión al descargar, y `modules/hooks/cmdaudit.c` es el módulo de
+referencia, comprobado contra un servidor real: registra en el log
+`KICK: ann -> bob on #room: behave` con el sujeto ya resuelto, y rechaza un
+`KICK` contra un operador con `482 ann KICK :that user is an operator` — sin
+que el `POST` llegue a registrar nada de ese comando rechazado.
 
 ### 5.8 Criptografía en el core: `ircd_sha256`, `ircd_aes`, `ircd_argon2`, `ircd_bcrypt`
 
@@ -765,8 +723,8 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
 
 ```
   F0 Cimientos (core, ABI 8)
-   │   capacidades dinámicas ✅ · batch/labeled · msgid · multiline
-   │   hooks async · hooks de comando · cripto ircd_*
+   │   capacidades dinámicas ✅ · hooks de comando ✅
+   │   batch/labeled · msgid · multiline · hooks async · cripto ircd_*
    │
    ├──► F1 Identidad (SASL + ACCOUNT en core, email → hasta 3 nicks)
    │     │
@@ -859,29 +817,30 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 
 ## 11. Estado y siguiente paso
 
-**Hecho** (§5.1): capacidades dinámicas. `capset_t` es un mapa de bits de 128
-posiciones, el registro está en `ircd/capab.c`, `m_cap.c` es sólo el protocolo
-por encima, `module_add_cap()` está en el API y `IRCU_MODULE_ABI` es 8.
-Cubierto por `capab_t`, por `module_t` y por una comprobación del protocolo
-contra un servidor real.
+**Hecho:**
+
+- **§5.1, capacidades dinámicas.** `capset_t` es un mapa de bits de 128
+  posiciones, el registro está en `ircd/capab.c`, `m_cap.c` es sólo el protocolo
+  por encima, `module_add_cap()` está en el API y `IRCU_MODULE_ABI` es 8.
+- **§5.7, hooks genéricos de comando.** `HOOK_COMMAND_PRE`/`POST` en los dos
+  despachos de `parse.c`, el sujeto declarado por cada comando en `msgtab[]` y
+  resuelto una vez, `module_add_command_hook()` en el API, y
+  `modules/hooks/cmdaudit.c` como módulo de referencia.
+
+Ambos cubiertos por pruebas unitarias y comprobados contra un servidor real.
 
 **Siguiente**, en este orden y cada uno verificable por separado:
 
-1. **Hooks genéricos de comando** (§5.7). Dos puntos en `ircd/parse.c` — los
-   dos únicos despachos, líneas 1118 y 1433 —, el descriptor `MsgSubject` en
-   `struct Message`, el registro por comando, y las reglas que ya están
-   escritas: origen `+S` excluido, veto sólo válido en local, `POST` omitido
-   tras `CPTR_KILLED`, guardia de reentrada. Casos de prueba: `KICK`, `KILL`,
-   `GLINE`. No depende de nada de lo anterior.
-2. **`msgid`** (§5.4). Es la clave primaria de las cinco cosas que vienen
-   después, así que cuanto antes exista, menos se rehace.
-3. **`BATCH`, `labeled-response` y `draft/multiline`** (§5.2, §5.3). Ahora sí
+1. **`msgid`** (§5.4). Es la clave primaria de las cinco cosas que vienen
+   después — historial, hilos, reacciones, ediciones, marcas de leído —, así
+   que cuanto antes exista, menos se rehace.
+2. **`BATCH`, `labeled-response` y `draft/multiline`** (§5.2, §5.3). Ahora sí
    caben: hay 119 posiciones de capacidad libres.
-4. **Criptografía `ircd_*`** (§5.8), con el hashing en *workers* desde el
+3. **Criptografía `ircd_*`** (§5.8), con el hashing en *workers* desde el
    primer día.
-5. **Hooks asíncronos** (§5.5). El más delicado de la fase 0, y el que abre F1
+4. **Hooks asíncronos** (§5.5). El más delicado de la fase 0, y el que abre F1
    y F7.
 
 Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
-necesitan: los hooks de comando (§5.7), el modelo de identidad (§6), el
-aislamiento de módulos (§7.7) y, cuando se retome, WebRTC (§7.5).
+necesitan: el modelo de identidad (§6), el aislamiento de módulos (§7.7) y,
+cuando se retome, WebRTC (§7.5).

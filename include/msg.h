@@ -412,6 +412,36 @@ struct Client;
  * Structures
  */
 
+/** Which parameter of a command names what.
+ *
+ * The dispatcher cannot know, for a command in general, which parameter
+ * names the user an action is aimed at: only the command knows, so the
+ * command says.  What this buys is the command hooks (hooks.h): a module
+ * asked to watch KICK is handed the victim as a struct Client*, resolved
+ * once by the server, instead of every module parsing parv for itself and
+ * getting the index wrong for one command in ten.
+ *
+ * Each field is an index into parv[], or zero for "this command has no
+ * such thing".  Zero is never a real subject -- parv[0] is the source --
+ * so a command that declares nothing gets the right answer by default and
+ * the table below only carries the commands that do act on somebody.
+ */
+struct MsgSubject {
+  unsigned char ms_target;   /**< parv[] naming a nick or numnick. */
+  unsigned char ms_channel;  /**< parv[] naming a channel. */
+  unsigned char ms_mask;     /**< parv[] naming a user@host mask. */
+  unsigned char ms_reason;   /**< parv[] holding free text: a reason. */
+};
+
+/** Subject index meaning "the last parameter this invocation carried".
+ *
+ * A few commands put the target at a position that moves with the
+ * parameter count -- WHOIS is "WHOIS <nick>" and "WHOIS <server> <nick>",
+ * and in both the nick is last.  Writing a fixed index for those would be
+ * right half the time, which is worse than saying nothing.
+ */
+#define MS_LAST 255
+
 /** Information on how to parse a message. */
 struct Message {
   char *cmd;                  /**< command string */
@@ -435,6 +465,24 @@ struct Message {
    * UNREGISTERED, CLIENT, SERVER, OPER, SERVICE, LAST
    */
   MessageHandler handlers[LAST_HANDLER_TYPE];
+
+  /** Which parameter names what when the command came from a client; see
+   * #MsgSubject.
+   *
+   * Last on purpose: msgtab[] is written with positional initialisers, so
+   * a command that declares no subject simply stops short and gets zeros,
+   * which is what "none" is.
+   */
+  struct MsgSubject subject;
+
+  /** The same, for a command that came from another server.
+   *
+   * Several commands do not have the same shape on both sides: a GLINE
+   * from an operator begins with the mask, and one from a server begins
+   * with the server it is aimed at and carries the mask one along.  All
+   * zeroes means "the same as #subject", which is the usual case.
+   */
+  struct MsgSubject subject_s;
 };
 
 extern struct Message msgtab[];

@@ -830,6 +830,37 @@ int module_del_hook(struct ModuleHandle *mod, enum HookType type, HookFn fn) {
   return hook_del(mod, type, fn);
 }
 
+/** Attach a command hook a module registered.
+ * @param[in] mod Module registering it.
+ * @param[in] type HOOK_COMMAND_PRE or HOOK_COMMAND_POST.
+ * @param[in] cmd Command to watch, or NULL for every command.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @param[in] flags HOOK_CMD_* flags.
+ * @return Non-zero on success.
+ */
+int module_add_command_hook(struct ModuleHandle *mod, enum HookType type,
+                            const char *cmd, HookFn fn, int priority,
+                            void *user, unsigned int flags) {
+  assert(0 != mod);
+  return hook_add_command(mod, mod->mh_info->mi_name, type, cmd, fn,
+                          priority, user, flags);
+}
+
+/** Detach a command hook a module attached.
+ * @param[in] mod Module that owns it.
+ * @param[in] type Hook point.
+ * @param[in] cmd Command it watched, or NULL.
+ * @param[in] fn Callback to detach.
+ * @return Non-zero if it was found.
+ */
+int module_del_command_hook(struct ModuleHandle *mod, enum HookType type,
+                            const char *cmd, HookFn fn) {
+  assert(0 != mod);
+  return hook_del_command(mod, type, cmd, fn);
+}
+
 /** Turn a module name into the path of its shared object.
  *
  * The name is a bare name: it may not contain a directory separator and

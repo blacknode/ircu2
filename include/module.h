@@ -416,6 +416,48 @@ extern int module_add_hook(struct ModuleHandle* mod, enum HookType type,
 extern int module_del_hook(struct ModuleHandle* mod, enum HookType type,
                            HookFn fn);
 
+/** Attach a callback to a command hook.
+ *
+ * #HOOK_COMMAND_PRE and #HOOK_COMMAND_POST are the two points every
+ * command passes through, so a module can see one user act on another --
+ * KICK, KILL, WHOIS, INVITE, MODE, SILENCE, GLINE, SLINE, JUPE -- without
+ * a hook per command.  They take a command name rather than being
+ * registered with module_add_hook(), because watching every command means
+ * being handed every line the server parses, server-to-server traffic
+ * included, and that is rarely what a module wants.
+ *
+ * The context carries a #HookCommand in HookContext::hc_command, with the
+ * subject already resolved: HookContext::hc_client is who the command acts
+ * on, hc_channel the channel, hc_arg the reason or the mask.  Read
+ * hooks.h for the rules -- a service bot's commands are not shown, a veto
+ * only counts for a client of this server, and the parameters are
+ * read-only.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type #HOOK_COMMAND_PRE or #HOOK_COMMAND_POST.
+ * @param[in] cmd Command to watch, e.g. "KICK", or NULL for every command.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @param[in] flags Bitwise combination of HOOK_CMD_* values, or 0.
+ * @return Non-zero on success.
+ */
+extern int module_add_command_hook(struct ModuleHandle* mod,
+                                   enum HookType type, const char* cmd,
+                                   HookFn fn, int priority, void* user,
+                                   unsigned int flags);
+
+/** Detach a command hook this module attached.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type Hook point it was attached to.
+ * @param[in] cmd Command it watched, or NULL if it watched every one.
+ * @param[in] fn The callback to detach.
+ * @return Non-zero if it was found and detached.
+ */
+extern int module_del_command_hook(struct ModuleHandle* mod,
+                                   enum HookType type, const char* cmd,
+                                   HookFn fn);
+
 /*
  * Server-side interface.  Not for use by modules.
  */

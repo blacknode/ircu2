@@ -171,7 +171,7 @@ function(_ircu_test_module target source subdir)
 endfunction()
 
 foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_umode
-                 mod_cmode mod_cap mod_core)
+                 mod_cmode mod_cap mod_cmdhook mod_core)
   _ircu_test_module(${_fixture} ${_fixture} /test)
 endforeach()
 _ircu_test_module(mod_cmd mod_cmd /test/mod_cmd)

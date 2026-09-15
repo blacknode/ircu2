@@ -278,6 +278,21 @@ requirement" — never `0`, which is a valid position.
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact
 notifications whose return value is ignored. All hooks run inline on the main thread.
+`HOOK_COMMAND_PRE`/`HOOK_COMMAND_POST` are the exception in shape: they fire
+around *every* command, from the two dispatch sites in `ircd/parse.c`
+(`parse_dispatch()`), so a module can watch one user act on another without a
+hook per command. They are registered with `module_add_command_hook()` naming a
+command (`hook_add()` refuses them), and `hooks.c` stays a pure dispatcher —
+`parse.c` resolves the subject each command declares in `msgtab[]`
+(`struct MsgSubject` in `msg.h`: parv indices, `0` for none, `MS_LAST` for a
+target whose position moves with the parameter count, and `subject_s` when the
+server form has a different shape) into `hc_client`/`hc_channel`/`hc_arg`, using
+`findNUser()` on the server path and `FindClient()` on the client one. Rules: a
+`+S` source is skipped unless the hook passed `HOOK_CMD_INCLUDE_SERVICES`; a
+`HOOK_DENY` counts only when the source is `MyConnect()` (vetoing a command
+another server already applied would desync this one); `POST` is skipped after
+`CPTR_KILLED` and after a veto; `hcc_parv` is read-only; recursion is capped.
+`modules/hooks/cmdaudit.c` is the reference module.
 
 **Design docs.** `doc/proposals/` holds the accepted designs for the module API
 (001), the multithreading direction (002, in Spanish — option B is what

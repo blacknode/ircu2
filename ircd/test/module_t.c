@@ -16,6 +16,7 @@
 #include "migration.h"
 #include "module.h"
 #include "capab.h"
+#include "hooks.h"
 #include "channel.h"
 #include "client.h"
 #include "ircd_log.h"
@@ -47,6 +48,10 @@ chanmode_t mod_cmode_flag_two;
  */
 int mod_cap_index_one;
 int mod_cap_index_two;
+
+/** Bumped by mod_cmdhook's callbacks, so the test can see them run. */
+int mod_cmdhook_pre_calls;
+int mod_cmdhook_post_calls;
 
 /* Defined by module_stub.c. */
 extern int stub_commands_live;
@@ -668,6 +673,42 @@ static void test_cap_explicit_removal(void)
   printf("Passed: explicit capability removal\n");
 }
 
+/** A module's command hooks reach the chains and are reverted on unload.
+ *
+ * The same callback on two commands is two registrations, not one: the
+ * command is part of what identifies a command hook, which is what lets a
+ * module watch KICK and KILL with one function and give either back on
+ * its own.
+ */
+static void test_command_hook_registration(void)
+{
+  struct ModuleHandle* mod;
+
+  assert(hook_count(HOOK_COMMAND_PRE) == 0);
+  assert(hook_count(HOOK_COMMAND_POST) == 0);
+
+  mod = module_load("mod_cmdhook", 0, 0);
+  assert(mod != 0);
+
+  assert(hook_count(HOOK_COMMAND_PRE) == 2);
+  assert(hook_count(HOOK_COMMAND_POST) == 1);
+  /* The lifecycle point it tried to register as a command hook was
+   * refused, and the module said so by loading anyway.
+   */
+  assert(hook_count(HOOK_CLIENT_REGISTERED) == 0);
+
+  /* It can hand one back while it stays loaded, and only its own. */
+  assert(module_del_command_hook(mod, HOOK_COMMAND_PRE, "KILL", 0) == 0);
+  assert(hook_count(HOOK_COMMAND_PRE) == 2);
+
+  assert(module_unload(mod) != 0);
+
+  assert(hook_count(HOOK_COMMAND_PRE) == 0);
+  assert(hook_count(HOOK_COMMAND_POST) == 0);
+
+  printf("Passed: module command hooks are reverted on unload\n");
+}
+
 /** Repeated load/unload neither leaks positions nor strands them. */
 static void test_cap_cycles(void)
 {
@@ -862,6 +903,7 @@ int main(void)
   test_cap_registration();
   test_cap_explicit_removal();
   test_cap_cycles();
+  test_command_hook_registration();
   test_migrations_loaded();
   test_module_without_migrations();
   test_reject_bad_migrations();

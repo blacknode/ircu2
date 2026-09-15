@@ -518,6 +518,99 @@ CHANNEL_DESTROYED and SERVER_SPLIT.  Registering for one of them succeeds
 and simply never fires.
 
 
+COMMAND HOOKS
+=============
+
+HOOK_COMMAND_PRE and HOOK_COMMAND_POST are the two points every command
+passes through.  They are what lets a module see one user act on another
+-- KICK, KILL, WHOIS, INVITE, MODE, SILENCE, GLINE, SLINE, JUPE -- without
+a hook per command, and without the core growing one every time a command
+is added.
+
+  module_add_command_hook(mod, HOOK_COMMAND_PRE, "KICK", on_kick,
+                          HOOK_PRIORITY_DEFAULT, 0, 0);
+
+They are registered with module_add_command_hook() and not with
+module_add_hook(), which refuses them: a command hook carries a command
+name, and a hook registered without one is handed every line the server
+parses -- all the server-to-server traffic included -- to throw almost all
+of it away.  Pass NULL as the command only if that is really what you want.
+
+The context carries a struct HookCommand in hc_command:
+
+  static enum HookResult on_kick(struct HookContext *ctx, void *user)
+  {
+    const struct HookCommand *cmd = ctx->hc_command;
+
+    cmd->hcc_cmd      /* "KICK" */
+    cmd->hcc_tok      /* "K", its P10 token */
+    cmd->hcc_handler  /* CLIENT_HANDLER, SERVER_HANDLER, OPER_HANDLER, ... */
+    cmd->hcc_parc     /* number of parameters */
+    cmd->hcc_parv     /* the parameters; parv[0] is the source */
+    cmd->hcc_result   /* POST only: what the handler returned */
+    ...
+  }
+
+and the usual context fields are filled in with the subject the server
+resolved:
+
+  ctx->hc_source    /* who ran the command */
+  ctx->hc_client    /* who it acts on, already a struct Client* */
+  ctx->hc_channel   /* the channel it names, already a struct Channel* */
+  ctx->hc_arg       /* its reason, or the mask a *-line names */
+
+That resolution is the point.  A module that wanted this before would have
+had to parse parv itself, and would have had to know that the same KICK
+carries a nick from a client and a numnick from a server -- a distinction
+every ms_*() handler in the tree makes and every module would have got
+wrong for one command in ten.  Which parameter means what is declared by
+the command, in msgtab[] (see struct MsgSubject in msg.h), so a command
+registered by a module can declare it too.
+
+A command that declares nothing still reaches the hooks; hc_client and
+hc_channel are simply NULL and the module reads hcc_parv.
+
+Five rules, and the reason for each:
+
+  * A command whose source is a service bot (+S) reaches neither point.  A
+    service acts on the server's behalf, and auditing or vetoing it is
+    auditing the server.  A module that does want to see them -- an audit
+    log -- passes HOOK_CMD_INCLUDE_SERVICES as the flags.
+
+  * HOOK_DENY at HOOK_COMMAND_PRE is honoured only when the source is a
+    client of this server.  For a command that arrived from another server
+    the point is a notification: the rest of the network has already
+    applied it, and refusing it here would desynchronise this server rather
+    than prevent anything.  The attempt is logged.
+
+  * HOOK_COMMAND_POST does not run when the handler returned CPTR_KILLED.
+    The client is gone by then and the pointers in the context would be
+    freed memory; a module learns about the exit from HOOK_CLIENT_EXITING,
+    which is where it belongs.  It does not run for a command a hook
+    refused either: nothing happened to report.
+
+  * hcc_parv is read-only.  Rewriting an arbitrary parameter of a command
+    in flight is not something the server can bound the consequences of.
+    What a module may change is the context: a numeric and a reason when it
+    denies, and nothing else.
+
+  * A hook that causes another command to be dispatched is bounded.  Past a
+    small depth the server stops running the hooks and logs it, rather than
+    running out of stack on a module that wrote a loop without noticing.
+
+Denying works the same as at every other veto point: set hc_numeric and
+hc_reason, return HOOK_DENY, and the client is told in the module's own
+words.
+
+  ctx->hc_numeric = ERR_CHANOPRIVSNEEDED;
+  ircd_strncpy(ctx->hc_reason, "that user is an operator",
+               sizeof(ctx->hc_reason) - 1);
+  return HOOK_DENY;
+
+modules/hooks/cmdaudit.c is the reference: it logs what one user does to
+another and refuses a KICK aimed at a network service or an operator.
+
+
 VETO HOOKS ONLY SEE LOCAL CLIENTS
 =================================
 

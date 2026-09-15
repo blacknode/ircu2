@@ -21,9 +21,11 @@
 #include "config.h"
 
 #include "hooks.h"
+#include "client.h"
 #include "ircd_alloc.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
+#include "ircd_string.h"
 #include "numeric.h"
 #include "send.h"
 
@@ -39,6 +41,9 @@ struct Hook {
   void*                h_user;      /**< Opaque pointer for the callback. */
   int                  h_priority;  /**< Lower runs earlier. */
   int                  h_dead;      /**< Removed while the chain was running. */
+  char*                h_cmd;       /**< Command a command hook watches, or
+                                         NULL for every command. */
+  unsigned int         h_flags;     /**< HOOK_CMD_* flags. */
 };
 
 /** One chain per hook type. */
@@ -79,6 +84,8 @@ static const char* hook_names[HOOK_LAST] = {
   "MESSAGE_PRE_CHANNEL",
   "MESSAGE_PRE_PRIVATE",
   "MESSAGE_RECEIVED",
+  "COMMAND_PRE",
+  "COMMAND_POST",
   "SERVER_LINKED",
   "SERVER_SPLIT",
   "CONFIG_LOADED"
@@ -110,6 +117,13 @@ unsigned int hook_calls(enum HookType type)
   return hooks[type].calls;
 }
 
+/** Release one hook node. */
+static void hook_free(struct Hook* h)
+{
+  MyFree(h->h_cmd);
+  MyFree(h);
+}
+
 /** Free hooks marked dead during dispatch. */
 static void hook_reap(void)
 {
@@ -124,7 +138,7 @@ static void hook_reap(void)
     for (h_p = &hooks[type].chain; (h = *h_p); ) {
       if (h->h_dead) {
         *h_p = h->h_next;
-        MyFree(h);
+        hook_free(h);
       } else
         h_p = &h->h_next;
     }
@@ -133,19 +147,13 @@ static void hook_reap(void)
   hook_reap_pending = 0;
 }
 
-/** Register a hook.
- * @param[in] mod Module registering the hook; used only as an identity
- *   token, so hooks.c does not need to know what a module is.
- * @param[in] owner The module's name, for log messages.  Must stay valid
- *   for as long as the hook is registered.
- * @param[in] type Hook point to attach to.
- * @param[in] fn Callback to run.
- * @param[in] priority Lower numbers run earlier; ties keep insertion order.
- * @param[in] user Opaque pointer handed back to the callback.
- * @return Non-zero on success.
+/** Register a hook.  The shared half of hook_add() and
+ * hook_add_command(); \a cmd and \a flags are meaningful only for the
+ * command hook points.
  */
-int hook_add(struct ModuleHandle* mod, const char* owner, enum HookType type,
-             HookFn fn, int priority, void* user)
+static int hook_add_full(struct ModuleHandle* mod, const char* owner,
+                         enum HookType type, HookFn fn, int priority,
+                         void* user, const char* cmd, unsigned int flags)
 {
   struct Hook** h_p;
   struct Hook* h;
@@ -168,6 +176,9 @@ int hook_add(struct ModuleHandle* mod, const char* owner, enum HookType type,
   h->h_fn = fn;
   h->h_user = user;
   h->h_priority = priority;
+  h->h_flags = flags;
+  if (cmd)
+    DupString(h->h_cmd, cmd);
 
   /* Insert by priority, after any hook of equal priority so that the order
    * modules were loaded in decides ties.
@@ -181,6 +192,114 @@ int hook_add(struct ModuleHandle* mod, const char* owner, enum HookType type,
   hooks[type].count++;
 
   return 1;
+}
+
+/** Register a hook.
+ * @param[in] mod Module registering the hook; used only as an identity
+ *   token, so hooks.c does not need to know what a module is.
+ * @param[in] owner The module's name, for log messages.  Must stay valid
+ *   for as long as the hook is registered.
+ * @param[in] type Hook point to attach to.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier; ties keep insertion order.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @return Non-zero on success.
+ */
+int hook_add(struct ModuleHandle* mod, const char* owner, enum HookType type,
+             HookFn fn, int priority, void* user)
+{
+  /* A command hook carries a command name and flags, which this entry
+   * point has nowhere to put; sending one through here would register a
+   * hook that fires on every command, which is never what was meant.
+   */
+  if (type == HOOK_COMMAND_PRE || type == HOOK_COMMAND_POST) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s tried to register %s with hook_add(); "
+              "command hooks go through hook_add_command()",
+              owner ? owner : "?", hook_type_name(type));
+    return 0;
+  }
+
+  return hook_add_full(mod, owner, type, fn, priority, user, 0, 0);
+}
+
+/** Attach a callback to a command hook.
+ *
+ * Naming a command is the normal case and watching every one is the
+ * exception: a module that asks for all of them is handed every line the
+ * server parses, including the server-to-server traffic.
+ *
+ * @param[in] mod Module registering the hook.
+ * @param[in] owner The module's name, for log messages.
+ * @param[in] type #HOOK_COMMAND_PRE or #HOOK_COMMAND_POST.
+ * @param[in] cmd Command to watch, or NULL for every command.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @param[in] flags Bitwise combination of HOOK_CMD_* values.
+ * @return Non-zero on success.
+ */
+int hook_add_command(struct ModuleHandle* mod, const char* owner,
+                     enum HookType type, const char* cmd, HookFn fn,
+                     int priority, void* user, unsigned int flags)
+{
+  if (type != HOOK_COMMAND_PRE && type != HOOK_COMMAND_POST) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s tried to register %s as a command hook",
+              owner ? owner : "?", hook_type_name(type));
+    return 0;
+  }
+
+  if (cmd && EmptyString(cmd))
+    cmd = 0;
+
+  return hook_add_full(mod, owner, type, fn, priority, user, cmd, flags);
+}
+
+/** Detach a command hook.
+ * @param[in] mod Module that owns it.
+ * @param[in] type Hook point it was attached to.
+ * @param[in] cmd Command it was attached for, or NULL if it watched all.
+ * @param[in] fn The callback.
+ * @return Non-zero if it was found and detached.
+ */
+int hook_del_command(struct ModuleHandle* mod, enum HookType type,
+                     const char* cmd, HookFn fn)
+{
+  struct Hook** h_p;
+  struct Hook* h;
+
+  if (type != HOOK_COMMAND_PRE && type != HOOK_COMMAND_POST)
+    return 0;
+
+  if (cmd && EmptyString(cmd))
+    cmd = 0;
+
+  for (h_p = &hooks[type].chain; (h = *h_p); h_p = &h->h_next) {
+    if (h->h_fn != fn || h->h_mod != mod || h->h_dead)
+      continue;
+    /* The same callback may watch two commands; the name is part of what
+     * identifies the registration.
+     */
+    if (!cmd != !h->h_cmd)
+      continue;
+    if (cmd && ircd_strcmp(cmd, h->h_cmd))
+      continue;
+
+    hooks[type].count--;
+
+    if (hook_run_depth) {
+      h->h_dead = 1;
+      hook_reap_pending = 1;
+    } else {
+      *h_p = h->h_next;
+      hook_free(h);
+    }
+
+    return 1;
+  }
+
+  return 0;
 }
 
 /** Remove a hook a module registered.
@@ -211,7 +330,7 @@ int hook_del(struct ModuleHandle* mod, enum HookType type, HookFn fn)
       hook_reap_pending = 1;
     } else {
       *h_p = h->h_next;
-      MyFree(h);
+      hook_free(h);
     }
 
     return 1;
@@ -245,7 +364,7 @@ void hook_del_module(struct ModuleHandle* mod)
         h_p = &h->h_next;
       } else {
         *h_p = h->h_next;
-        MyFree(h);
+        hook_free(h);
       }
     }
   }
@@ -339,6 +458,128 @@ void hook_notify(enum HookType type, struct Client* client,
   ctx.hc_arg = arg;
 
   hook_run(type, &ctx);
+}
+
+/** Return non-zero if anything is listening at a command hook point.
+ *
+ * This is the whole cost of the command hooks on a server where no module
+ * uses them: one array read and a comparison, per line parsed.
+ */
+int hook_command_active(enum HookType type)
+{
+  if (type != HOOK_COMMAND_PRE && type != HOOK_COMMAND_POST)
+    return 0;
+
+  return hooks[type].count != 0;
+}
+
+/** Depth of hook_run_command() calls on the stack.
+ *
+ * A hook that makes the server dispatch another command is a reasonable
+ * thing to write -- a module that answers a KICK with a MODE -- and a
+ * module that does it without noticing it has written a loop is just as
+ * easy to write.  The depth bounds it.
+ */
+static int hook_command_depth;
+
+/** Deepest nesting of command dispatch a hook may cause. */
+#define HOOK_COMMAND_MAX_DEPTH 8
+
+/** Run the command hooks for one dispatch.
+ *
+ * The context arrives filled in: parse.c owns the message table and knows
+ * how to turn a command's declared subject into a client and a channel, so
+ * it does that once and this only dispatches.  See hooks.h for the rules
+ * enforced here and why each one is there.
+ *
+ * @param[in] type #HOOK_COMMAND_PRE or #HOOK_COMMAND_POST.
+ * @param[in,out] ctx Context, with HookContext::hc_command set.
+ * @return #HOOK_DENY if the command must not run, #HOOK_CONTINUE otherwise.
+ */
+enum HookResult hook_run_command(enum HookType type, struct HookContext* ctx)
+{
+  enum HookResult res = HOOK_CONTINUE;
+  struct Hook* h;
+  const char* cmd;
+  int from_service;
+
+  assert(type == HOOK_COMMAND_PRE || type == HOOK_COMMAND_POST);
+  assert(0 != ctx);
+  assert(0 != ctx->hc_command);
+
+  if (!hooks[type].count)
+    return HOOK_CONTINUE;
+
+  cmd = ctx->hc_command->hcc_cmd;
+
+  /* A hook that got the server dispatching commands in a circle is a bug
+   * in that module, but it is this server that would run out of stack.
+   */
+  if (hook_command_depth >= HOOK_COMMAND_MAX_DEPTH) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Command hooks nested %d deep at %s; not running them again",
+              hook_command_depth, cmd);
+    return HOOK_CONTINUE;
+  }
+
+  /* A service bot acts for the server.  Most modules should not see that
+   * at all, so it is opt-in per hook rather than a decision made here.
+   */
+  from_service = ctx->hc_source && IsServiceBot(ctx->hc_source);
+
+  hooks[type].calls++;
+
+  hook_command_depth++;
+  hook_run_depth++;
+
+  for (h = hooks[type].chain; h; h = h->h_next) {
+    if (h->h_dead)
+      continue;
+    if (h->h_cmd && ircd_strcmp(h->h_cmd, cmd))
+      continue;
+    if (from_service && !(h->h_flags & HOOK_CMD_INCLUDE_SERVICES))
+      continue;
+
+    res = (*h->h_fn)(ctx, h->h_user);
+
+    if (res == HOOK_PENDING) {
+      log_write(LS_SYSTEM, L_ERROR, 0,
+                "Module %s returned HOOK_PENDING from %s, which this server "
+                "does not implement; treating it as HOOK_CONTINUE",
+                h->h_owner, hook_type_name(type));
+      res = HOOK_CONTINUE;
+    }
+
+    if (res != HOOK_CONTINUE)
+      break;
+  }
+
+  hook_run_depth--;
+  hook_command_depth--;
+
+  if (!hook_run_depth)
+    hook_reap();
+
+  if (res != HOOK_DENY)
+    return HOOK_CONTINUE;
+
+  /* Only a command from a client of this server can be refused.  The same
+   * command reaching another server has already been applied there, so
+   * refusing it here would leave this server disagreeing with the network
+   * about who is on what channel -- a worse outcome than the one the
+   * module was trying to prevent.
+   */
+  if (type != HOOK_COMMAND_PRE || !ctx->hc_source
+      || !MyConnect(ctx->hc_source)) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "A module denied %s from %s at %s, which is not a client of "
+              "this server; ignoring the veto",
+              cmd, ctx->hc_source ? cli_name(ctx->hc_source) : "?",
+              hook_type_name(type));
+    return HOOK_CONTINUE;
+  }
+
+  return HOOK_DENY;
 }
 
 /** Tell a client why a hook refused an operation.

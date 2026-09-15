@@ -1,12 +1,12 @@
 # Propuesta 006 — De IRC a comunicaciones unificadas: texto enriquecido, voz, vídeo y pantalla compartida
 
 **Estado:** hoja de ruta, aprobada con correcciones (revisión 3).
-Fase 0 **en curso**: el registro de capacidades (§5.1) y los hooks genéricos
-de comando (§5.7) están implementados.
+Fase 0 **en curso**: el registro de capacidades (§5.1), los hooks genéricos de
+comando (§5.7) y los identificadores de mensaje (§5.4) están implementados.
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
-**Introduce:** `include/capab.h` + `ircd/capab.c` y los hooks de comando (ya);
-el resto, por fases
+**Introduce:** `include/capab.h` + `ircd/capab.c`, los hooks de comando y
+`include/msgid.h` + `ircd/msgid.c` (ya); el resto, por fases
 
 **Correcciones sobre la revisión 2** (aprobación con cambios):
 1. Una cuenta **es un nickname, sin excepción**, y un email agrupa **como
@@ -15,6 +15,15 @@ el resto, por fases
    PostgreSQL, §7.1.
 3. **WebRTC aplazado.** Voz, vídeo y pantalla compartida salen del roadmap
    activo y se retomarán más adelante, §7.5.
+
+**Decisión tomada, y es la que más condiciona todo lo demás:** **se mantiene la
+compatibilidad con los clientes IRC tradicionales.** Un cliente que no negocia
+nada recibe exactamente las mismas líneas que recibía antes, byte a byte. Esto
+deja de ser una pregunta abierta y pasa a ser la regla de aceptación de cada
+cosa que se añada: toda extensión va detrás de una capacidad, ninguna es
+obligatoria, y ninguna cambia lo que se le manda a quien no la pidió. Cuando
+una extensión no pueda degradar limpiamente, el servidor genera el equivalente
+en texto plano (§7.3); si ni eso es posible, la extensión no entra.
 
 **Decisiones que vienen de la revisión 2 y siguen en pie:** hooks genéricos
 de comando (§5.7), workspaces descartados (§6.3), SASL y `ACCOUNT` en el core
@@ -208,11 +217,69 @@ capacidad en un `CAP DEL`.
 agrupada. `labeled-response` es lo que permite a un cliente correlacionar
 petición y respuesta — imprescindible para una UI que no sea un terminal.
 
-### 5.4 Identificadores de mensaje (`msgid`)
-Tag `msgid` estable y único por red, generado en el servidor de origen y
-federado en P10. **Es la clave primaria de todo lo que viene después**:
-historial, hilos, reacciones, ediciones, borrados y marcas de leído. Sin
-`msgid` ninguna de esas cinco cosas se puede construir.
+### 5.4 Identificadores de mensaje (`msgid`) — **implementado**
+
+Un nombre para un mensaje, el mismo en toda la red. Es la clave primaria de las
+cinco cosas que vienen después — historial, hilos, reacciones, ediciones y
+marcas de leído —, y ninguna de ellas se puede construir sin él.
+
+**Lo que hay en el árbol:**
+
+- **`ircd/msgid.c`** es sólo el generador: el numérico P10 del servidor más un
+  contador en base 62. El numérico separa los identificadores de este servidor
+  de los de cualquier otro sin negociar nada — dos servidores no pueden
+  compartir numérico —, y el contador se siembra del reloj, de modo que un
+  reinicio nunca vuelve a repartir identificadores que ya dio. No sabe nada de
+  clientes ni de envíos, que es lo que permite probar aparte la única propiedad
+  que importa. Salen de unos doce caracteres: `AB8aoSr25JN`.
+
+- **El identificador es de la línea, no del envío.** Una línea que entra es un
+  mensaje, se convierta en los envíos que se convierta: el reparto al canal, el
+  eco al remitente y la copia que cruza cada enlace tienen que llevar el mismo,
+  o nada río abajo puede saber que son el mismo mensaje. `parse_dispatch()`
+  abre y cierra la línea alrededor del handler
+  (`msg_tag_line_begin()`/`msg_tag_line_end()`), y fuera de esa ventana no hay
+  identificador ninguno — que es la respuesta correcta: un mensaje que el
+  servidor se inventa no es de un usuario y nada va a querer referirse a él.
+
+- **Sólo lo lleva el comando de la propia línea.** `msg_tag_line_msgid(tok)`
+  devuelve el identificador únicamente si `tok` es el comando que la línea
+  traía. Salió de una comprobación contra un servidor real: sin eso, un numeric
+  emitido mientras se maneja un `PRIVMSG` — un `403 No such channel` — heredaba
+  el nombre del mensaje, y cualquier cosa que guardara mensajes habría archivado
+  el error bajo el nombre del mensaje.
+
+- **Alcance: `PRIVMSG`, `NOTICE` y `TAGMSG`.** `WALLCHOPS` y `WALLVOICES` se
+  dejaron fuera a propósito: salen al canal como `WALLCHOPS` pero se le
+  devuelven a su remitente como `NOTICE`, así que el remitente tendría un
+  nombre distinto del que tiene todo el mundo — y un mensaje sobre cuyo nombre
+  dos clientes no se ponen de acuerdo es peor que uno sin nombre.
+
+- **Un cliente nunca elige el suyo.** Un `@msgid=` que llega de un cliente se
+  descarta y se genera uno nuevo: un identificador que un cliente pudiera
+  elegir es uno con el que podría apuntar a — o sobrescribir — el mensaje de
+  otro en lo que sea que los guarde. El que llega de un servidor sí se conserva
+  y se reenvía, y eso es lo que hace que toda la red llame igual al mismo
+  mensaje.
+
+- **Compatibilidad, que es la regla nueva (§ cabecera).** El identificador sale
+  hacia un cliente sólo si negoció `message-tags`, y hacia otro servidor sólo
+  bajo `FEAT_NETWORK_FEATURES`. Un cliente tradicional recibe la línea de
+  siempre, byte a byte.
+
+**Comprobado**, además de `msgid_t` (20.000 identificadores sin repetir, el
+reinicio que no retrocede, dos servidores que no colisionan, la validación de
+lo que llega de un par): contra un servidor real y contra un enlace P10 de
+verdad, con el servidor falso de `tests/p10_server.py`.
+
+```
+  cliente tradicional : :snd4!snd4@... PRIVMSG #q4 :uno
+  cliente con tags    : @time=...;msgid=AB8aoSr25JN :snd4!... PRIVMSG #q4 :uno
+  la línea S2S        : @time=...;msgid=AB8aoSr25JN ABAAF P #q4 :uno
+```
+
+El mismo mensaje tiene un solo nombre a los dos lados del enlace, y el cliente
+que no pidió nada no ve nada.
 
 ### 5.5 Hooks asíncronos (`HOOK_PENDING`)
 Implementar el valor ya reservado: un hook devuelve `HOOK_PENDING`, la
@@ -723,8 +790,8 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
 
 ```
   F0 Cimientos (core, ABI 8)
-   │   capacidades dinámicas ✅ · hooks de comando ✅
-   │   batch/labeled · msgid · multiline · hooks async · cripto ircd_*
+   │   capacidades dinámicas ✅ · hooks de comando ✅ · msgid ✅
+   │   batch/labeled · multiline · hooks async · cripto ircd_*
    │
    ├──► F1 Identidad (SASL + ACCOUNT en core, email → hasta 3 nicks)
    │     │
@@ -772,11 +839,12 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 
 ## 9. Riesgos y decisiones que quedan abiertas
 
-1. **¿Se mantiene la compatibilidad con clientes IRC estándar?** Si es
-   requisito, toda extensión debe degradar limpiamente y nada puede ser
-   obligatorio. Si no lo es, se puede ir más rápido y con un protocolo más
-   limpio. **Afecta a todas las fases y sigue sin decidirse.** Es la única
-   decisión pendiente que puede obligar a rehacer trabajo.
+1. **La compatibilidad con clientes IRC tradicionales es requisito** (ver
+   cabecera). Ya no es un riesgo abierto sino una restricción de diseño: cuesta
+   trabajo en cada extensión — hay que pensar la degradación antes que la
+   función — y a cambio quita el único riesgo que podía obligar a rehacer lo
+   ya hecho. La forma de mantenerla es la de §5.4: la extensión va detrás de
+   una capacidad y no cambia un byte de lo que recibe quien no la pidió.
 2. **Un despliegue por organización** mientras no exista el modelo de
    workspaces (§6.3). Condiciona el modelo de negocio.
 3. **El nick es el nombre visible** (§6.2). `NICKLEN` caracteres, único en toda
@@ -826,20 +894,31 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
   despachos de `parse.c`, el sujeto declarado por cada comando en `msgtab[]` y
   resuelto una vez, `module_add_command_hook()` en el API, y
   `modules/hooks/cmdaudit.c` como módulo de referencia.
+- **§5.4, identificadores de mensaje.** `ircd/msgid.c` genera, la línea es la
+  unidad, sólo el comando de la propia línea lo lleva, un cliente nunca elige el
+  suyo, y cruza P10 para que toda la red llame igual al mismo mensaje.
 
-Ambos cubiertos por pruebas unitarias y comprobados contra un servidor real.
+Los tres cubiertos por pruebas unitarias y comprobados contra un servidor real;
+el último, además, contra un enlace P10 con el servidor falso de la suite. Y los
+tres respetan la regla de compatibilidad: un cliente que no negocia nada recibe
+la línea de siempre, byte a byte.
 
 **Siguiente**, en este orden y cada uno verificable por separado:
 
-1. **`msgid`** (§5.4). Es la clave primaria de las cinco cosas que vienen
-   después — historial, hilos, reacciones, ediciones, marcas de leído —, así
-   que cuanto antes exista, menos se rehace.
-2. **`BATCH`, `labeled-response` y `draft/multiline`** (§5.2, §5.3). Ahora sí
-   caben: hay 119 posiciones de capacidad libres.
+1. **`BATCH` y `labeled-response`** (§5.3). `BATCH` es prerrequisito de
+   `multiline`, de `chathistory` y de cualquier entrega agrupada;
+   `labeled-response` es lo que permite a un cliente correlacionar petición y
+   respuesta, sin lo cual una UI que no sea un terminal no se puede escribir.
+   Ahora caben: hay 119 posiciones de capacidad libres.
+2. **`draft/multiline`** (§5.2), que es la respuesta federable a los 512 bytes
+   y no rompe a ningún cliente antiguo — exactamente la forma que pide la regla
+   de compatibilidad.
 3. **Criptografía `ircd_*`** (§5.8), con el hashing en *workers* desde el
    primer día.
 4. **Hooks asíncronos** (§5.5). El más delicado de la fase 0, y el que abre F1
    y F7.
+
+Con eso la fase 0 queda cerrada y empieza la identidad (§6).
 
 Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
 necesitan: el modelo de identidad (§6), el aislamiento de módulos (§7.7) y,

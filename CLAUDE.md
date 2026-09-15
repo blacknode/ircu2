@@ -274,6 +274,29 @@ and clears the bit from every local client. The `require`/`forbid` arguments of
 the `sendcmdto_*_capab_*()` calls are positions, with `CAP_NONE` for "no
 requirement" — never `0`, which is a valid position.
 
+**Message identifiers** (`include/msgid.h`, `ircd/msgid.c`, `include/msg_tag.h`).
+The IRCv3 `msgid` tag: one name for one message, network-wide, and the thing
+everything that refers back to a message will be built on (threads, reactions,
+edits, read markers, a history store). `msgid.c` is only the generator — the
+server's P10 numeric plus a base-62 counter seeded from the clock, so a restart
+never reissues one — and knows nothing about clients, which is why `msgid_t`
+can test the one property that matters without the server. `msgid_init()` runs
+after `init_server_identity()`, because the numeric is what separates this
+server's identifiers from every other's. The identifier belongs to the *line*,
+not to a send call: `parse_dispatch()` brackets the handler with
+`msg_tag_line_begin()`/`msg_tag_line_end()`, so the channel fan-out, the echo
+to the sender and the copy crossing every link all carry the same one.
+`msg_tag_line_msgid(tok)` hands it out only when `tok` is the line's own
+command, so a numeric sent while handling a PRIVMSG does not inherit the
+message's name. Only PRIVMSG, NOTICE and TAGMSG get one
+(`msg_tag_needs_msgid()`); WALLCHOPS/WALLVOICES are excluded because they are
+echoed to their sender as a NOTICE and would get two different names. A
+client's own `msgid` is never trusted (it could point at someone else's
+message); one from a server is kept and forwarded, which is what makes the
+whole network agree. It reaches a client only with `message-tags`, so a
+traditional client sees byte-identical lines to before, and S2S only under
+`FEAT_NETWORK_FEATURES`.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact

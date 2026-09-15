@@ -1065,6 +1065,13 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
   enum HandlerType htype = cli_handler(cptr);
   int ret;
 
+  /* One line in is one message, however many sends it turns into: the
+   * fan-out to a channel, the echo back to its sender and the copy that
+   * crosses every link all have to carry the same identifier.  So it
+   * belongs to the line, and this is where the line is.
+   */
+  msg_tag_line_begin(mptr->tok, parse_tags(), htype == SERVER_HANDLER);
+
   if (hook_command_active(HOOK_COMMAND_PRE)) {
     memset(&hcc, 0, sizeof(hcc));
     hcc.hcc_cmd = mptr->cmd;
@@ -1084,6 +1091,7 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
        * refusing a join or a nick.
        */
       hook_deny_reply(from, &ctx, ERR_UNKNOWNCOMMAND, mptr->cmd);
+      msg_tag_line_end();
       return 0;
     }
   }
@@ -1110,6 +1118,8 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
 
     hook_run_command(HOOK_COMMAND_POST, &ctx);
   }
+
+  msg_tag_line_end();
 
   return ret;
 }

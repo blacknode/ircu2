@@ -232,6 +232,7 @@ set(IRCU_SOURCES
   module.c
   motd.c
   msg_tag.c
+  msgid.c
   msgq.c
   numnicks.c
   opercmds.c

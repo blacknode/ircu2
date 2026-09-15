@@ -267,6 +267,10 @@ struct MsgTagCtx {
   const char    *tok;         /**< Command token for S2S policy (or NULL). */
   int            client_relay;   /**< Has relayable client-only (+) tags. */
   int            s2s_needs_time; /**< Invent/forward @time= on S2S for this command. */
+  const char    *msgid;       /**< This message's identifier, or NULL.  Taken
+                                   from the line being handled, and only when
+                                   this send is the relay of that line's own
+                                   command: see msg_tag_line_msgid(). */
 };
 
 /** Per-fan-out prefix cache: amortizes prefix formatting across many local
@@ -290,6 +294,7 @@ msgtagctx_init(struct MsgTagCtx *ctx, const char *tok)
   ctx->tok = tok;
   ctx->client_relay = msg_tag_have_client_relay(ctx->tags);
   ctx->s2s_needs_time = tok ? msg_tag_s2s_needs_time(tok) : 0;
+  ctx->msgid = tok ? msg_tag_line_msgid(tok) : 0;
 }
 
 static void
@@ -380,29 +385,32 @@ void send_buffer(struct Client* to, struct Client* from, struct MsgBuf* buf, int
     } else {
       int invent = tctx ? tctx->s2s_needs_time : 0;
       taglen = msg_tag_format_s2s(tagbuf, sizeof(tagbuf), tags, local_time,
-                                  invent);
+                                  invent, tctx ? tctx->msgid : 0);
       prefix = taglen ? tagbuf : 0;
     }
   } else if (cache) {
     if (cache->ctx.client_relay) {
       taglen = msg_tag_format(cache->prefix, sizeof(cache->prefix),
-                              to, from, cache->ctx.tags, cache->ctx.local_time);
+                              to, from, cache->ctx.tags, cache->ctx.local_time,
+                              cache->ctx.msgid);
       prefix = taglen ? cache->prefix : 0;
     } else {
-      unsigned int profile = msg_tag_profile(to);
+      unsigned int profile = msg_tag_profile(to, cache->ctx.msgid);
 
       if (profile != cache->profile) {
         cache->profile = profile;
         cache->prefix_len = profile
           ? msg_tag_format(cache->prefix, sizeof(cache->prefix),
-                           to, from, cache->ctx.tags, cache->ctx.local_time)
+                           to, from, cache->ctx.tags, cache->ctx.local_time,
+                           cache->ctx.msgid)
           : 0;
       }
       taglen = cache->prefix_len;
       prefix = taglen ? cache->prefix : 0;
     }
   } else {
-    taglen = msg_tag_format(tagbuf, sizeof(tagbuf), to, from, tags, local_time);
+    taglen = msg_tag_format(tagbuf, sizeof(tagbuf), to, from, tags, local_time,
+                            tctx ? tctx->msgid : 0);
     prefix = taglen ? tagbuf : 0;
   }
 

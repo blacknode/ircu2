@@ -51,6 +51,7 @@
 #include "module.h"
 #include "motd.h"
 #include "msg.h"
+#include "msgid.h"
 #include "numeric.h"
 #include "numnicks.h"
 #include "opercmds.h"
@@ -770,6 +771,7 @@ int main(int argc, char **argv) {
     return 10;
   }
 
+
   /* After init_conf(), so FEAT_WORKER_THREADS has its final value, and so a
    * module loaded from a Module{} block has already had its chance to ask
    * for a dedicated worker: those requests are held and started here.  With
@@ -807,6 +809,14 @@ int main(int argc, char **argv) {
   }
 
   init_server_identity();
+
+  /* After init_server_identity(), which is where the numeric from the
+   * configuration file reaches "me": the numeric is what makes this
+   * server's message identifiers its own, and two servers cannot share
+   * one, so nothing further has to be agreed for their identifiers not to
+   * collide.  Seeded here rather than at start-up for that reason alone.
+   */
+  msgid_init(NumServ(&me), CurrentTime);
 
   uping_init();
 

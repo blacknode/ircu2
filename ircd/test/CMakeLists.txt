@@ -67,6 +67,10 @@ add_ircu_test(ircd_match_t
 add_ircu_test(ircd_string_t
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
+add_ircu_test(msgid_t
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/msgid.c")
+
 add_ircu_test(msgq_excise_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_snprintf.c"

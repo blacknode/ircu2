@@ -20,6 +20,7 @@
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
 #include "msg.h"
+#include "msgid.h"
 
 #include <string.h>
 #include <time.h>
@@ -245,13 +246,114 @@ msg_tag_clienttagdeny_rebuild(void)
   }
 }
 
+/* ------------------------------------------------------------------
+ * The message identifier of the line being handled.  See msg_tag.h.
+ * ------------------------------------------------------------------ */
+
+/** Non-zero between msg_tag_line_begin() and msg_tag_line_end(). */
+static int msgid_line_open;
+/** Non-zero if this line's command carries an identifier at all. */
+static int msgid_line_wanted;
+/** The line's command token, so that only its own relay gets the id. */
+static char msgid_line_tok[16];
+/** The identifier, empty until something asks for one. */
+static char msgid_line_value[MSGIDLEN + 1];
+
+int
+msg_tag_needs_msgid(const char *tok)
+{
+  if (!tok)
+    return 0;
+
+  /* What a user says, and nothing else.  These are the messages another
+   * message can reply to, react to, edit, delete or store, which is the
+   * whole reason an identifier exists.
+   *
+   * WALLCHOPS and WALLVOICES are deliberately not here even though they
+   * are things a user says.  They go out to the channel as WALLCHOPS but
+   * are echoed back to their sender as a NOTICE, so the sender would be
+   * given a different name for the message than everyone else got -- and a
+   * message two clients disagree about the name of is worse than one with
+   * no name at all.  They can be added when that path is made to agree
+   * with itself.
+   */
+  return !ircd_strcmp(tok, TOK_PRIVATE)
+    || !ircd_strcmp(tok, TOK_NOTICE)
+    || !ircd_strcmp(tok, TOK_TAGMSG);
+}
+
+void
+msg_tag_line_begin(const char *tok, struct MsgTag *tags, int from_server)
+{
+  const struct MsgTag *tag;
+
+  msgid_line_open = 1;
+  msgid_line_wanted = msg_tag_needs_msgid(tok);
+  msgid_line_value[0] = '\0';
+  msgid_line_tok[0] = '\0';
+  if (tok) {
+    ircd_strncpy(msgid_line_tok, tok, sizeof(msgid_line_tok) - 1);
+    msgid_line_tok[sizeof(msgid_line_tok) - 1] = '\0';
+  }
+
+  if (!msgid_line_wanted)
+    return;
+
+  /* An identifier that came with the message is the network's: the server
+   * it started on named it, and every server has to call it the same
+   * thing.  From a client it is not: an identifier a client could choose
+   * is one it could use to point at -- or overwrite -- somebody else's
+   * message wherever they are kept.
+   */
+  if (!from_server)
+    return;
+
+  tag = msg_tag_find(tags, "msgid");
+  if (tag && tag->value && msgid_valid(tag->value)) {
+    ircd_strncpy(msgid_line_value, tag->value, sizeof(msgid_line_value) - 1);
+    msgid_line_value[sizeof(msgid_line_value) - 1] = '\0';
+  }
+}
+
+void
+msg_tag_line_end(void)
+{
+  msgid_line_open = 0;
+  msgid_line_wanted = 0;
+  msgid_line_value[0] = '\0';
+  msgid_line_tok[0] = '\0';
+}
+
+const char *
+msg_tag_line_msgid(const char *tok)
+{
+  if (!msgid_line_open || !msgid_line_wanted)
+    return NULL;
+
+  /* The identifier names the message this line carried.  A numeric sent
+   * back while handling it, or a notice the server puts out in passing,
+   * happen during the same line but are not that message, and giving them
+   * its name would have anything that stores messages record the wrong
+   * thing under it.
+   */
+  if (tok && ircd_strcmp(tok, msgid_line_tok))
+    return NULL;
+
+  if (!msgid_line_value[0]) {
+    ircd_strncpy(msgid_line_value, msgid_new(), sizeof(msgid_line_value) - 1);
+    msgid_line_value[sizeof(msgid_line_value) - 1] = '\0';
+  }
+
+  return msgid_line_value;
+}
+
 int
 msg_tag_key_server(const char *key)
 {
   if (!key)
     return 0;
   return !ircd_strcmp(key, "time") || !ircd_strcmp(key, "account")
-    || !ircd_strcmp(key, "batch");
+    || !ircd_strcmp(key, "batch") || !ircd_strcmp(key, "msgid");
 }
 
 int
@@ -330,7 +432,8 @@ msg_tag_key_federated(const char *key)
 {
   if (!key)
     return 0;
-  return !ircd_strcmp(key, "time") || !ircd_strcmp(key, "batch");
+  return !ircd_strcmp(key, "time") || !ircd_strcmp(key, "batch")
+    || !ircd_strcmp(key, "msgid");
 }
 
 int
@@ -402,7 +505,7 @@ msg_tag_append(char *pos, char *end, int *wrote, const char *key,
 
 unsigned int
 msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
-                   time_t local_time, int invent_time)
+                   time_t local_time, int invent_time, const char *msgid)
 {
   char *pos = buf;
   char *end = buf + buflen;
@@ -429,8 +532,22 @@ msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
       return 0;
   }
 
+  /* msgid, so that every server on the network calls this message by the
+   * same name.  Taken from the line rather than forwarded out of \a tags:
+   * upstream's identifier is already there when the message came from a
+   * server, and a client's own is not trusted (see msg_tag_line_begin).
+   */
+  if (msgid) {
+    pos = msg_tag_append(pos, end, &wrote, "msgid", msgid);
+    if (!pos)
+      return 0;
+  }
+
   for (tag = tags; tag; tag = tag->next) {
     if (!ircd_strcmp(tag->key, "time") || !ircd_strcmp(tag->key, "account"))
+      continue;
+    /* Handled above, from the line: never forwarded straight through. */
+    if (!ircd_strcmp(tag->key, "msgid"))
       continue;
     if (msg_tag_key_client_only(tag->key))
       continue;
@@ -452,7 +569,7 @@ msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
 }
 
 unsigned int
-msg_tag_profile(struct Client *to)
+msg_tag_profile(struct Client *to, const char *msgid)
 {
   unsigned int profile = TAGP_NONE;
 
@@ -462,12 +579,20 @@ msg_tag_profile(struct Client *to)
   if (msg_tag_wants_time(to))
     profile |= TAGP_TIME;
 
+  /* Its own bucket: the prefix cache reuses a rendered prefix across
+   * recipients with the same profile, and a client that gets a msgid does
+   * not get the same bytes as one that does not.
+   */
+  if (msgid && CapHas(cli_active(to), CAP_MESSAGE_TAGS))
+    profile |= TAGP_MSGID;
+
   return profile;
 }
 
 unsigned int
 msg_tag_format(char *buf, size_t buflen, struct Client *to,
-               struct Client *from, struct MsgTag *tags, time_t local_time)
+               struct Client *from, struct MsgTag *tags, time_t local_time,
+               const char *msgid)
 {
   char *pos = buf;
   char *end = buf + buflen;
@@ -493,6 +618,19 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
     tbuf[sizeof(tbuf) - 1] = '\0';
 
     pos = msg_tag_append(pos, end, &wrote, "time", tbuf);
+    if (!pos)
+      return 0;
+  }
+
+  /* msgid, for a client that asked for message-tags.
+   *
+   * Nothing else may see it.  A client that negotiated nothing gets the
+   * line it has always got: an identifier is an addition for the clients
+   * that asked to be told about tags, never a change to what a
+   * traditional client is sent.
+   */
+  if (msgid && CapHas(cli_active(to), CAP_MESSAGE_TAGS)) {
+    pos = msg_tag_append(pos, end, &wrote, "msgid", msgid);
     if (!pos)
       return 0;
   }

@@ -98,6 +98,10 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
   i18n/
     test_language.py         # LANGUAGE, draft/languages, translated numerics from
                              # po/es.po (the image installs it), the LG token
+  msgid/
+    test_msgid.py            # the IRCv3 msgid tag: one name per message across
+                             # the network, none at all for a client that did
+                             # not ask for message-tags
   trust_username/            # visible vs. real identity: WHOIS, bans, SILENCE, G-lines
 vhost.py               # Python port of the hidden-host cipher (ircd/ircd_vhost.c)
 ```

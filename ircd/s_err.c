@@ -1424,9 +1424,9 @@ static Numeric replyTable[] = {
 /* 690 */
   N(RPL_WHOISLANGUAGE, "690", "%s %s :can speak these languages."),
 /* 691 */
-  { 0 },
+  N(RPL_WHOISEMAIL, "691", "%s %s :is the address this account belongs to"),
 /* 692 */
-  { 0 },
+  N(RPL_WHOISFROZEN, "692", "%s :must identify to this nickname before doing anything else"),
 /* 693 */
   { 0 },
 /* 694 */
@@ -1842,23 +1842,23 @@ static Numeric replyTable[] = {
 /* 899 */
   { 0 },
 /* 900 */
-  { 0 },
+  N(RPL_LOGGEDIN, "900", "%s %s :You are now logged in as %s"),
 /* 901 */
-  { 0 },
+  N(RPL_LOGGEDOUT, "901", "%s :You are now logged out"),
 /* 902 */
-  { 0 },
+  N(ERR_NICKLOCKED, "902", ":You must use a different nickname"),
 /* 903 */
-  { 0 },
+  N(RPL_SASLSUCCESS, "903", ":SASL authentication successful"),
 /* 904 */
-  { 0 },
+  N(ERR_SASLFAIL, "904", ":SASL authentication failed"),
 /* 905 */
-  { 0 },
+  N(ERR_SASLTOOLONG, "905", ":SASL message too long"),
 /* 906 */
-  { 0 },
+  N(ERR_SASLABORTED, "906", ":SASL authentication aborted"),
 /* 907 */
-  { 0 },
+  N(ERR_SASLALREADY, "907", ":You have already authenticated using SASL"),
 /* 908 */
-  { 0 },
+  N(RPL_SASLMECHS, "908", "%s :are the available SASL mechanisms"),
 /* 909 */
   { 0 },
 /* 910 */
@@ -2010,13 +2010,13 @@ static Numeric replyTable[] = {
 /* 983 */
   { 0 },
 /* 984 */
-  { 0 },
+  N(RPL_ACCOUNTLIST, "984", "%s :%s"),
 /* 985 */
-  { 0 },
+  N(RPL_ENDOFACCOUNTLIST, "985", ":End of ACCOUNT LIST"),
 /* 986 */
-  { 0 },
+  N(ERR_NOTAUTHENTICATED, "986", ":You have not authenticated to an account"),
 /* 987 */
-  { 0 },
+  N(ERR_FROZEN, "987", "%s :You must identify to this nickname before you can use that"),
 /* 988 */
   { 0 },
 /* 989 */

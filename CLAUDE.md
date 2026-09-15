@@ -105,8 +105,29 @@ the visible host from the IP with the TEA cipher in `ircd/ircd_vhost.c`
 (`xxxxxx.yyyyyy.v4|v6`, unit-tested against IRC-Hispano vectors in
 `vhost_t`) under the mandatory `Security { virtual_host_key = "<12 base64
 chars>"; }` block, which must be identical on every server; bots (`+B`/`+S`)
-keep their configured host. SASL, account-notify, account-tag, extended-join,
-WHOX `%a` and the HOST_HIDING/HIDDEN_HOST features are gone.
+keep their configured host. account-notify, account-tag, extended-join,
+WHOX `%a` and the HOST_HIDING/HIDDEN_HOST features are gone and stay gone —
+with an account that *is* the nick, the first three repeat the prefix. SASL is
+coming back as phase 1 of the roadmap (proposal 007); `doc/readme.accounting`
+still describes the state before it and is rewritten when that phase closes.
+
+**Identity, in progress** (proposal 007). Two pieces of core state are in
+place ahead of the protocol that will drive them. `cli_user()->email` is the
+address a client authenticated with: **local and only local** — it never
+crosses P10 (a remote user has `NULL`, which is this server saying it does not
+know), `WHOIS` reports it with 691 **only to the user themselves**, not even to
+an operator, and it is released together with `+r` in `do_user_mode()`, because
+an identification without its address is a state the model does not define.
+Set it with `user_set_email()`, never by hand. Umode **`+f` (freeze)** marks a
+client carrying a registered nick it has not proved is its own: it is a core
+mode only a server or a `+S` bot may set, restored in both directions for
+anyone else by the same gate that guards `+r`, shown in `WHOIS` as 692, and
+enforced in `parse_dispatch()` — the one place both dispatch paths meet and
+past the point the parameters are laid out. What a frozen client may still send
+is declared by each command with `MFLG_FROZEN_OK` in `msgtab[]` rather than
+listed in `parse.c`, so a module's command can declare it too; `PRIVMSG` and
+`NOTICE` carry the flag but are narrowed to a single local `+S` target, since
+what the state must allow is talking to the service that will lift it.
 
 **Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
 (`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`
@@ -442,9 +463,11 @@ read the relevant one before changing either subsystem.  `006` (in Spanish) is
 not a subsystem design but the roadmap for turning this into a unified
 communications server (rich text, history, voice/video/screen share): read it
 before starting anything that belongs to one of its phases; its phase 0 is
-done.  `007` (in Spanish) is that roadmap's phase 1, the identity model — SASL,
-`ACCOUNT`, and an account that *is* a nickname — and is what `sasl.c` is the
-first piece of. Other useful docs:
+done.  `007` (in Spanish, revision 2) is that roadmap's phase 1, the identity model —
+SASL, `ACCOUNT`, an account that *is* a nickname, the `guest-*` rename, the
+freeze, Redis in front of PostgreSQL, and the split between the `identity`
+module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
+`User::email` and `+f` are its first two slices; §11 has the rest in order. Other useful docs:
 `doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
 `doc/readme.database`, `doc/readme.migrations`, `doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root

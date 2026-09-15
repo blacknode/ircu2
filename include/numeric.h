@@ -474,6 +474,8 @@ extern const struct Numeric* get_error_numeric(int err);
 #define RPL_WHOISSECURE      671        /* Nefarious, Undernet */
 #define RPL_YOURLANGUAGESARE 687        /* IRCv3 draft/languages */
 #define RPL_WHOISLANGUAGE    690        /* IRCv3 draft/languages */
+#define RPL_WHOISEMAIL       691        /* proposal 007; only to oneself */
+#define RPL_WHOISFROZEN      692        /* proposal 007; umode +f */
 
 /*	RPL_LOGON	     600	dalnet,unreal
 	RPL_LOGOFF           601	dalnet,unreal
@@ -498,14 +500,25 @@ extern const struct Numeric* get_error_numeric(int err);
 	RPL_EODUMP	     642	unreal
 */
 
-/*
- * 900-908 were the SASL replies; the server no longer speaks SASL
- * (doc/readme.accounting).
- */
+/* IRCv3 SASL; see doc/readme.accounting and proposal 007. */
+#define RPL_LOGGEDIN         900
+#define RPL_LOGGEDOUT        901
+#define ERR_NICKLOCKED       902
+#define RPL_SASLSUCCESS      903
+#define ERR_SASLFAIL         904
+#define ERR_SASLTOOLONG      905
+#define ERR_SASLABORTED      906
+#define ERR_SASLALREADY      907
+#define RPL_SASLMECHS        908
 
 #define ERR_TOOMANYLANGUAGES 981        /* IRCv3 draft/languages */
 #define ERR_NOLANGUAGE       982        /* IRCv3 draft/languages */
 
-#define ERR_LASTERROR        983
+#define RPL_ACCOUNTLIST      984        /* proposal 007 */
+#define RPL_ENDOFACCOUNTLIST 985        /* proposal 007 */
+#define ERR_NOTAUTHENTICATED 986        /* proposal 007 */
+#define ERR_FROZEN           987        /* proposal 007; umode +f */
+
+#define ERR_LASTERROR        988
 
 #endif /* INCLUDED_numeric_h */

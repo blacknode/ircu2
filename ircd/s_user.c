@@ -114,6 +114,16 @@ void free_user(struct User* user)
   if (--user->refcnt == 0) {
     if (user->away)
       MyFree(user->away);
+    /* The address is const so that nothing outside user_set_email() is
+     * tempted to write through it; freeing it needs an lvalue that is
+     * not, which is what the local is for.
+     */
+    if (user->email) {
+      char* email = (char*) user->email;
+
+      user->email = 0;
+      MyFree(email);
+    }
     /*
      * sanity check
      */
@@ -124,6 +134,56 @@ void free_user(struct User* user)
     MyFree(user);
     assert(userCount>0);
     --userCount;
+  }
+}
+
+/** Forget the address \a cptr authenticated with.
+ *
+ * Called wherever the identification goes away: a logout, a nick change,
+ * the client leaving.  Safe to call when there is nothing to forget,
+ * because most of those paths do not know whether there was.
+ *
+ * @param[in,out] cptr Client to clear.
+ */
+void user_clear_email(struct Client* cptr)
+{
+  struct User* user;
+
+  assert(0 != cptr);
+
+  user = cli_user(cptr);
+  if (!user || !user->email)
+    return;
+
+  {
+    char* email = (char*) user->email;
+
+    user->email = 0;
+    MyFree(email);
+  }
+}
+
+/** Record the address \a cptr authenticated with.
+ *
+ * Only the server that did the authenticating calls this: the address is
+ * local to the connection and never arrives from the network.  Passing
+ * NULL or an empty string is the same as user_clear_email().
+ *
+ * @param[in,out] cptr Client that authenticated.
+ * @param[in] email Address of the identity, or NULL.
+ */
+void user_set_email(struct Client* cptr, const char* email)
+{
+  assert(0 != cptr);
+  assert(0 != cli_user(cptr));
+
+  user_clear_email(cptr);
+
+  if (email && *email) {
+    char* copy;
+
+    DupString(copy, email);
+    cli_user(cptr)->email = copy;
   }
 }
 
@@ -1352,14 +1412,22 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
         !IsAnOper(acptr) && !WasDebug(setflags))
       ClearDebug(acptr);
   }
-  /* +r in either direction is a server's or a service bot's to give;
-   * anyone else asking for it is put back the way they were.
+  /* +r and +f in either direction are a server's or a service bot's to
+   * give; anyone else asking for either is put back the way they were.
+   * A user who could clear its own +f would be a user who could walk out
+   * of the one state that exists to stop it acting under somebody else's
+   * name, which is the whole of what the mode is for.
    */
   if (!may_set_r) {
     if (WasAccount(setflags))
       SetAccount(acptr);
     else
       ClearAccount(acptr);
+
+    if (WasFrozen(setflags))
+      SetFrozen(acptr);
+    else
+      ClearFrozen(acptr);
   }
   if (MyConnect(acptr))
   {
@@ -1392,8 +1460,14 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
    */
   if (!WasAccount(setflags) && IsAccount(acptr))
     ircd_strncpy(cli_user(acptr)->account, cli_name(acptr), NICKLEN);
-  else if (WasAccount(setflags) && !IsAccount(acptr))
+  else if (WasAccount(setflags) && !IsAccount(acptr)) {
     cli_user(acptr)->account[0] = '\0';
+    /* And the address with it: the two are one identification, and a
+     * client that is no longer identified must not still be carrying the
+     * address it identified with.  See proposal 007 section 8.
+     */
+    user_clear_email(acptr);
+  }
 
   if (IsServer(cptr) && feature_bool(FEAT_NETWORK_FEATURES) &&
       tls_fingerprint && tls_fingerprint[0] != '_') {

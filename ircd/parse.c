@@ -114,21 +114,21 @@ struct Message msgtab[] = {
   {
     MSG_PRIVATE,
     TOK_PRIVATE,
-    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_unregistered, m_privmsg, ms_privmsg, mo_privmsg, m_ignore }
   },
   {
     MSG_NICK,
     TOK_NICK,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_nick, m_nick, ms_nick, m_nick, m_ignore }
   },
   {
     MSG_NOTICE,
     TOK_NOTICE,
-    0, MAXPARA, MFLG_SLOW | MFLG_IGNORE, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_IGNORE | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_ignore, m_notice, ms_notice, mo_notice, m_ignore }
   },
@@ -214,7 +214,7 @@ struct Message msgtab[] = {
   {
     MSG_QUIT,
     TOK_QUIT,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_quit, m_quit, ms_quit, m_quit, m_ignore }
   },
@@ -274,21 +274,21 @@ struct Message msgtab[] = {
   {
     MSG_PING,
     TOK_PING,
-    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_unregistered, m_ping, ms_ping, mo_ping, m_ignore }
   },
   {
     MSG_PONG,
     TOK_PONG,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { mr_pong, m_pong, ms_pong, m_pong, m_ignore }
   },
   {
     MSG_ERROR,
     TOK_ERROR,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { mr_error, m_ignore, ms_error, m_ignore, m_ignore }
   },
@@ -685,7 +685,7 @@ struct Message msgtab[] = {
   {
     MSG_CAP,
     TOK_CAP,
-    0, MAXPARA, 0, 0, NULL,
+    0, MAXPARA, MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_cap, m_cap, m_ignore, m_cap, m_ignore }
   },
@@ -1048,6 +1048,49 @@ static void parse_hook_subject(struct HookContext *ctx,
   ctx->hc_arg = subject;
 }
 
+/** Return non-zero if a frozen client may not send this command.
+ *
+ * A frozen client (+f) is carrying a registered nickname it has not proved
+ * is its own, so everything it does it does under somebody else's name.
+ * What it may still send is what leads out of that state -- identify,
+ * change nick -- plus what keeps the connection alive, and each of those
+ * commands says so itself with #MFLG_FROZEN_OK rather than being named in
+ * a list here; a command a module registers can say so too.
+ *
+ * PRIVMSG and NOTICE carry the flag but are narrowed here, because what
+ * the state has to allow is talking to the service that will unfreeze it,
+ * not talking.  The target is resolved the same way the command's own
+ * handler will resolve it, and anything that is not a local service bot is
+ * refused.
+ *
+ * @param[in] from Client that sent the command.
+ * @param[in] mptr Message table entry.
+ * @param[in] parc Number of parameters.
+ * @param[in] parv The parameters.
+ * @return Non-zero if the command must be refused.
+ */
+static int parse_frozen_blocks(struct Client *from, struct Message *mptr,
+                               int parc, char *parv[])
+{
+  struct Client *acptr;
+
+  if (!(mptr->flags & MFLG_FROZEN_OK))
+    return 1;
+
+  if (strcmp(mptr->cmd, MSG_PRIVATE) && strcmp(mptr->cmd, MSG_NOTICE))
+    return 0;
+
+  /* No target, or more than one: a frozen client talks to one service and
+   * to nobody else, so a target list is refused rather than filtered.
+   */
+  if (parc < 3 || EmptyString(parv[1]) || strchr(parv[1], ','))
+    return 1;
+
+  acptr = FindUser(parv[1]);
+
+  return !(acptr && IsServiceBot(acptr));
+}
+
 /** Run the command hooks around one handler.
  *
  * Both parsers funnel their single dispatch through here, so the rules in
@@ -1089,6 +1132,22 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
 
     if (label && label->value)
       label_begin(from, label->value);
+  }
+
+  /* A frozen client is stopped here, before the hooks and before the
+   * handler: this is the one place both dispatch paths pass through, and
+   * it is past the point where the parameters are laid out, which is what
+   * deciding about a PRIVMSG target needs.  Only a client of this server
+   * is frozen in a way this can act on -- a +f that arrived from another
+   * server was already enforced where the client is connected, and
+   * refusing its commands here would desynchronise this server.
+   */
+  if (htype != SERVER_HANDLER && MyUser(from) && IsFrozen(from)
+      && parse_frozen_blocks(from, mptr, parc, parv)) {
+    send_reply(from, ERR_FROZEN, cli_name(from));
+    label_end();
+    msg_tag_line_end();
+    return 0;
   }
 
   if (hook_command_active(HOOK_COMMAND_PRE)) {

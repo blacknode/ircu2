@@ -239,6 +239,22 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
     if (IsAccount(acptr))
       send_reply(sptr, RPL_WHOISREGNICK, name);
 
+    /* Frozen: carrying a registered nick without having proved it.  Shown
+     * to everybody, because the whole point of the state is that other
+     * people can see this user is not who the nick says until they
+     * identify.  See proposal 007 section 6.
+     */
+    if (IsFrozen(acptr))
+      send_reply(sptr, RPL_WHOISFROZEN, name);
+
+    /* The address the account belongs to, and only ever to its owner.
+     * Not to an operator either: an operator moderates a network with the
+     * IP and the host, and has no business with anybody's mail.  See
+     * proposal 007 section 8.
+     */
+    if (acptr == sptr && cli_user(acptr)->email)
+      send_reply(sptr, RPL_WHOISEMAIL, name, cli_user(acptr)->email);
+
     if (HasHiddenHost(acptr) && (IsAnOper(sptr) || acptr == sptr))
       send_reply(sptr, RPL_WHOISACTUALLY, name, user->username,
                  user->realhost, ircd_ntoa(&cli_ip(acptr)));

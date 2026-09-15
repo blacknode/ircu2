@@ -425,6 +425,22 @@ struct Client;
 #define   MFLG_EXTRA             0x08   /** Handler requests that
                                          * mptr->extra be passed in
                                          * parv[1]. */
+#define   MFLG_FROZEN_OK         0x10   /** Command still works for a
+                                         * frozen client (+f).
+                                         *
+                                         * A frozen client is carrying a
+                                         * registered nickname it has not
+                                         * proved is its own, so what it
+                                         * may still do is exactly what
+                                         * leads out of that: identify,
+                                         * talk to a service, change
+                                         * nick, and keep the connection
+                                         * alive.  Declaring it here and
+                                         * not in a list inside parse.c
+                                         * is what lets a command a
+                                         * module registers say so too.
+                                         * See include/client.h and
+                                         * proposal 007 section 6. */
 
 /*
  * Structures

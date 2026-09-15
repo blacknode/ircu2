@@ -69,6 +69,13 @@ typedef void (*InfoFormatter)(struct Client* who, struct Client *sptr, struct Ms
  */
 extern struct User* make_user(struct Client *cptr);
 extern void         free_user(struct User *user);
+
+/** Record the address a client authenticated with.  Local only; see
+ * User::email and proposal 007 section 8.
+ */
+extern void         user_set_email(struct Client *cptr, const char *email);
+/** Forget it.  Safe when there is nothing to forget. */
+extern void         user_clear_email(struct Client *cptr);
 extern int          register_user(struct Client* cptr, struct Client *sptr);
 
 extern void         user_count_memory(size_t* count_out, size_t* bytes_out);

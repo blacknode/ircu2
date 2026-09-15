@@ -697,6 +697,14 @@ struct Client {
 #define IsService(x)            HasFlag(x, FLAG_SERVICE)
 /** Return non-zero if the client has an account stamp. */
 #define IsAccount(x)            HasUFlag(x, FLAG_ACCOUNT)
+/** Return non-zero if the client is frozen (+f).
+ *
+ * It is using a registered nickname it has not proved is its own.  Until
+ * it identifies, changes nick, or is renamed when the grace period runs
+ * out, every command but the handful that lead out of the state is
+ * refused; see MFLG_FROZEN_OK in msg.h and proposal 007.
+ */
+#define IsFrozen(x)             HasUFlag(x, FLAG_FREEZE)
 /** Return non-zero if the client has set mode +x (hidden host). */
 #define IsHiddenHost(x)         HasUFlag(x, FLAG_HIDDENHOST)
 /** Return non-zero if the client has set mode +I (hide idle time). */
@@ -765,6 +773,8 @@ struct Client {
 #define SetService(x)           SetFlag(x, FLAG_SERVICE)
 /** Mark a client as having an account stamp. */
 #define SetAccount(x)           SetUFlag(x, FLAG_ACCOUNT)
+/** Mark a client as frozen (+f). */
+#define SetFrozen(x)            SetUFlag(x, FLAG_FREEZE)
 /** Mark a client as having mode +x (hidden host). */
 #define SetHiddenHost(x)        SetUFlag(x, FLAG_HIDDENHOST)
 /** Mark a client as having mode +I (hide idle time). */
@@ -822,6 +832,8 @@ struct Client {
 #define ClearServNotice(x)       ClrUFlag(x, FLAG_SERVNOTICE)
 /** Remove mode +r (account stamp) from the client. */
 #define ClearAccount(x)          ClrUFlag(x, FLAG_ACCOUNT)
+/** Remove mode +f (frozen) from the client. */
+#define ClearFrozen(x)           ClrUFlag(x, FLAG_FREEZE)
 /** Remove mode +x (hidden host) from the client. */
 #define ClearHiddenHost(x)       ClrUFlag(x, FLAG_HIDDENHOST)
 /** Remove mode +z (using TLS) from the client. */
@@ -876,6 +888,8 @@ struct Client {
 #define WasDebug(old)            (((old) & FLAG_DEBUG) != 0)
 /** Return non-zero if \a old had mode +r (account stamp). */
 #define WasAccount(old)          (((old) & FLAG_ACCOUNT) != 0)
+/** Return non-zero if \a old had mode +f (frozen). */
+#define WasFrozen(old)           (((old) & FLAG_FREEZE) != 0)
 /** Return non-zero if \a old had mode +R (block unauthenticated users). */
 #define WasBlockUnauthUsers(old) (((old) & FLAG_BLOCK_UNAUTH_USERS) != 0)
 /** Return non-zero if \a old had mode +x (hidden host). */

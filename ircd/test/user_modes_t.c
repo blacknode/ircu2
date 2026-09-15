@@ -16,7 +16,7 @@
 #include <string.h>
 
 /** Core modes seeded by client_init_user_modes(), in no particular order. */
-static const char core_modes[] = "oOiwsdkgrRxzIcBS";
+static const char core_modes[] = "oOiwsdkgrRxzIcBSf";
 
 /** A bit no core mode uses, free for the tests to hand out. */
 #define TEST_FLAG_ONE  (BITSET << 2)
@@ -68,6 +68,11 @@ static void test_init(void)
 
   assert(mode_find('o')->flag == FLAG_OPER);
   assert(mode_find('c')->flag == FLAG_COMMONCHANS);
+  /* The bit follows the letter, the same convention chan_flags.h uses, so
+   * every server agrees on it without negotiating: 'a'-'z' are bits 26-51
+   * and 'f' is the sixth of those. */
+  assert(mode_find('f')->flag == FLAG_FREEZE);
+  assert(mode_find('f')->flag == (BITSET << 31));
 
   printf("Passed: the core modes are seeded\n");
 }

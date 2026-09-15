@@ -82,6 +82,12 @@ add_ircu_test(hooks_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
+add_ircu_test(crypto_t
+  "${IRCU_IRCD_DIR}/ircd_aes.c"
+  "${IRCU_IRCD_DIR}/ircd_argon2.c"
+  "${IRCU_IRCD_DIR}/ircd_pwhash.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c")
+
 add_ircu_test(db_t
   "${IRCU_IRCD_DIR}/db.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"

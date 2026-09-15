@@ -120,7 +120,9 @@ set(IRCU_SOURCES
   hash.c
   hooks.c
   ircd.c
+  ircd_aes.c
   ircd_alloc.c
+  ircd_argon2.c
   ircd_crypt.c
   ircd_crypt_native.c
   ircd_crypt_plain.c
@@ -139,6 +141,8 @@ set(IRCU_SOURCES
   ircd_res.c
   ircd_reslib.c
   ircd_sha1.c
+  ircd_pwhash.c
+  ircd_sha256.c
   ircd_signal.c
   ircd_snprintf.c
   ircd_string.c

@@ -3,7 +3,8 @@
 **Estado:** hoja de ruta, aprobada con correcciones (revisión 3).
 Fase 0 **en curso**: el registro de capacidades (§5.1), los hooks genéricos de
 comando (§5.7), los identificadores de mensaje (§5.4) y `BATCH` con
-`labeled-response` (§5.3) y `draft/multiline` (§5.2) están implementados.
+`labeled-response` (§5.3), `draft/multiline` (§5.2) y la criptografía `ircd_*`
+(§5.8) están implementados.
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
 **Introduce:** `include/capab.h` + `ircd/capab.c`, los hooks de comando y
@@ -507,35 +508,64 @@ referencia, comprobado contra un servidor real: registra en el log
 `KICK` contra un operador con `482 ann KICK :that user is an operator` — sin
 que el `POST` llegue a registrar nada de ese comando rechazado.
 
-### 5.8 Criptografía en el core: `ircd_sha256`, `ircd_aes`, `ircd_argon2`, `ircd_bcrypt`
-
-Cuatro ficheros nuevos, con el prefijo del proyecto:
+### 5.8 Criptografía en el core — **implementado**
 
 | Fichero | Para qué |
 |---|---|
-| `ircd/ircd_sha256.c` | HMAC-SHA256 de tokens (SFU, subidas), huellas de certificado, SCRAM |
-| `ircd/ircd_aes.c` | AES-256-**GCM** para sellar tokens y cifrar secretos en reposo |
-| `ircd/ircd_argon2.c` | Hash de contraseñas, algoritmo recomendado |
-| `ircd/ircd_bcrypt.c` | Hash de contraseñas, para compatibilidad con lo existente |
+| `ircd/ircd_sha256.c` | SHA-256 y HMAC-SHA-256: firmar lo que el servidor reparte y tiene que reconocer después |
+| `ircd/ircd_aes.c` | AES-256 **sólo en GCM** |
+| `ircd/ircd_argon2.c` | BLAKE2b y Argon2id: lo que se guarda de una contraseña |
+| `ircd/ircd_pwhash.c` | La forma almacenable, con sus costes dentro |
 
-Cuatro reglas:
+**No dependen del backend TLS.** `IRCU_TLS` puede valer `none` y puede ser
+GnuTLS o libtls, así que echar mano de la biblioteca que haya enlazada
+funcionaría en una compilación y no compilaría en la siguiente.
 
-1. **No pueden depender del backend TLS.** `IRCU_TLS` puede valer `none`, y el
-   backend puede ser GnuTLS o libtls. Van implementaciones propias empotradas,
-   con aceleración opcional cuando el backend es OpenSSL. Todas las referencias
-   habituales son de licencia compatible con GPL (libargon2 CC0/Apache-2.0,
-   `crypt_blowfish` de Openwall en dominio público).
-2. **Argon2 y bcrypt no corren en el hilo principal.** Están diseñados para ser
-   lentos: un hash decente cuesta entre 50 y 250 ms. A 100 ms por verificación,
-   diez autenticaciones por segundo consumen el servidor entero. **Van por
-   `worker_submit()` sin excepción**, y por eso la autenticación necesita los
-   hooks asíncronos de §5.5. Esta dependencia no es negociable y ordena las
-   fases: §5.5 antes que §6.
-3. **AES-256 se usa en modo autenticado (GCM), nunca en crudo.** Un token
-   cifrado sin autenticar es un token manipulable.
-4. **Entran por el registro que ya existe.** `ircd/ircd_crypt.c` ya tiene un
-   registro de mecanismos (`native`, `plain`, `smd5`): Argon2 y bcrypt se
-   añaden ahí, no por un camino paralelo.
+**Sólo GCM, a propósito.** No hay interfaz para cifrar un bloque sin
+autenticarlo. Todos los usos que este servidor tiene — sellar un token que
+volverá a leer, guardar un secreto de segundo factor — son casos en los que un
+atacante que pueda cambiar el criptograma sin que se note ha roto la cosa
+entera. Un cifrado sin etiqueta es un cifrado cuya salida puede editar
+cualquiera.
+
+**Los costes viajan con el hash** (`$argon2id$v=19$m=…,t=…,p=…$sal$tag`) y no
+se leen de la configuración al verificar: eso es lo que permite subirlos más
+adelante sin invalidar todas las contraseñas ya guardadas.
+`ircd_pwhash_outdated()` dice cuándo conviene rehacer una. Y admite una *pepper*
+de servidor, de modo que una base de datos robada no basta para empezar a
+adivinar: hace falta también la configuración.
+
+**Cómo se sabe que las constantes están bien.** Una tabla mal copiada compila,
+corre y produce una salida perfectamente consistente: la única cosa capaz de
+distinguir un dígito bueno de uno malo es un vector publicado. Así que la caja
+de sustitución de AES **se calcula** a partir de su definición en GF(2^8) en vez
+de escribirse, y todo lo demás está cubierto por FIPS 180-4, RFC 4231,
+FIPS 197 C.3, los vectores del propio GCM, RFC 7693 y RFC 9106, en `crypto_t`.
+
+Y sirvieron: el vector de Argon2id falló dos veces antes de pasar. La primera
+porque el de la RFC incluye *secret* y *associated data* que el API no tomaba —
+lo que a su vez añadió la *pepper*, que era útil de verdad. La segunda por dos
+errores reales: la permutación del bloque operaba sobre dos grupos de ocho
+palabras en vez de sobre las dieciséis que pide la especificación, y el bloque
+de direcciones no llegaba a generarse para el primer segmento, que empieza en el
+índice dos y por tanto nunca disparaba la condición del bucle. Ninguno de los
+dos habría dado la cara sin el vector.
+
+Aparte, ASan encontró un desbordamiento de pila en el parseo: un `%127s` de
+`sscanf` escribiendo en un buffer de 64 bytes. Los dos campos base64 van ahora
+acotados y con una comprobación en tiempo de compilación de que el ancho cabe.
+
+**El hashing no corre nunca en el hilo principal.** Argon2 tarda entre 50 y 250
+ms y reserva decenas de megabytes *a propósito*: diez inicios de sesión
+simultáneos pararían el servidor un segundo. `ircd_pwhash_make()` y
+`_verify()` son **puras** — no leen estado del core, no reservan nada que
+sobreviva a la llamada — precisamente para poder ir por `worker_submit()`.
+
+**No hay bcrypt**, y conviene decir por qué: son 1042 constantes que habría que
+transcribir, su único uso aquí sería importar hashes de un sistema que todavía
+no existe, y cuando haga falta lo correcto es traerse el `crypt_blowfish` de
+Openwall, no volver a teclear las tablas. Argon2id es el algoritmo recomendado y
+es el que se usa.
 
 **Criterio de aceptación de la fase 0:** un módulo de ejemplo registra una
 capacidad, un token ISUPPORT, una *feature*, un hook de comando y un hook
@@ -891,7 +921,8 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
 ```
   F0 Cimientos (core, ABI 8)
    │   capacidades dinámicas ✅ · hooks de comando ✅ · msgid ✅
-   │   batch + labeled-response ✅ · multiline ✅ · hooks async · cripto ircd_*
+   │   batch + labeled-response ✅ · multiline ✅ · cripto ircd_* ✅
+   │   hooks async
    │
    ├──► F1 Identidad (SASL + ACCOUNT en core, email → hasta 3 nicks)
    │     │
@@ -985,7 +1016,7 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 
 ## 11. Estado y siguiente paso
 
-**Hecho** — la mitad de protocolo de la fase 0 está cerrada:
+**Hecho** — falta una sola pieza para cerrar la fase 0:
 
 - **§5.1, capacidades dinámicas.** Mapa de bits de 128 posiciones, registro en
   `ircd/capab.c`, `module_add_cap()` en el API, ABI 8.
@@ -994,24 +1025,25 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 - **§5.4, identificadores de mensaje.** La línea es la unidad; cruza P10.
 - **§5.3, `BATCH` y `labeled-response`.** Sin almacenar nada.
 - **§5.2, `draft/multiline`.** Los trozos salen por el relay de siempre.
+- **§5.8, criptografía `ircd_*`.** SHA-256, HMAC, AES-256-GCM, BLAKE2b,
+  Argon2id y la forma almacenable de una contraseña, con vectores oficiales.
 
-Los cinco respetan la regla de compatibilidad: un cliente que no negocia nada
-recibe la línea de siempre, byte a byte. Cubiertos por pruebas unitarias donde
-la pieza es aislable, por `tests/` de integración donde no, y todos comprobados
-contra un servidor real.
+Todo lo de protocolo respeta la regla de compatibilidad: un cliente que no
+negocia nada recibe la línea de siempre, byte a byte. Lo de criptografía no
+cambia nada de lo que ve un cliente todavía: son primitivas, y su primer
+consumidor es la identidad (§6).
 
-**Queda para cerrar la fase 0:**
+**Queda:**
 
-1. **Criptografía `ircd_*`** (§5.8): `ircd_sha256`, `ircd_aes` (GCM),
-   `ircd_argon2`, `ircd_bcrypt`. Sin depender del backend TLS, con vectores de
-   prueba oficiales, y con el hashing en *workers* desde el primer día — a 100
-   ms por verificación, diez autenticaciones por segundo consumen el servidor.
-2. **Hooks asíncronos** (§5.5): implementar el `HOOK_PENDING` que ya está
-   reservado. El más delicado de la fase, y el que abre F1 (identidad) y F7
-   (aislamiento de módulos).
+1. **Hooks asíncronos** (§5.5): implementar el `HOOK_PENDING` que ya está
+   reservado en el enum. Suspender una operación con su contexto y reanudarla
+   cuando el módulo responda. Es lo más delicado de la fase — hay que congelar
+   el estado del cliente mientras tanto y poner un plazo máximo — y es lo que
+   abre F1 (autenticar contra una base de datos sin parar el servidor, con el
+   hash en un *worker*) y F7 (un módulo fuera de proceso responde por fuerza de
+   forma asíncrona).
 
-Las dos son piezas de fondo, no de protocolo: ninguna cambia un byte de lo que
-ve un cliente. Con ellas la fase 0 queda cerrada y empieza la identidad (§6).
+Con eso la fase 0 queda cerrada y empieza la identidad (§6).
 
 Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
 necesitan: el modelo de identidad (§6), el aislamiento de módulos (§7.7) y,

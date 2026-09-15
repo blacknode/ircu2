@@ -342,6 +342,32 @@ throttled off the server for sending one message. `batch` and
 explicitly — a batch is between one server and one client, and long messages
 cross P10 as the separate messages they are made of.
 
+**Cryptography** (`include/ircd_sha256.h`, `ircd_aes.h`, `ircd_argon2.h`,
+`ircd_pwhash.h`). The server's own, never the TLS backend's: `IRCU_TLS` can be
+`none` and can be GnuTLS or libtls, so reaching for whichever library happens to
+be linked would work on one build and not compile on the next. SHA-256 +
+HMAC-SHA-256 (signing what the server hands out and must recognise again),
+AES-256 **in GCM only** (there is deliberately no unauthenticated-block
+interface — a cipher without a tag is one whose output anybody can edit),
+BLAKE2b, and Argon2id for passwords. `ircd_pwhash.c` is the storable form,
+`$argon2id$v=19$m=…,t=…,p=…$salt$tag`: **the costs travel with the hash** and
+are not read from the config when verifying, which is what lets them be raised
+without invalidating every stored password (`ircd_pwhash_outdated()` says when
+to re-hash). It takes an optional server-wide *pepper* so a stolen database
+alone is not enough to start guessing. Every constant that could be mistyped is
+either computed (the AES S-box, from its GF(2^8) definition) or covered by a
+published test vector — FIPS 180-4, RFC 4231, FIPS 197 C.3, the GCM test cases,
+RFC 7693 and RFC 9106 — in `crypto_t`; that is the only thing that can tell a
+wrong digit from a right one, since either way it compiles and runs. **Never
+hash a password on the main thread**: Argon2 takes 50–250 ms and tens of
+megabytes *on purpose*, so ten simultaneous logins would stop the server for a
+second. `ircd_pwhash_make()`/`_verify()` are pure — no core state, nothing that
+outlives the call — precisely so they can go through `worker_submit()`. There
+is no bcrypt: it is 1042 constants that would have to be transcribed, its only
+use here would be importing hashes from a system that does not exist yet, and
+when it is wanted the right move is to vendor Openwall's `crypt_blowfish`
+rather than retype the tables.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact

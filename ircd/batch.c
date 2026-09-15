@@ -59,9 +59,10 @@ static struct {
 } label_ctx;
 
 /** Source of batch identifiers.  They only have to be distinct among the
- * batches one client has open at once, which here is never more than one;
- * counting up is more than enough and keeps them short. */
-static unsigned long batch_seq;
+ * batches one client has open at once; counting up is more than enough and
+ * keeps them short.  Shared with multiline.c so that a labeled response
+ * and a long message can never name the same batch. */
+unsigned long batch_seq;
 
 /** Render the next batch identifier into \a buf.
  *
@@ -69,7 +70,7 @@ static unsigned long batch_seq;
  * IRC formatting ircd_snprintf() exists for, and not reaching for it keeps
  * this file free of the client rendering that would come with it.
  */
-static void batch_next_id(char* buf, size_t len)
+void batch_next_id(char* buf, size_t len)
 {
   snprintf(buf, len, "%lu", ++batch_seq);
 }
@@ -163,12 +164,14 @@ void label_end(void)
  */
 const char* batch_current(const struct Client* to)
 {
-  if (!label_ctx.open || label_ctx.emitting)
-    return 0;
-  if (to != label_ctx.client)
-    return 0;
+  if (label_ctx.open && !label_ctx.emitting && to == label_ctx.client)
+    return label_ctx.batch;
 
-  return label_ctx.batch;
+  /* The other kind: the batch that carries one long message out to every
+   * recipient that asked for multiline.  It lives in multiline.c, with
+   * the channels and the relay it needs; this file stays free of them.
+   */
+  return multiline_batch_for(to);
 }
 
 /** The label this particular message must carry, or NULL.
@@ -189,4 +192,7 @@ void batch_client_exiting(const struct Client* cptr)
 {
   if (label_ctx.client == cptr)
     memset(&label_ctx, 0, sizeof(label_ctx));
+
+  multiline_client_exiting(cptr);
 }
+

@@ -108,4 +108,109 @@ extern const char* batch_label_tag(const struct Client* to);
  * connection that dies mid-response leaves nothing behind. */
 extern void batch_client_exiting(const struct Client* cptr);
 
+/* ------------------------------------------------------------------
+ * Multiline: a batch a client sends, and a batch the server fans out.
+ *
+ * Implemented in ircd/multiline.c rather than ircd/batch.c: this half
+ * needs channels, the hash tables and the relay, and keeping them out of
+ * the other half is what lets the labeled-response logic be tested
+ * without a server around it.
+ * ------------------------------------------------------------------ */
+
+/** Longest batch identifier a client may choose. */
+#define BATCH_CLIENT_IDLEN 64
+
+/** A batch a client has open, holding the parts of one long message.
+ *
+ * A message longer than a line arrives as a batch of PRIVMSGs, each a
+ * piece; the server holds them until the batch closes and then relays the
+ * whole thing.  Held in a list allocated on demand rather than in
+ * #Connection, because almost no connection ever has one open and a buffer
+ * per connection would cost megabytes to serve a handful of clients.
+ */
+struct InBatch;
+
+/** Open an inbound batch for \a cptr.
+ * @param[in] cptr Client opening it.
+ * @param[in] id The identifier it chose.
+ * @param[in] type Batch type; only "draft/multiline" is accepted.
+ * @param[in] target Channel or nick the message is for.
+ * @return Zero on success, or the numeric to refuse with.
+ */
+extern int batch_in_open(struct Client* cptr, const char* id,
+                         const char* type, const char* target);
+
+/** Close an inbound batch and hand back what it collected.
+ * @param[in] cptr Client closing it.
+ * @param[in] id The identifier, without the leading '-'.
+ * @return Zero on success, or the numeric to refuse with.
+ */
+extern int batch_in_close(struct Client* cptr, const char* id);
+
+/** The batch \a cptr has open, or NULL. */
+extern struct InBatch* batch_in_find(const struct Client* cptr);
+
+/** Add one part to an open batch.
+ *
+ * Called from the message handlers when a line carries a @c batch tag.
+ * @param[in] cptr Client sending it.
+ * @param[in] id The batch tag's value.
+ * @param[in] notice Non-zero if the line was a NOTICE.
+ * @param[in] target What the line was addressed to.
+ * @param[in] text The line's text.
+ * @param[in] concat Non-zero if the line carried
+ *   @c draft/multiline-concat: it continues the previous part instead of
+ *   starting a line of its own.
+ * @return Zero if it was taken, or the numeric to refuse with.
+ */
+extern int batch_in_add(struct Client* cptr, const char* id, int notice,
+                        const char* target, const char* text, int concat);
+
+/** Relay everything an inbound batch collected, then free it.
+ *
+ * Clients that asked for @c draft/multiline get the parts inside a batch
+ * of their own; everybody else gets them as ordinary separate messages,
+ * which is the line a traditional client has always seen.
+ * @param[in] cptr Client that sent it.
+ * @param[in] batch The batch, from batch_in_close().
+ */
+extern void batch_in_deliver(struct Client* cptr, struct InBatch* batch);
+
+/** Take a PRIVMSG or NOTICE that belongs to an open batch.
+ *
+ * Called from the message handlers before they relay anything.  Almost
+ * always does nothing: it costs one tag lookup, and only on a line that
+ * actually carries a @c batch tag.
+ *
+ * @param[in] cptr Client that sent the line.
+ * @param[in] notice Non-zero if it was a NOTICE.
+ * @param[in] target What it was addressed to.
+ * @param[in] text Its text.
+ * @return Non-zero if the line belonged to a batch and was taken; the
+ *   caller must then relay nothing.  The client has already been told if
+ *   the line was refused.
+ */
+extern int batch_in_capture(struct Client* cptr, int notice,
+                            const char* target, const char* text);
+
+/** The fan-out batch \a to is inside, or NULL.
+ *
+ * Asked by batch_current(), so that the two kinds of batch answer through
+ * one place without this half having to know about the other.
+ */
+extern const char* multiline_batch_for(const struct Client* to);
+
+/** Return non-zero if \a cptr has a batch open.
+ *
+ * Asked by the parser before it charges a line against the client's flood
+ * allowance.
+ */
+extern int multiline_in_progress(const struct Client* cptr);
+
+/** Forget an unfinished message when its sender goes away. */
+extern void multiline_client_exiting(const struct Client* cptr);
+
+/** Advertise the multiline limits in the capability's value. */
+extern void batch_multiline_advertise(void);
+
 #endif /* INCLUDED_batch_h */

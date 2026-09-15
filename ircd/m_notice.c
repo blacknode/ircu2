@@ -81,6 +81,7 @@
  */
 #include "config.h"
 
+#include "batch.h"
 #include "client.h"
 #include "handlers.h"
 #include "ircd_chattr.h"
@@ -126,6 +127,13 @@ int m_notice(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     parv[1]++;                        /* Get rid of '@' */
     return m_wallchops(cptr, sptr, parc, parv);
   }
+
+  /* A line that names one of this client's open batches is a piece of a
+   * longer message, not a message: batch.c keeps it until the batch
+   * closes and then relays the whole thing.
+   */
+  if (batch_in_capture(sptr, 1, parv[1], parv[parc - 1]))
+    return 0;
 
   count = unique_name_vector(parv[1], ',', vector, MAXTARGETS);
 

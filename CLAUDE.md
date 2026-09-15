@@ -318,6 +318,30 @@ is spelled differently while the wire command stays `BATCH`. `label` is the one
 non-`+` tag a client may send — `msg_tag_client_may_send()` in `msg_tag.c` — and
 it goes no further than the command it arrived on.
 
+**Multiline** (`include/batch.h`, `ircd/multiline.c`, `ircd/m_batch.c`). IRCv3
+`draft/multiline`: a message longer than 512 bytes, sent as a client batch of
+PRIVMSG/NOTICE pieces carrying `@batch=`, held until `BATCH -` and then relayed.
+It lives apart from `batch.c` for the reason `migration_run.c` lives apart from
+`migration.c` — this half needs channels, the hash tables and the relay, and
+keeping them out is what lets the labeled-response logic stay unit-testable.
+**The pieces go out through the ordinary relay, one at a time**, which is the
+whole compatibility story: a traditional client sees the separate messages it
+always saw, a `draft/multiline` client sees the same series inside a fan-out
+batch (`multiline_batch_for()`, which `batch_current()` consults). The whole
+message carries **one** `msgid`, on the `BATCH +` line
+(`msg_tag_line_force_msgid()`; NULL disarms it so the closing line, a mere
+delimiter, carries none) and the pieces carry none. `draft/multiline-concat`
+appends to the previous piece instead of starting a line. Limits are
+`FEAT_MULTILINE_MAX_BYTES`/`_MAX_LINES`, advertised in the capability value by
+`batch_multiline_advertise()` (re-run on rehash). **A piece is charged bytes
+but not the flat per-command flood penalty** (`multiline_in_progress()` in
+`parse.c`): at 2s per line a client sending the 24 the spec allows would be
+throttled off the server for sending one message. `batch` and
+`draft/multiline-concat` join `label` as tags a client may send
+(`msg_tag_client_may_send()`), and `msg_tag_format_s2s()` drops `batch`
+explicitly — a batch is between one server and one client, and long messages
+cross P10 as the separate messages they are made of.
+
 **Hooks** (`include/hooks.h`, `ircd/hooks.c`). A closed enum of lifecycle points
 modules attach to. Points named `HOOK_*_PRE_*` run before the server acts and may
 veto (`HOOK_DENY`) or, for messages, rewrite; the rest are after-the-fact

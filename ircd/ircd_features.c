@@ -412,6 +412,7 @@ static struct FeatureDesc {
   F_B(CAP_LANGUAGES, 0, 1, 0),
   F_B(CAP_BATCH, 0, 1, 0),
   F_B(CAP_LABELEDRESPONSE, 0, 1, 0),
+  F_B(CAP_MULTILINE, 0, 1, 0),
 
   /* Translations: the language a client gets when it asked for none.
    * Empty means the original text.  See doc/readme.translations. */
@@ -419,6 +420,9 @@ static struct FeatureDesc {
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags.
    * Default "*" denies all; empty (FEAT_NULL) allows all. Rebuilds via notify. */
+  F_I(MULTILINE_MAX_BYTES, 0, 4096, 0),
+  F_I(MULTILINE_MAX_LINES, 0, 24, 0),
+
   F_S(CLIENTTAGDENY, FEAT_NULL, "*", feature_notify_clienttagdeny),
 
   /* HEAD_IN_SAND Features */

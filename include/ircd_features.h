@@ -127,11 +127,15 @@ enum Feature {
   FEAT_CAP_LANGUAGES,
   FEAT_CAP_BATCH,
   FEAT_CAP_LABELEDRESPONSE,
+  FEAT_CAP_MULTILINE,
 
   /* Translations (see doc/readme.translations) */
   FEAT_DEFAULT_LANGUAGE,
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags */
+  FEAT_MULTILINE_MAX_BYTES,
+  FEAT_MULTILINE_MAX_LINES,
+
   FEAT_CLIENTTAGDENY,
 
   /* HEAD_IN_SAND Features */

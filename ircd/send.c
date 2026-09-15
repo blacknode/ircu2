@@ -835,7 +835,12 @@ void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *c
   mb = msgq_make(0, "%:#C %s %v", from, cmd, &vd);
   va_end(vd.vd_args);
 
-  tagsendcache_init(&tcache);
+  /* With the token: this one never reaches a server -- it walks the
+   * members and skips everything that is not MyConnect() -- so the only
+   * thing the token changes here is that the line can carry the message
+   * identifier the command gave it.
+   */
+  tagsendcache_init_cmd(&tcache, tok);
   /* send the buffer to each local channel member */
   for (member = to->members; member; member = member->next_member) {
     if (!MyConnect(member->user)

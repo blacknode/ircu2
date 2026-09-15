@@ -62,3 +62,18 @@ void sendrawto_one(struct Client *to, const char *pattern, ...)
   stub_record("RAW", pattern, vl);
   va_end(vl);
 }
+
+/* The other half of the batches, in multiline.c: it needs channels, the
+ * hash tables and the relay, which is exactly what this test does not
+ * link.  A client in a unit test is never inside a fan-out batch.
+ */
+const char *multiline_batch_for(const struct Client *to)
+{
+  (void) to;
+  return 0;
+}
+
+void multiline_client_exiting(const struct Client *cptr)
+{
+  (void) cptr;
+}

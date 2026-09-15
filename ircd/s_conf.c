@@ -27,6 +27,7 @@
 #include "ircd_tls.h"
 #include "IPcheck.h"
 #include "class.h"
+#include "batch.h"
 #include "client.h"
 #include "crule.h"
 #include "db.h"
@@ -1298,6 +1299,11 @@ int rehash(struct Client *cptr, int sig)
    * hear about a broken block.  /REHASH m, l and s never come here.
    */
   i18n_rehash();
+
+  /* The multiline limits are features, so they may have just changed; the
+   * capability's value has to say what the client may actually send.
+   */
+  batch_multiline_advertise();
 
   if (sig != 2)
     restart_resolver();

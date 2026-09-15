@@ -106,6 +106,10 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
     test_labeled.py          # IRCv3 batch and labeled-response: the answer to a
                              # named request, and nothing at all for a client
                              # that did not ask
+  multiline/
+    test_multiline.py        # IRCv3 draft/multiline: a message longer than a
+                             # line, wrapped for the clients that asked and
+                             # separate messages for everybody else
   trust_username/            # visible vs. real identity: WHOIS, bans, SILENCE, G-lines
 vhost.py               # Python port of the hidden-host cipher (ircd/ircd_vhost.c)
 ```

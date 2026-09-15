@@ -3,7 +3,7 @@
 **Estado:** hoja de ruta, aprobada con correcciones (revisión 3).
 Fase 0 **en curso**: el registro de capacidades (§5.1), los hooks genéricos de
 comando (§5.7), los identificadores de mensaje (§5.4) y `BATCH` con
-`labeled-response` (§5.3) están implementados.
+`labeled-response` (§5.3) y `draft/multiline` (§5.2) están implementados.
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
 **Introduce:** `include/capab.h` + `ircd/capab.c`, los hooks de comando y
@@ -207,11 +207,54 @@ De paso, un fallo que estaba ahí: `cap_new()` y `cap_del()` recorrían
 `i <= HighestFd`. Ese cliente no se enteraba de un `CAP NEW` ni perdía la
 capacidad en un `CAP DEL`.
 
-### 5.2 Longitud de línea
-- `draft/multiline` + `BATCH`: la respuesta estándar y federable a los 512
-  bytes, sin romper a ningún cliente antiguo.
-- Subir el buffer de reescritura de hooks por encima de `BUFSIZE`.
-- `TOPICLEN`/`AWAYLEN` como *features*, no como constantes.
+### 5.2 Longitud de línea — **implementado**
+
+El cuerpo de una línea IRC son 512 bytes y no se pueden ampliar sin romper a
+todo cliente existente. `draft/multiline` es la respuesta: el cliente abre un
+batch, manda los trozos como PRIVMSG normales con `@batch=`, y lo cierra; el
+servidor los junta y los relaya.
+
+**La salida es lo que compra la compatibilidad.** Los trozos salen por el relay
+de siempre, uno a uno: un cliente que no pidió nada ve la serie de mensajes
+separados que ha visto siempre, y uno que sí la ve envuelta en un batch. No hay
+una segunda ruta de entrega que mantener.
+
+```
+[C] BATCH +q draft/multiline #canal
+[C] @batch=q PRIVMSG #canal :primera
+[C] @batch=q;draft/multiline-concat PRIVMSG #canal : y su continuación
+[C] BATCH -q
+
+  cliente con multiline:
+    @msgid=AB8ap... :ms!m@h BATCH +1 draft/multiline #canal
+    @batch=1 :ms!m@h PRIVMSG #canal :primera y su continuación
+    :ms!m@h BATCH -1
+  cliente tradicional:
+    :ms!m@h PRIVMSG #canal :primera y su continuación
+```
+
+**Un mensaje, un nombre.** El `msgid` va en la línea que abre el batch y los
+trozos no llevan ninguno: son trozos, no mensajes, y darle un nombre a cada uno
+haría que cualquier cosa que guarde mensajes archivara uno como varios. La
+línea de cierre tampoco lo lleva: es un delimitador.
+
+**Lo que no se vio venir y era lo que hacía inútil la función.** Cada línea
+cuesta dos segundos de penalización de flood (`MFLG_SLOW`). Un cliente mandando
+los 24 trozos que permite la especificación acumulaba 48 segundos de castigo y
+el servidor dejaba de leerlo: mandar **un** mensaje te echaba. Un trozo de un
+batch abierto ya no paga la penalización plana por comando — sólo los bytes,
+que es lo que de verdad acota un cliente volcando datos, y `max-bytes` acota el
+total. Con eso, 24 líneas a toda velocidad entran sin despeinar la conexión.
+
+Límites como *features* (`MULTILINE_MAX_BYTES` 4096, `MULTILINE_MAX_LINES` 24),
+anunciados en el valor de la capacidad para que el cliente sepa qué puede mandar
+antes de mandarlo, y reanunciados en cada `/REHASH`.
+
+**Pruebas:** `tests/multiline/` en la suite de integración, y comprobación
+contra un servidor real: el mensaje de 24 líneas a toda velocidad sin que se
+caiga el emisor, el `concat` que une sin salto, el cliente tradicional que ve
+dos PRIVMSG limpios, el límite que se aplica con un 417, y el batch rechazado a
+quien no pidió la capacidad.
 
 ### 5.3 `BATCH` y `labeled-response` — **implementado**
 
@@ -848,7 +891,7 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
 ```
   F0 Cimientos (core, ABI 8)
    │   capacidades dinámicas ✅ · hooks de comando ✅ · msgid ✅
-   │   batch + labeled-response ✅ · multiline · hooks async · cripto ircd_*
+   │   batch + labeled-response ✅ · multiline ✅ · hooks async · cripto ircd_*
    │
    ├──► F1 Identidad (SASL + ACCOUNT en core, email → hasta 3 nicks)
    │     │
@@ -942,34 +985,33 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 
 ## 11. Estado y siguiente paso
 
-**Hecho:**
+**Hecho** — la mitad de protocolo de la fase 0 está cerrada:
 
-- **§5.1, capacidades dinámicas.** `capset_t` es un mapa de bits de 128
-  posiciones, el registro en `ircd/capab.c`, `module_add_cap()` en el API,
-  `IRCU_MODULE_ABI` a 8.
-- **§5.7, hooks genéricos de comando.** `HOOK_COMMAND_PRE`/`POST` en los dos
-  despachos de `parse.c`, el sujeto declarado por cada comando y resuelto una
-  vez, `modules/hooks/cmdaudit.c` de referencia.
-- **§5.4, identificadores de mensaje.** La línea es la unidad, sólo el comando
-  de la propia línea lo lleva, un cliente nunca elige el suyo, y cruza P10.
-- **§5.3, `BATCH` y `labeled-response`.** Sin almacenar nada: el batch se abre
-  en el primer mensaje que el comando envía.
+- **§5.1, capacidades dinámicas.** Mapa de bits de 128 posiciones, registro en
+  `ircd/capab.c`, `module_add_cap()` en el API, ABI 8.
+- **§5.7, hooks genéricos de comando.** Dos puntos en el despacho, el sujeto
+  declarado por cada comando y resuelto una vez.
+- **§5.4, identificadores de mensaje.** La línea es la unidad; cruza P10.
+- **§5.3, `BATCH` y `labeled-response`.** Sin almacenar nada.
+- **§5.2, `draft/multiline`.** Los trozos salen por el relay de siempre.
 
-Los cuatro cubiertos por pruebas unitarias y comprobados contra un servidor
-real; el msgid, además, contra un enlace P10. Y los cuatro respetan la regla de
-compatibilidad: un cliente que no negocia nada recibe la línea de siempre.
+Los cinco respetan la regla de compatibilidad: un cliente que no negocia nada
+recibe la línea de siempre, byte a byte. Cubiertos por pruebas unitarias donde
+la pieza es aislable, por `tests/` de integración donde no, y todos comprobados
+contra un servidor real.
 
-**Siguiente**, en este orden y cada uno verificable por separado:
+**Queda para cerrar la fase 0:**
 
-1. **`draft/multiline`** (§5.2), la respuesta federable a los 512 bytes. Ya
-   tiene debajo lo que necesitaba: `BATCH` está, y un cliente antiguo sigue
-   recibiendo una línea por mensaje.
-2. **Criptografía `ircd_*`** (§5.8), con el hashing en *workers* desde el
-   primer día.
-3. **Hooks asíncronos** (§5.5). El más delicado de la fase 0, y el que abre F1
-   y F7.
+1. **Criptografía `ircd_*`** (§5.8): `ircd_sha256`, `ircd_aes` (GCM),
+   `ircd_argon2`, `ircd_bcrypt`. Sin depender del backend TLS, con vectores de
+   prueba oficiales, y con el hashing en *workers* desde el primer día — a 100
+   ms por verificación, diez autenticaciones por segundo consumen el servidor.
+2. **Hooks asíncronos** (§5.5): implementar el `HOOK_PENDING` que ya está
+   reservado. El más delicado de la fase, y el que abre F1 (identidad) y F7
+   (aislamiento de módulos).
 
-Con eso la fase 0 queda cerrada y empieza la identidad (§6).
+Las dos son piezas de fondo, no de protocolo: ninguna cambia un byte de lo que
+ve un cliente. Con ellas la fase 0 queda cerrada y empieza la identidad (§6).
 
 Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
 necesitan: el modelo de identidad (§6), el aislamiento de módulos (§7.7) y,

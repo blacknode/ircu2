@@ -149,6 +149,7 @@ set(IRCU_SOURCES
   m_admin.c
   m_asll.c
   m_away.c
+  m_batch.c
   m_burst.c
   m_cap.c
   m_clearmode.c
@@ -234,6 +235,7 @@ set(IRCU_SOURCES
   motd.c
   msg_tag.c
   msgid.c
+  multiline.c
   msgq.c
   numnicks.c
   opercmds.c

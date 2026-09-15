@@ -73,6 +73,7 @@ struct ModuleHandle;
 	_CAP(LANGUAGES, FEAT_CAP_LANGUAGES, 0, "draft/languages"), \
 	_CAP(BATCH, FEAT_CAP_BATCH, 0, "batch"), \
 	_CAP(LABELEDRESPONSE, FEAT_CAP_LABELEDRESPONSE, 0, "labeled-response"), \
+	_CAP(MULTILINE, FEAT_CAP_MULTILINE, 0, "draft/multiline"), \
 	_CAP(CAPNOTIFY, 0, CAPFL_HIDDEN_302 | CAPFL_STICKY_302, "cap-notify")
 
 /** The core's capabilities, as bit positions. */

@@ -26,6 +26,7 @@
 #include "ircd.h"
 #include "IPcheck.h"
 #include "capab.h"
+#include "batch.h"
 #include "channel.h"
 #include "class.h"
 #include "client.h"
@@ -817,6 +818,12 @@ int main(int argc, char **argv) {
    * collide.  Seeded here rather than at start-up for that reason alone.
    */
   msgid_init(NumServ(&me), CurrentTime);
+
+  /* The multiline limits go in the capability's value, so a client knows
+   * what it may send before it sends it.  They are features, so this runs
+   * again after every rehash (see m_rehash.c).
+   */
+  batch_multiline_advertise();
 
   uping_init();
 

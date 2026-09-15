@@ -317,6 +317,28 @@ msg_tag_line_begin(const char *tok, struct MsgTag *tags, int from_server)
 }
 
 void
+msg_tag_line_force_msgid(const char *tok)
+{
+  if (!msgid_line_open)
+    return;
+
+  /* A NULL token disarms it: the line has already named what it had to
+   * name and nothing after this carries an identifier.
+   */
+  if (!tok) {
+    msgid_line_wanted = 0;
+    msgid_line_value[0] = '\0';
+    msgid_line_tok[0] = '\0';
+    return;
+  }
+
+  msgid_line_wanted = 1;
+  msgid_line_value[0] = '\0';
+  ircd_strncpy(msgid_line_tok, tok, sizeof(msgid_line_tok) - 1);
+  msgid_line_tok[sizeof(msgid_line_tok) - 1] = '\0';
+}
+
+void
 msg_tag_line_end(void)
 {
   msgid_line_open = 0;
@@ -421,7 +443,13 @@ msg_tag_client_may_send(const char *key)
   if (msg_tag_key_client_only(key))
     return msg_tag_client_allowed(key);
 
-  return key && !ircd_strcmp(key, "label");
+  /* A client sends @batch= to say which of its own batches a line belongs
+   * to: that is how a message longer than a line is sent.  Like the label,
+   * it is consumed here and goes no further -- see msg_tag_format_s2s().
+   */
+  return key && (!ircd_strcmp(key, "label")
+                 || !ircd_strcmp(key, "batch")
+                 || !ircd_strcmp(key, "draft/multiline-concat"));
 }
 
 struct MsgTag *
@@ -570,6 +598,13 @@ msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
       continue;
     /* Handled above, from the line: never forwarded straight through. */
     if (!ircd_strcmp(tag->key, "msgid"))
+      continue;
+    /* A batch is between one server and one client: the identifier means
+     * nothing on the next link, and a client's own would be forwarded as
+     * if this server had vouched for it.  Long messages cross P10 as the
+     * separate messages they are made of.
+     */
+    if (!ircd_strcmp(tag->key, "batch"))
       continue;
     if (msg_tag_key_client_only(tag->key))
       continue;

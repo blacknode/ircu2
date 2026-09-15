@@ -133,6 +133,13 @@ struct Message msgtab[] = {
     { m_ignore, m_notice, ms_notice, mo_notice, m_ignore }
   },
   {
+    MSG_IRCBATCH,
+    TOK_IRCBATCH,
+    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_unregistered, m_batch, m_ignore, m_batch, m_ignore }
+  },
+  {
     MSG_TAGMSG,
     TOK_TAGMSG,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
@@ -1244,8 +1251,20 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
   i = bufend - ((s) ? s : ch);
   mptr->bytes += i;
   /* Coarser tag divisor: one max client-tag line must not stall follow-ups. */
-  if ((mptr->flags & MFLG_SLOW) || !IsAnOper(cptr))
-    cli_since(cptr) += (2 + i / 120 + tag_len / 512);
+  if ((mptr->flags & MFLG_SLOW) || !IsAnOper(cptr)) {
+    /* A line that is part of an open batch is a piece of one message, not
+     * a message: charging each piece the flat per-command penalty would
+     * make a long message cost its length in lines times two seconds, and
+     * a client sending the twenty-four the specification allows would be
+     * throttled off the server for sending one message.  The bytes are
+     * still charged, which is what actually bounds a client dumping data,
+     * and multiline's own max-bytes bounds the total.
+     */
+    if (multiline_in_progress(cptr))
+      cli_since(cptr) += (i / 120 + tag_len / 512);
+    else
+      cli_since(cptr) += (2 + i / 120 + tag_len / 512);
+  }
   /*
    * Allow only 1 msg per 2 seconds
    * (on average) to prevent dumping.

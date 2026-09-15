@@ -87,6 +87,7 @@
 struct Client;
 
 extern int m_admin(struct Client*, struct Client*, int, char*[]);
+extern int m_batch(struct Client*, struct Client*, int, char*[]);
 extern int m_away(struct Client*, struct Client*, int, char*[]);
 extern int m_cap(struct Client*, struct Client*, int, char*[]);
 extern int ms_config(struct Client*, struct Client*, int, char*[]);

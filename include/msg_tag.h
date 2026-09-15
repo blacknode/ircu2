@@ -78,6 +78,14 @@ void msg_tag_line_end(void);
  */
 const char *msg_tag_line_msgid(const char *tok);
 
+/** Arm the line's identifier for \a tok, whatever the command was.
+ *
+ * For a message that did not arrive as one line: a long message comes in
+ * as a batch of pieces and goes out as a batch, and the one identifier it
+ * has belongs to the line that opens that batch, not to any of the pieces.
+ */
+void msg_tag_line_force_msgid(const char *tok);
+
 /** Return non-zero if a command should carry an identifier.
  *
  * PRIVMSG, NOTICE and TAGMSG: the messages a user sends and that something

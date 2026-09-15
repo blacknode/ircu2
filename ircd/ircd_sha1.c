@@ -12,6 +12,7 @@
 /** @file
  * @brief SHA-1 implementation for ircu.
  */
+#include "ircd_base64.h"
 #include "ircd_sha1.h"
 #include <stdint.h>
 #include <string.h>
@@ -131,45 +132,6 @@ void SHA1Final(unsigned char digest[SHA1_DIGEST_LENGTH], SHA1_CTX *context)
                                  >> ((3 - (i & 3)) * 8)) & 255);
 }
 
-static size_t base64_encode(const unsigned char *in, size_t inlen,
-                            char *out, size_t outlen)
-{
-  static const char table[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  size_t i = 0;
-  size_t o = 0;
-
-  while (i + 2 < inlen) {
-    if (o + 4 >= outlen)
-      return 0;
-    out[o++] = table[(in[i] >> 2) & 0x3f];
-    out[o++] = table[((in[i] & 0x3) << 4) | ((in[i + 1] >> 4) & 0xf)];
-    out[o++] = table[((in[i + 1] & 0xf) << 2) | ((in[i + 2] >> 6) & 0x3)];
-    out[o++] = table[in[i + 2] & 0x3f];
-    i += 3;
-  }
-
-  if (i < inlen) {
-    if (o + 4 >= outlen)
-      return 0;
-    out[o++] = table[(in[i] >> 2) & 0x3f];
-    if (i + 1 < inlen) {
-      out[o++] = table[((in[i] & 0x3) << 4) | ((in[i + 1] >> 4) & 0xf)];
-      out[o++] = table[((in[i + 1] & 0xf) << 2)];
-      out[o++] = '=';
-    } else {
-      out[o++] = table[((in[i] & 0x3) << 4)];
-      out[o++] = '=';
-      out[o++] = '=';
-    }
-  }
-
-  if (o >= outlen)
-    return 0;
-  out[o] = '\0';
-  return o;
-}
-
 int ircd_sha1_base64(const void *data, size_t len, char *out, size_t outlen)
 {
   SHA1_CTX ctx;
@@ -182,7 +144,10 @@ int ircd_sha1_base64(const void *data, size_t len, char *out, size_t outlen)
   SHA1Update(&ctx, data, len);
   SHA1Final(digest, &ctx);
 
-  if (base64_encode(digest, sizeof(digest), out, outlen) == 0)
+  /* The codec lives in ircd_base64.c, where the RFC 4648 vectors reach
+   * it.  A second copy here would be a second chance to get the padding
+   * wrong, in the one place nothing tests. */
+  if (ircd_base64_encode(digest, sizeof(digest), out, outlen) < 0)
     return -1;
 
   return 0;

@@ -575,6 +575,51 @@ modules/hooks/slowauth.c is the reference: it holds a registration, asks
 a worker thread, and resumes.
 
 
+SASL MECHANISMS
+===============
+
+The core speaks the AUTHENTICATE protocol and brings PLAIN and EXTERNAL.
+A mechanism whose exchange the core cannot know in advance -- SCRAM, a
+one-time-password step, OAUTHBEARER against an identity provider -- is a
+module:
+
+  #include "sasl.h"
+
+  static enum SaslStep my_step(struct SaslSession *ses, const char *in,
+                               size_t inlen);
+
+  module_add_sasl_mechanism(mod, "SCRAM-SHA-256", 0, my_step);
+
+A step reads the decoded bytes the client sent and either fills in
+SaslSession::ss_out with a challenge and returns SASL_STEP_CHALLENGE, or
+fills in ss_authcid, ss_authzid and ss_secret and returns
+SASL_STEP_CREDENTIAL.  SASL_STEP_FAIL ends the exchange.
+
+Four things to know:
+
+  * A mechanism decides the *shape* of the exchange, never the answer.
+    Whether the credential is good is the identity provider's business,
+    and that is a separate registration; see include/account.h.  A
+    mechanism that checked a password itself would be one that works on
+    the server it was written for and nowhere else.
+
+  * The name is uppercased and validated (RFC 4422: 1 to 20 characters of
+    A-Z, 0-9, '-' and '_'), so "scram-sha-256" and "SCRAM-SHA-256" are one
+    mechanism and cannot both be registered.
+
+  * Pass SASL_MECH_NEEDS_TLS if the exchange puts a secret on the wire in
+    the clear, as PLAIN does.  The server then refuses it on a plaintext
+    connection before the client sends anything.
+
+  * The session holds a password.  Do not copy it anywhere that outlives
+    the exchange, and do not log it.  The server wipes the session with
+    ircd_crypto_wipe() on every way out, including the client hanging up
+    halfway through.
+
+Registrations are reverted on unload, like everything else, and a module
+cannot remove the core's mechanisms or another module's.
+
+
 COMMAND HOOKS
 =============
 

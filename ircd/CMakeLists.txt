@@ -123,6 +123,7 @@ set(IRCU_SOURCES
   ircd_aes.c
   ircd_alloc.c
   ircd_argon2.c
+  ircd_base64.c
   ircd_crypt.c
   ircd_crypt_native.c
   ircd_crypt_plain.c
@@ -258,6 +259,7 @@ set(IRCU_SOURCES
   s_serv.c
   s_stats.c
   s_user.c
+  sasl.c
   send.c
   sline.c
   uping.c

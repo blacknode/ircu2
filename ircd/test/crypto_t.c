@@ -10,11 +10,13 @@
  * why every one of these is here.
  *
  * Sources: FIPS 180-4 (SHA-256), RFC 4231 (HMAC-SHA-256), FIPS 197
- * appendix C.3 (AES-256), and the GCM specification's own test cases.
+ * appendix C.3 (AES-256), the GCM specification's own test cases, and
+ * RFC 4648 section 10 (base64).
  */
 
 #include "ircd_aes.h"
 #include "ircd_argon2.h"
+#include "ircd_base64.h"
 #include "ircd_pwhash.h"
 #include "ircd_sha256.h"
 
@@ -536,6 +538,116 @@ static void test_pwhash_costs(void)
   printf("ok - costs travel with the hash and can be raised\n");
 }
 
+/** RFC 4648 section 10, both ways.
+ *
+ * The seven vectors are there to pin the padding, which is the whole of
+ * what a base64 implementation gets wrong: every one of them exercises a
+ * different remainder of three.
+ */
+static void test_base64(void)
+{
+  static const struct {
+    const char* plain;
+    const char* encoded;
+  } vectors[] = {
+    { "",       ""         },
+    { "f",      "Zg=="     },
+    { "fo",     "Zm8="     },
+    { "foo",    "Zm9v"     },
+    { "foob",   "Zm9vYg==" },
+    { "fooba",  "Zm9vYmE=" },
+    { "foobar", "Zm9vYmFy" }
+  };
+  char text[64];
+  unsigned char bytes[64];
+  size_t i;
+
+  for (i = 0; i < sizeof(vectors) / sizeof(vectors[0]); i++) {
+    int n;
+
+    n = ircd_base64_encode(vectors[i].plain, strlen(vectors[i].plain),
+                           text, sizeof(text));
+    assert(n == (int) strlen(vectors[i].encoded));
+    assert(0 == strcmp(text, vectors[i].encoded));
+
+    n = ircd_base64_decode(vectors[i].encoded, 0, bytes, sizeof(bytes));
+    assert(n == (int) strlen(vectors[i].plain));
+    assert(0 == memcmp(bytes, vectors[i].plain, (size_t) n));
+
+    assert(ircd_base64_valid(vectors[i].encoded, 0));
+  }
+
+  printf("ok - base64: the RFC 4648 vectors, both ways\n");
+}
+
+/** Every byte value survives a round trip, at every alignment. */
+static void test_base64_roundtrip(void)
+{
+  unsigned char in[256];
+  unsigned char out[256];
+  char text[512];
+  size_t len;
+  size_t i;
+
+  for (i = 0; i < sizeof(in); i++)
+    in[i] = (unsigned char) i;
+
+  for (len = 0; len <= sizeof(in); len++) {
+    int n = ircd_base64_encode(in, len, text, sizeof(text));
+
+    assert(n == (int) IRCD_BASE64_ENCLEN(len));
+    assert(ircd_base64_valid(text, 0));
+
+    n = ircd_base64_decode(text, 0, out, sizeof(out));
+    assert(n == (int) len);
+    assert(0 == memcmp(in, out, len));
+  }
+
+  printf("ok - base64: 0..256 bytes of every value round-trip\n");
+}
+
+/** What the decoder must refuse.
+ *
+ * A lenient decoder turns one message into several encodings of itself,
+ * and this one decodes what a client sent -- which is to say, what an
+ * attacker may have sent.
+ */
+static void test_base64_refuses_nonsense(void)
+{
+  unsigned char out[64];
+  char text[8];
+
+  /* Not a multiple of four. */
+  assert(ircd_base64_decode("Zm9vYmFyZg", 0, out, sizeof(out)) == -1);
+  assert(ircd_base64_decode("Z", 0, out, sizeof(out)) == -1);
+  assert(!ircd_base64_valid("Zm9", 0));
+
+  /* Characters outside the alphabet, including the ones the P10 alphabet
+   * uses instead of '+' and '/'. */
+  assert(ircd_base64_decode("Zm9-", 0, out, sizeof(out)) == -1);
+  assert(ircd_base64_decode("Zm9[", 0, out, sizeof(out)) == -1);
+  assert(ircd_base64_decode("Zm9\n", 0, out, sizeof(out)) == -1);
+  assert(ircd_base64_decode("Zm9 ", 0, out, sizeof(out)) == -1);
+  assert(!ircd_base64_valid("Zm9-", 0));
+
+  /* Padding anywhere but at the end of the last group. */
+  assert(ircd_base64_decode("Zg==Zg==", 0, out, sizeof(out)) == -1);
+  assert(ircd_base64_decode("=m9v", 0, out, sizeof(out)) == -1);
+  assert(ircd_base64_decode("Z=9v", 0, out, sizeof(out)) == -1);
+  assert(ircd_base64_decode("Zm=v", 0, out, sizeof(out)) == -1);
+  assert(!ircd_base64_valid("Zg==Zg==", 0));
+  assert(!ircd_base64_valid("Z=9v", 0));
+
+  /* A buffer that does not fit is a refusal, not a truncation. */
+  assert(ircd_base64_decode("Zm9vYmFy", 0, out, 5) == -1);
+  assert(ircd_base64_encode("foobar", 6, text, sizeof(text)) == -1);
+
+  /* Not even the terminator fits. */
+  assert(ircd_base64_encode("", 0, text, 0) == -1);
+
+  printf("ok - base64: malformed input is refused, not guessed at\n");
+}
+
 int main(void)
 {
   test_sha256();
@@ -552,6 +664,9 @@ int main(void)
   test_pwhash();
   test_pwhash_refuses_nonsense();
   test_pwhash_costs();
+  test_base64();
+  test_base64_roundtrip();
+  test_base64_refuses_nonsense();
 
   printf("ok - crypto_t\n");
   return 0;

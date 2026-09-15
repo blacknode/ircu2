@@ -47,6 +47,9 @@
 #ifndef INCLUDED_capab_h
 #include "capab.h"      /* CAPFL_*, CapHas() */
 #endif
+#ifndef INCLUDED_sasl_h
+#include "sasl.h"       /* SaslStepFn, SASL_MECH_* */
+#endif
 #ifndef INCLUDED_worker_h
 #include "worker.h"     /* struct WorkTask, WorkerMainFn */
 #endif
@@ -64,7 +67,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 9
+#define IRCU_MODULE_ABI 10
 
 /** Description of a module, exported by the shared object.
  *
@@ -480,6 +483,38 @@ extern int module_del_command_hook(struct ModuleHandle* mod,
  */
 extern int module_hook_resume(struct ModuleHandle* mod, hook_token_t token,
                               enum HookResult result, const char* reason);
+
+/*
+ * SASL mechanisms.
+ *
+ * The core speaks the AUTHENTICATE protocol and brings PLAIN and
+ * EXTERNAL; a module adds the mechanisms whose exchange the core cannot
+ * know in advance.  A mechanism turns what the client sends into a
+ * credential and stops there: whether the credential is any good is the
+ * identity provider's business, not the mechanism's.  See include/sasl.h.
+ *
+ * Registrations are reverted when the module unloads, like everything
+ * else here.
+ */
+
+/** Register a SASL mechanism.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Mechanism name; uppercased, RFC 4422 character set.
+ * @param[in] flags SASL_MECH_* flags.
+ * @param[in] step One round of the exchange.
+ * @return Non-zero on success; zero if the name is malformed or taken.
+ */
+extern int module_add_sasl_mechanism(struct ModuleHandle* mod,
+                                     const char* name, unsigned int flags,
+                                     SaslStepFn step);
+
+/** Remove a SASL mechanism this module registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Mechanism to remove.
+ * @return Non-zero if it was found and removed.
+ */
+extern int module_del_sasl_mechanism(struct ModuleHandle* mod,
+                                     const char* name);
 
 /*
  * Server-side interface.  Not for use by modules.

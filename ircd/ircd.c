@@ -58,6 +58,7 @@
 #include "opercmds.h"
 #include "parse.h"
 #include "res.h"
+#include "sasl.h"
 #include "s_auth.h"
 #include "s_bsd.h"
 #include "s_conf.h"
@@ -748,6 +749,7 @@ int main(int argc, char **argv) {
   cap_init();   /* likewise, for the client capabilities: the core's take
                    the positions enum Capab names before a module can ask
                    for a free one */
+  sasl_init();  /* PLAIN and EXTERNAL, before a module adds its own */
   initwhowas();
   initmsgtree();
   initstats();
@@ -894,6 +896,7 @@ int main(int argc, char **argv) {
    */
   module_close();
   cap_close();
+  sasl_close();
   worker_shutdown();
   migration_shutdown();
   db_shutdown();

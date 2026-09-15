@@ -85,6 +85,13 @@ add_ircu_test(msgq_excise_t
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/msgq.c")
 
+add_ircu_test(sasl_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/sasl.c")
+
 add_ircu_test(hooks_t
   "${IRCU_IRCD_DIR}/hooks.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
@@ -93,6 +100,7 @@ add_ircu_test(hooks_t
 add_ircu_test(crypto_t
   "${IRCU_IRCD_DIR}/ircd_aes.c"
   "${IRCU_IRCD_DIR}/ircd_argon2.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
   "${IRCU_IRCD_DIR}/ircd_pwhash.c"
   "${IRCU_IRCD_DIR}/ircd_sha256.c")
 
@@ -169,6 +177,9 @@ add_ircu_test(module_t
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/migration.c"
   "${IRCU_IRCD_DIR}/module.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c"
+  "${IRCU_IRCD_DIR}/sasl.c"
   "${IRCU_IRCD_DIR}/worker.c")
 target_link_libraries(module_t PRIVATE ${CMAKE_DL_LIBS})
 set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
@@ -194,7 +205,7 @@ function(_ircu_test_module target source subdir)
 endfunction()
 
 foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_umode
-                 mod_cmode mod_cap mod_cmdhook mod_core)
+                 mod_cmode mod_cap mod_cmdhook mod_sasl mod_core)
   _ircu_test_module(${_fixture} ${_fixture} /test)
 endforeach()
 _ircu_test_module(mod_cmd mod_cmd /test/mod_cmd)

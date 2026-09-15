@@ -342,6 +342,31 @@ throttled off the server for sending one message. `batch` and
 explicitly — a batch is between one server and one client, and long messages
 cross P10 as the separate messages they are made of.
 
+**SASL** (`include/sasl.h`, `ircd/sasl.c`, proposal 007). The *shape* of an
+authentication, never the answer: it turns the AUTHENTICATE lines a client
+sends into a credential — an authcid (the email), an authzid (which of that
+email's accounts) and a secret — and stops there. Whether the credential is
+good belongs to the identity module, because the exchange is the same on every
+server and the answer is not. The mechanisms are a run-time register, the same
+shape as `capab.c` and the mode registers, sorted by name so the advertised
+`sasl=` value does not depend on module load order; the core brings `PLAIN`
+(`SASL_MECH_NEEDS_TLS` — it sends the password in the clear) and `EXTERNAL`
+(the credential is the certificate fingerprint the server already has), and a
+module adds its own with `module_add_sasl_mechanism()`. `sasl.c` knows nothing
+about a `struct Client` or a socket — the caller copies the TLS flag and the
+fingerprint into the session before starting it — which is what lets the whole
+state machine be unit-tested (`sasl_t`), the same split as `migration.c`
+against `migration_run.c`. The 400-character chunking, `+` and `*` live here
+too. A session holds a password, so `sasl_session_clear()` wipes rather than
+frees and every way out goes through it.
+
+**Base64** (`include/ircd_base64.h`, `ircd/ircd_base64.c`). RFC 4648, the
+standard alphabet — not the P10 one in `numnicks.h`, which avoids `+` and `/`
+because its output goes in a nick. The decoder is strict (length a multiple of
+four, padding only at the end, nothing outside the alphabet) because it decodes
+what a client sent; a lenient decoder is how one message gets two encodings.
+Both directions are covered by the RFC 4648 §10 vectors in `crypto_t`.
+
 **Cryptography** (`include/ircd_sha256.h`, `ircd_aes.h`, `ircd_argon2.h`,
 `ircd_pwhash.h`). The server's own, never the TLS backend's: `IRCU_TLS` can be
 `none` and can be GnuTLS or libtls, so reaching for whichever library happens to
@@ -416,7 +441,10 @@ in Spanish);
 read the relevant one before changing either subsystem.  `006` (in Spanish) is
 not a subsystem design but the roadmap for turning this into a unified
 communications server (rich text, history, voice/video/screen share): read it
-before starting anything that belongs to one of its phases. Other useful docs:
+before starting anything that belongs to one of its phases; its phase 0 is
+done.  `007` (in Spanish) is that roadmap's phase 1, the identity model — SASL,
+`ACCOUNT`, and an account that *is* a nickname — and is what `sasl.c` is the
+first piece of. Other useful docs:
 `doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
 `doc/readme.database`, `doc/readme.migrations`, `doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root

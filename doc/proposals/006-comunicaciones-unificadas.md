@@ -1,10 +1,11 @@
 # Propuesta 006 — De IRC a comunicaciones unificadas: texto enriquecido, voz, vídeo y pantalla compartida
 
 **Estado:** hoja de ruta, aprobada con correcciones (revisión 3).
-Fase 0 **en curso**: el registro de capacidades (§5.1), los hooks genéricos de
-comando (§5.7), los identificadores de mensaje (§5.4) y `BATCH` con
-`labeled-response` (§5.3), `draft/multiline` (§5.2) y la criptografía `ircd_*`
-(§5.8) están implementados.
+Fase 0 **cerrada**: el registro de capacidades (§5.1), los hooks genéricos de
+comando (§5.7), los identificadores de mensaje (§5.4), `BATCH` con
+`labeled-response` (§5.3), `draft/multiline` (§5.2), la criptografía `ircd_*`
+(§5.8) y los hooks asíncronos (§5.5) están implementados.
+Fase 1 **en curso**: la identidad (§6) tiene su propia propuesta, la 007.
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
 **Introduce:** `include/capab.h` + `ircd/capab.c`, los hooks de comando y

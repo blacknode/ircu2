@@ -16,6 +16,7 @@
 #include "migration.h"
 #include "module.h"
 #include "capab.h"
+#include "sasl.h"
 #include "hooks.h"
 #include "channel.h"
 #include "client.h"
@@ -644,6 +645,69 @@ static void test_cap_registration(void)
   printf("Passed: module capabilities are reverted on unload\n");
 }
 
+/** A module's SASL mechanisms reach the register and go away with it. */
+static void test_sasl_registration(void)
+{
+  struct ModuleHandle* mod;
+  struct SaslSession ses;
+  unsigned int before = sasl_count();
+
+  mod = module_load("mod_sasl", 0, 0);
+  assert(mod != 0);
+
+  assert(sasl_module_count(mod) == 2);
+  assert(sasl_count() == before + 2);
+
+  assert(sasl_find("X-TEST") != 0);
+  assert(sasl_find("X-TEST")->sm_owner == mod);
+  assert(sasl_find("X-OTHER")->sm_flags & SASL_MECH_NEEDS_TLS);
+
+  /* The registration is not just a name: the exchange runs the module's
+   * code.  "YUBj" is base64 for "abc".
+   */
+  sasl_session_init(&ses);
+  assert(sasl_session_begin(&ses, "X-TEST") == 0);
+  assert(sasl_session_input(&ses, "YWJj") == SASL_CREDENTIAL);
+  assert(0 == strcmp(ses.ss_authcid, "abc"));
+  sasl_session_clear(&ses);
+
+  assert(module_unload(mod) != 0);
+
+  assert(sasl_count() == before);
+  assert(sasl_find("X-TEST") == 0);
+  assert(sasl_find("X-OTHER") == 0);
+  /* The core's are untouched. */
+  assert(sasl_find("PLAIN") != 0);
+  assert(sasl_find("EXTERNAL") != 0);
+
+  printf("Passed: module SASL mechanisms are reverted on unload\n");
+}
+
+/** A module can remove its own mechanism, and nobody else's. */
+static void test_sasl_explicit_removal(void)
+{
+  struct ModuleHandle* mod;
+  unsigned int before = sasl_count();
+
+  mod = module_load("mod_sasl", 0, 0);
+  assert(mod != 0);
+  assert(sasl_module_count(mod) == 2);
+
+  assert(module_del_sasl_mechanism(mod, "X-TEST") != 0);
+  assert(sasl_module_count(mod) == 1);
+  assert(sasl_find("X-TEST") == 0);
+
+  /* Not the core's, and not one it never registered. */
+  assert(module_del_sasl_mechanism(mod, "PLAIN") == 0);
+  assert(module_del_sasl_mechanism(mod, "NOSUCH") == 0);
+  assert(sasl_find("PLAIN") != 0);
+
+  assert(module_unload(mod) != 0);
+  assert(sasl_count() == before);
+
+  printf("Passed: explicit SASL mechanism removal\n");
+}
+
 /** A module can remove its own capability, and nobody else's. */
 static void test_cap_explicit_removal(void)
 {
@@ -873,6 +937,7 @@ int main(void)
 {
   channel_init_chan_modes();
   cap_init();
+  sasl_init();
   module_init();
   client_init_user_modes();
 
@@ -903,6 +968,8 @@ int main(void)
   test_cap_registration();
   test_cap_explicit_removal();
   test_cap_cycles();
+  test_sasl_registration();
+  test_sasl_explicit_removal();
   test_command_hook_registration();
   test_migrations_loaded();
   test_module_without_migrations();

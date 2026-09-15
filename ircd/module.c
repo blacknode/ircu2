@@ -38,6 +38,7 @@
 #include "msg.h"
 #include "numeric.h"
 #include "parse.h"
+#include "sasl.h"
 #include "s_debug.h"
 #include "send.h"
 #include "worker.h"
@@ -881,6 +882,36 @@ int module_hook_resume(struct ModuleHandle *mod, hook_token_t token,
   return hook_resume(token, result, reason);
 }
 
+/** Register a SASL mechanism for a module.
+ *
+ * The core brings PLAIN and EXTERNAL; everything else -- SCRAM, a
+ * one-time-password step, OAUTHBEARER for an identity provider -- is a
+ * module, because the exchange is the only part of it the core can know
+ * in advance.  The name is uppercased, so two modules cannot register the
+ * same mechanism under two spellings.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Mechanism name, e.g. "SCRAM-SHA-256".
+ * @param[in] flags SASL_MECH_* flags.
+ * @param[in] step One round of the exchange.
+ * @return Non-zero on success.
+ */
+int module_add_sasl_mechanism(struct ModuleHandle *mod, const char *name,
+                              unsigned int flags, SaslStepFn step) {
+  assert(0 != mod);
+  return sasl_register(mod, name, flags, step);
+}
+
+/** Remove a SASL mechanism this module registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Mechanism to remove.
+ * @return Non-zero if it was found and removed.
+ */
+int module_del_sasl_mechanism(struct ModuleHandle *mod, const char *name) {
+  assert(0 != mod);
+  return sasl_unregister(mod, name);
+}
+
 /** Turn a module name into the path of its shared object.
  *
  * The name is a bare name: it may not contain a directory separator and
@@ -1270,6 +1301,11 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    * negotiated one has to be told it is gone.
    */
   module_drop_caps(mod);
+  /* And its SASL mechanisms, before the code that implements them is
+   * unmapped: a client halfway through an exchange with a mechanism that
+   * no longer exists would be answered by a pointer into nothing.
+   */
+  sasl_drop_module(mod);
 
   for (mod_p = &manager->mod_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {

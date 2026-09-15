@@ -358,26 +358,13 @@ int register_user(struct Client *cptr, struct Client *sptr)
   {
     assert(cptr == sptr);
 
-    /* Modules get the last word on whether this client is allowed in, at
-     * the point where the server has everything it knows about them --
-     * nick, user, host, TLS state -- and before any of it is
-     * committed.  Only for locally connecting clients: sptr == cptr here,
-     * and users arriving from other servers never reach this branch.
+    /* #HOOK_CLIENT_PRE_REGISTER does not run here.  It runs one step
+     * earlier, in check_auth_finished(), which is the only path that
+     * reaches this branch and the only place the server can wait: a module
+     * that has to ask something slow holds the client there with a flag of
+     * its own, beside ident, DNS, CAP and iauth.  See auth_module_check()
+     * in ircd/s_auth.c.
      */
-    if (hook_is_active(HOOK_CLIENT_PRE_REGISTER)) {
-      struct HookContext hc;
-
-      hook_context_init(&hc);
-      hc.hc_client = sptr;
-      hc.hc_source = cptr;
-      hc.hc_arg = cli_name(sptr);
-
-      if (hook_run(HOOK_CLIENT_PRE_REGISTER, &hc) == HOOK_DENY) {
-        return exit_client(cptr, sptr, &me,
-                           hc.hc_reason[0] ? hc.hc_reason
-                                           : "Refused by a module");
-      }
-    }
 
     Count_unknownbecomesclient(sptr, UserStats);
 

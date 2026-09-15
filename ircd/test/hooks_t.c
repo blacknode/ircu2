@@ -5,6 +5,11 @@
  * can remove itself while it is running, and unloading a module takes its
  * hooks with it.
  *
+ * Then suspension: a hook that returns HOOK_PENDING with a token holds the
+ * operation, the answer reaches the core exactly once, and a hold that is
+ * never answered ends as a refusal -- by deadline, or because the module
+ * that owed the answer went away.
+ *
  * And, for the command hooks, the five rules in hooks.h: a hook sees only
  * the command it named, a service bot's commands are hidden unless asked
  * for, a veto counts only for a client of this server, the chain is
@@ -15,6 +20,7 @@
 #include "hooks.h"
 #include "client.h"
 #include "ircd_log.h"
+#include "ircd_string.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -220,8 +226,8 @@ static void test_deny_is_final(void)
   printf("Passed: a DENY is final\n");
 }
 
-/** HOOK_PENDING is reserved but not implemented; it behaves as CONTINUE. */
-static void test_pending_is_reserved(void)
+/** A HOOK_PENDING where nothing can be suspended behaves as CONTINUE. */
+static void test_pending_without_token(void)
 {
   struct HookContext ctx;
 
@@ -233,13 +239,15 @@ static void test_pending_is_reserved(void)
   log_reset();
   hook_context_init(&ctx);
 
-  /* The chain carries on rather than stalling an operation the server has
-   * no way to resume.
+  /* hook_run() offers no token, so the chain carries on rather than
+   * stalling an operation the server has no way to resume.
    */
   assert(hook_run(HOOK_CLIENT_PRE_NICK, &ctx) == HOOK_CONTINUE);
   assert(0 == strcmp(call_log, "Pb"));
+  assert(ctx.hc_token == 0);
+  assert(hook_pending_count() == 0);
 
-  printf("Passed: HOOK_PENDING falls back to HOOK_CONTINUE\n");
+  printf("Passed: HOOK_PENDING without a token falls back to CONTINUE\n");
 }
 
 /** A hook may remove itself from inside its own call. */
@@ -668,6 +676,225 @@ static void test_command_teardown(void)
   printf("Passed: command hooks go away with their module\n");
 }
 
+/* --- suspension ------------------------------------------------------- */
+
+/** What the last completion callback was told. */
+static int resume_calls;
+static enum HookResult resume_result;
+static char resume_reason[64];
+static void* resume_data;
+
+static void resume_reset(void)
+{
+  resume_calls = 0;
+  resume_result = HOOK_CONTINUE;
+  resume_reason[0] = '\0';
+  resume_data = NULL;
+}
+
+/** Stands in for the core's way back into a suspended operation. */
+static void on_resume(void* data, enum HookResult result, const char* reason)
+{
+  resume_calls++;
+  resume_result = result;
+  resume_data = data;
+  ircd_strncpy(resume_reason, reason ? reason : "", sizeof(resume_reason) - 1);
+}
+
+/** Token the suspending hook was offered. */
+static hook_token_t seen_token;
+
+static enum HookResult hook_suspend(struct HookContext* ctx, void* user)
+{
+  (void) user;
+  log_call("S");
+  seen_token = ctx->hc_token;
+  return HOOK_PENDING;
+}
+
+/** An operation held, then answered. */
+static void test_suspend_and_resume(void)
+{
+  struct HookContext ctx;
+  int marker = 0;
+
+  hooks_init();
+  resume_reset();
+  seen_token = 0;
+
+  hook_add(MOD_A, "mod_a", HOOK_CLIENT_PRE_REGISTER, hook_suspend, 10, 0);
+  hook_add(MOD_A, "mod_a", HOOK_CLIENT_PRE_REGISTER, hook_b, 20, 0);
+
+  log_reset();
+  hook_context_init(&ctx);
+
+  assert(hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &ctx, &cli_local,
+                              on_resume, &marker, 100) == HOOK_PENDING);
+
+  /* The hook was offered a token, and suspending stopped the chain. */
+  assert(seen_token != 0);
+  assert(0 == strcmp(call_log, "S"));
+  assert(hook_pending_count() == 1);
+  assert(hook_pending_deadline() == 100);
+
+  /* Nothing has been decided yet. */
+  assert(resume_calls == 0);
+
+  /* The context no longer carries the token: it belongs to the hold. */
+  assert(ctx.hc_token == 0);
+
+  assert(hook_resume(seen_token, HOOK_ALLOW, NULL) != 0);
+  assert(resume_calls == 1);
+  assert(resume_result == HOOK_ALLOW);
+  assert(resume_data == &marker);
+  assert(hook_pending_count() == 0);
+
+  /* The same token cannot answer twice. */
+  assert(hook_resume(seen_token, HOOK_DENY, "again") == 0);
+  assert(resume_calls == 1);
+
+  printf("Passed: a suspended hook is answered once\n");
+}
+
+/** A refusal carries the module's reason back to the core. */
+static void test_suspend_denied(void)
+{
+  struct HookContext ctx;
+
+  hooks_init();
+  resume_reset();
+  seen_token = 0;
+
+  hook_add(MOD_A, "mod_a", HOOK_CLIENT_PRE_REGISTER, hook_suspend, 10, 0);
+
+  hook_context_init(&ctx);
+  assert(hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &ctx, &cli_local,
+                              on_resume, NULL, 100) == HOOK_PENDING);
+
+  assert(hook_resume(seen_token, HOOK_DENY, "no accounts today") != 0);
+  assert(resume_result == HOOK_DENY);
+  assert(0 == strcmp(resume_reason, "no accounts today"));
+
+  printf("Passed: a refusal carries its reason\n");
+}
+
+/** With nothing listening, there is no token and no hold. */
+static void test_suspend_no_hooks(void)
+{
+  struct HookContext ctx;
+
+  hooks_init();
+  resume_reset();
+
+  hook_context_init(&ctx);
+  assert(hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &ctx, &cli_local,
+                              on_resume, NULL, 100) == HOOK_CONTINUE);
+  assert(ctx.hc_token == 0);
+  assert(hook_pending_count() == 0);
+  assert(resume_calls == 0);
+
+  /* A hook that decides on the spot is not a hold either. */
+  hook_add(MOD_A, "mod_a", HOOK_CLIENT_PRE_REGISTER, hook_deny, 10, 0);
+  hook_context_init(&ctx);
+  assert(hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &ctx, &cli_local,
+                              on_resume, NULL, 100) == HOOK_DENY);
+  assert(hook_pending_count() == 0);
+  assert(resume_calls == 0);
+
+  printf("Passed: nothing is held unless a hook asks for it\n");
+}
+
+/** A hold whose deadline passes is refused, once. */
+static void test_suspend_expires(void)
+{
+  struct HookContext ctx;
+
+  hooks_init();
+  resume_reset();
+
+  hook_add(MOD_A, "mod_a", HOOK_CLIENT_PRE_REGISTER, hook_suspend, 10, 0);
+
+  hook_context_init(&ctx);
+  assert(hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &ctx, &cli_local,
+                              on_resume, NULL, 100) == HOOK_PENDING);
+
+  /* Not yet. */
+  assert(hook_pending_expire(99) == 0);
+  assert(resume_calls == 0);
+  assert(hook_pending_count() == 1);
+
+  /* The deadline is inclusive: at it, the hold is over. */
+  assert(hook_pending_expire(100) == 1);
+  assert(resume_calls == 1);
+  assert(resume_result == HOOK_DENY);
+  assert(resume_reason[0] != '\0');
+  assert(hook_pending_count() == 0);
+  assert(hook_pending_deadline() == 0);
+
+  /* And the module's answer, if it ever comes, finds nothing. */
+  assert(hook_resume(seen_token, HOOK_ALLOW, NULL) == 0);
+  assert(resume_calls == 1);
+
+  printf("Passed: a hold that is never answered expires as a refusal\n");
+}
+
+/** A client that leaves takes its holds with it, silently. */
+static void test_suspend_client_gone(void)
+{
+  struct HookContext ctx;
+
+  hooks_init();
+  resume_reset();
+
+  hook_add(MOD_A, "mod_a", HOOK_CLIENT_PRE_REGISTER, hook_suspend, 10, 0);
+
+  hook_context_init(&ctx);
+  assert(hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &ctx, &cli_local,
+                              on_resume, NULL, 100) == HOOK_PENDING);
+
+  /* Another client's exit is not this hold. */
+  hook_pending_cancel(&cli_remote);
+  assert(hook_pending_count() == 1);
+
+  hook_pending_cancel(&cli_local);
+  assert(hook_pending_count() == 0);
+
+  /* Dropped, not refused: there is nobody left to refuse, and the
+   * callback would reach into a client that is being freed.
+   */
+  assert(resume_calls == 0);
+  assert(hook_resume(seen_token, HOOK_ALLOW, NULL) == 0);
+
+  printf("Passed: a hold dies with its client, without a callback\n");
+}
+
+/** Unloading a module refuses what it still owed an answer for. */
+static void test_suspend_module_unload(void)
+{
+  struct HookContext ctx;
+
+  hooks_init();
+  resume_reset();
+
+  hook_add(MOD_A, "mod_a", HOOK_CLIENT_PRE_REGISTER, hook_suspend, 10, 0);
+
+  hook_context_init(&ctx);
+  assert(hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &ctx, &cli_local,
+                              on_resume, NULL, 100) == HOOK_PENDING);
+
+  /* Somebody else's teardown leaves it alone. */
+  hook_del_module(MOD_B);
+  assert(hook_pending_count() == 1);
+  assert(resume_calls == 0);
+
+  hook_del_module(MOD_A);
+  assert(hook_pending_count() == 0);
+  assert(resume_calls == 1);
+  assert(resume_result == HOOK_DENY);
+
+  printf("Passed: unloading a module refuses what it was holding\n");
+}
+
 int main(int argc, char* argv[])
 {
   (void) argc;
@@ -677,7 +904,7 @@ int main(int argc, char* argv[])
   test_priority_order();
   test_chain_stops();
   test_deny_is_final();
-  test_pending_is_reserved();
+  test_pending_without_token();
   test_self_removal();
   test_module_teardown();
   test_chains_are_independent();
@@ -685,6 +912,12 @@ int main(int argc, char* argv[])
   test_type_names();
 
   clients_init();
+  test_suspend_and_resume();
+  test_suspend_denied();
+  test_suspend_no_hooks();
+  test_suspend_expires();
+  test_suspend_client_gone();
+  test_suspend_module_unload();
   test_command_filter();
   test_command_registration_types();
   test_command_services();

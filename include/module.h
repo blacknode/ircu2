@@ -64,7 +64,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 8
+#define IRCU_MODULE_ABI 9
 
 /** Description of a module, exported by the shared object.
  *
@@ -457,6 +457,29 @@ extern int module_add_command_hook(struct ModuleHandle* mod,
 extern int module_del_command_hook(struct ModuleHandle* mod,
                                    enum HookType type, const char* cmd,
                                    HookFn fn);
+
+/** Answer a hook this module suspended.
+ *
+ * A hook that cannot decide on the spot -- because the answer is in a
+ * database, or in a password hash that belongs on a worker thread -- reads
+ * HookContext::hc_token, returns #HOOK_PENDING, and calls this when it
+ * knows.  hc_token is non-zero only where the server can wait; see
+ * "Suspending a hook" in include/hooks.h for what that means and what
+ * happens if the answer never comes.
+ *
+ * Call it from the main thread, once per token.  A worker thread must not:
+ * it hands its result back through its completion callback, which the main
+ * thread runs, and that is where the answer belongs.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] token The value read from HookContext::hc_token.
+ * @param[in] result #HOOK_DENY to refuse the operation, #HOOK_ALLOW to let
+ *   it proceed.
+ * @param[in] reason Text explaining a refusal, or NULL.
+ * @return Non-zero if the token was still outstanding.
+ */
+extern int module_hook_resume(struct ModuleHandle* mod, hook_token_t token,
+                              enum HookResult result, const char* reason);
 
 /*
  * Server-side interface.  Not for use by modules.

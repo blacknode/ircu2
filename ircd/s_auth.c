@@ -38,6 +38,7 @@
 #include "s_auth.h"
 #include "class.h"
 #include "client.h"
+#include "hooks.h"
 #include "IPcheck.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
@@ -92,6 +93,8 @@ enum AuthRequestFlag {
     AR_IAUTH_FUSERNAME, /**< iauth sent a forced username */
     AR_IAUTH_SOFT_DONE, /**< iauth has no objection to client */
     AR_GLINE_CHECKED,   /**< checked for a G-line banning the client */
+    AR_MODULE_PENDING,  /**< a module is deciding, see auth_module_check() */
+    AR_MODULE_CHECKED,  /**< the modules have had their say */
     AR_FREE_PENDING,    /**< destroy during timer MARKED; freelist on ET_DESTROY */
     AR_NUM_FLAGS
 };
@@ -217,6 +220,9 @@ static void iauth_sock_callback(struct Event *ev);
 static void iauth_stderr_callback(struct Event *ev);
 static int sendto_iauth(struct Client *cptr, const char *format, ...);
 static int preregister_user(struct Client *cptr);
+static int check_auth_finished(struct AuthRequest *auth, int bitclr);
+static void auth_module_resume(void *data, enum HookResult result,
+                               const char *reason);
 typedef int (*iauth_cmd_handler)(struct IAuth *iauth, struct Client *cli,
 				 int parc, char **params);
 
@@ -434,6 +440,135 @@ static void iauth_notify(struct AuthRequest *auth, enum AuthRequestFlag flag)
   }
 }
 
+/** What auth_module_check() decided. */
+enum AuthModuleResult {
+  AMC_OK,       /**< Registration may go ahead. */
+  AMC_PENDING,  /**< A module is still deciding; the client waits. */
+  AMC_KILLED    /**< The client was refused and is gone. */
+};
+
+/** Let modules have the last word on a client that is about to register.
+ *
+ * #HOOK_CLIENT_PRE_REGISTER runs here, and not inside register_user(),
+ * because this is where the server can wait.  Registration is already a
+ * state machine that holds a connection until ident, DNS, CAP negotiation,
+ * the PING cookie and iauth are all done; a module that needs to ask
+ * something slow is one more of those, with a flag of its own and the same
+ * timeout watching over it.  Inside register_user() there would be nothing
+ * to come back to.
+ *
+ * Everything the hook is shown is settled by now -- nick, username, host,
+ * TLS state, connection class -- and nothing has been committed: the
+ * client is still unregistered and on no channel.
+ *
+ * @param[in] auth Authorization request for the client.
+ * @return A value from #AuthModuleResult.
+ */
+static int auth_module_check(struct AuthRequest *auth)
+{
+  struct Client *cptr = auth->client;
+  struct HookContext hc;
+  enum HookResult res;
+
+  /* Re-entered while a module is still deciding: a late DNS reply, a PONG,
+   * anything that calls check_auth_finished() again.  The answer is the
+   * one already being waited for, not a second question.
+   */
+  if (FlagHas(&auth->flags, AR_MODULE_PENDING))
+    return AMC_PENDING;
+
+  if (FlagHas(&auth->flags, AR_MODULE_CHECKED))
+    return AMC_OK;
+
+  if (!hook_is_active(HOOK_CLIENT_PRE_REGISTER)) {
+    FlagSet(&auth->flags, AR_MODULE_CHECKED);
+    return AMC_OK;
+  }
+
+  hook_context_init(&hc);
+  hc.hc_client = cptr;
+  hc.hc_source = cptr;
+  hc.hc_arg = cli_name(cptr);
+
+  res = hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &hc, cptr,
+                             auth_module_resume, auth,
+                             CurrentTime + feature_int(FEAT_HOOK_TIMEOUT));
+
+  if (res == HOOK_PENDING) {
+    FlagSet(&auth->flags, AR_MODULE_PENDING);
+    return AMC_PENDING;
+  }
+
+  FlagSet(&auth->flags, AR_MODULE_CHECKED);
+
+  if (res == HOOK_DENY) {
+    exit_client(cptr, cptr, &me,
+                hc.hc_reason[0] ? hc.hc_reason : "Refused by a module");
+    return AMC_KILLED;
+  }
+
+  return AMC_OK;
+}
+
+/** Take the answer to a suspended #HOOK_CLIENT_PRE_REGISTER.
+ *
+ * Called from hooks.c on the main thread: by the module itself through
+ * hook_resume(), by the deadline, or because the module was unloaded while
+ * it owed an answer.  The last two arrive as #HOOK_DENY, which is why a
+ * module that holds a registration and then stops answering keeps nobody
+ * out but the client it was asked about.
+ *
+ * @param[in] data The struct AuthRequest that was held.
+ * @param[in] result #HOOK_DENY to refuse, anything else to let it in.
+ * @param[in] reason Why it was refused, or NULL.
+ */
+static void auth_module_resume(void *data, enum HookResult result,
+                               const char *reason)
+{
+  struct AuthRequest *auth = (struct AuthRequest *) data;
+  struct Client *cptr;
+
+  assert(auth != NULL);
+
+  /* destroy_auth_request() detaches the client and cancels the hold, so
+   * this should not be reachable with the client already gone; it costs
+   * one comparison to be sure, because the alternative is dereferencing a
+   * freed struct Client.
+   */
+  if (!auth->client)
+    return;
+
+  cptr = auth->client;
+  FlagClr(&auth->flags, AR_MODULE_PENDING);
+  FlagSet(&auth->flags, AR_MODULE_CHECKED);
+
+  if (result == HOOK_DENY) {
+    exit_client(cptr, cptr, &me,
+                (reason && *reason) ? reason : "Refused by a module");
+    return;
+  }
+
+  check_auth_finished(auth, AR_MODULE_PENDING);
+}
+
+/** Return non-zero if a module is deciding whether \a cptr may register.
+ *
+ * While that is true the client is frozen: the question a module was asked
+ * is about this connection with this nickname, and letting the nickname
+ * change underneath would make the answer be about somebody else.
+ *
+ * @param[in] cptr Client to test.
+ */
+int auth_module_held(struct Client *cptr)
+{
+  struct AuthRequest *auth;
+
+  assert(cptr != NULL);
+  auth = cli_auth(cptr);
+
+  return auth && FlagHas(&auth->flags, AR_MODULE_PENDING);
+}
+
 /** Check whether an authorization request is complete.
  * This means that no flags from 0 to #AR_LAST_SCAN are set on \a auth.
  * If #AR_IAUTH_PENDING is set, optionally go into "hurry" state.  If
@@ -602,6 +737,27 @@ static int check_auth_finished(struct AuthRequest *auth, int bitclr)
         ++ServerStats->is_bad_fingerprint;
         send_reply(cptr, ERR_TLSCLIFINGERPRINT);
         res = exit_client(cptr, cptr, &me, "Bad TLS fingerprint");
+      }
+    }
+
+    /* Last word to the modules, and the one step here that may take its
+     * time: a module can hold the client and answer later.
+     */
+    if (res == 0)
+    {
+      switch (auth_module_check(auth))
+      {
+      case AMC_PENDING:
+        /* Held.  The auth request stays alive -- its timeout, and the
+         * registration timeout in check_pings(), are still watching this
+         * connection -- and auth_module_resume() picks up from here.
+         */
+        return 0;
+      case AMC_KILLED:
+        res = CPTR_KILLED;
+        break;
+      default:
+        break;
       }
     }
 
@@ -908,6 +1064,14 @@ void destroy_auth_request(struct AuthRequest* auth)
   if (FlagHas(&auth->flags, AR_DNS_PENDING)) {
     delete_resolver_queries(auth);
   }
+
+  /* A module may still owe an answer about this client.  Dropping the hold
+   * rather than refusing it is deliberate: there is no longer anybody to
+   * refuse, and auth_module_resume() must not run on a struct AuthRequest
+   * that is going back on the freelist.
+   */
+  if (auth->client)
+    hook_pending_cancel(auth->client);
 
   if (-1 < s_fd(&auth->socket)) {
     close(s_fd(&auth->socket));

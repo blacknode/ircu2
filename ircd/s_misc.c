@@ -397,6 +397,12 @@ int exit_client(struct Client *cptr,
    * open against a pointer that is about to be freed.
    */
   batch_client_exiting(victim);
+  /* Likewise an operation a module was still deciding about: the client it
+   * concerned is on its way out, so the answer has nowhere to land.  The
+   * hold is dropped, not refused -- refusing it would call back into
+   * exit_client() for a client already exiting.
+   */
+  hook_pending_cancel(victim);
 
   if (MyConnect(victim))
   {

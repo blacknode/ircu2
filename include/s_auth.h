@@ -45,6 +45,14 @@ extern int auth_cap_done(struct AuthRequest *auth);
 extern int auth_spoof_user(struct AuthRequest *auth, const char *username, const char *hostname, const char *ip);
 extern void destroy_auth_request(struct AuthRequest *req);
 
+/** Non-zero while a module is deciding whether \a cptr may register.
+ *
+ * The client is frozen for as long as this is true: the question the
+ * module was asked is about this connection under this nickname.  See
+ * auth_module_check() in ircd/s_auth.c.
+ */
+extern int auth_module_held(struct Client *cptr);
+
 extern int auth_spawn(int argc, char *argv[]);
 extern void auth_send_exit(struct Client *cptr);
 extern void auth_send_xreply(struct Client *sptr, const char *routing, const char *reply);

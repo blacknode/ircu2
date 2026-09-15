@@ -22,7 +22,9 @@
 
 #include "hooks.h"
 #include "client.h"
+#include "ircd.h"
 #include "ircd_alloc.h"
+#include "ircd_events.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -115,6 +117,251 @@ unsigned int hook_calls(enum HookType type)
 {
   assert(type >= 0 && type < HOOK_LAST);
   return hooks[type].calls;
+}
+
+/* ------------------------------------------------------------------- *
+ * Suspended operations.                                               *
+ *                                                                     *
+ * See "Suspending a hook" in include/hooks.h for the three rules this *
+ * implements and why each one is there.                               *
+ * ------------------------------------------------------------------- */
+
+/** One operation a module asked to answer later. */
+struct HookPending {
+  struct HookPending*  hp_next;     /**< Next hold, in no particular order. */
+  hook_token_t         hp_token;    /**< What hook_resume() is called with. */
+  enum HookType        hp_type;     /**< Hook point that was suspended. */
+  struct ModuleHandle* hp_mod;      /**< Module that owes an answer. */
+  char*                hp_owner;    /**< Its name; a copy, because the
+                                         module's own storage goes away
+                                         before the log message would. */
+  struct Client*       hp_client;   /**< Client the operation is about. */
+  time_t               hp_deadline; /**< When the hold is refused. */
+  HookResumeFn         hp_done;     /**< The core's way back in. */
+  void*                hp_data;     /**< Opaque pointer for hp_done. */
+};
+
+/** Outstanding holds.  Short by construction: one per operation waiting. */
+static struct HookPending* hook_pending_list;
+
+/** How many are on that list. */
+static unsigned int hook_pending_num;
+
+/** Ceiling on holds, so a module that suspends and never answers cannot
+ * grow the list without bound.  Past this a suspension is refused outright
+ * rather than recorded.
+ */
+#define HOOK_PENDING_MAX 16384
+
+/** Last token handed out.  Never zero: zero means "cannot be suspended". */
+static hook_token_t hook_last_token;
+
+/** Timer for the earliest deadline, armed only while something is held.
+ *
+ * A timer of its own rather than a ride on check_pings(): that pass is
+ * scheduled minutes ahead on an idle server, and a hold created just after
+ * it ran would wait for the next one.  A deadline that is only enforced
+ * eventually is not a deadline.  Nothing is armed while nothing is held,
+ * so a server with no modules pays for none of this.
+ */
+static struct Timer hook_timer;
+
+/** Whether #hook_timer is on the queue. */
+static int hook_timer_armed;
+
+static void hook_pending_timeout(struct Event* ev);
+
+/** Make sure the timer will fire by the earliest outstanding deadline.
+ *
+ * Every hold gets the same FEAT_HOOK_TIMEOUT, so a new one is always later
+ * than the one the timer is already set for and there is nothing to move.
+ * The other direction -- the earliest hold being answered first -- leaves
+ * the timer early, which costs one callback that finds nothing to do.
+ */
+static void hook_pending_arm(void)
+{
+  time_t deadline;
+
+  if (hook_timer_armed)
+    return;
+
+  deadline = hook_pending_deadline();
+  if (!deadline)
+    return;
+
+  timer_add(timer_init(&hook_timer), hook_pending_timeout, 0, TT_ABSOLUTE,
+            deadline);
+  hook_timer_armed = 1;
+}
+
+/** Refuse whatever has waited too long, and set the timer for the rest. */
+static void hook_pending_timeout(struct Event* ev)
+{
+  if (ev_type(ev) != ET_EXPIRE) {
+    if (ev_type(ev) == ET_DESTROY)
+      hook_timer_armed = 0;
+    return;
+  }
+
+  /* An absolute timer is done once it has expired; re-arming is a fresh
+   * timer_add(), the same way check_pings() does it.
+   */
+  hook_timer_armed = 0;
+
+  hook_pending_expire(CurrentTime);
+  hook_pending_arm();
+}
+
+/** Find an outstanding hold by token. */
+static struct HookPending* hook_pending_find(hook_token_t token)
+{
+  struct HookPending* hp;
+
+  for (hp = hook_pending_list; hp; hp = hp->hp_next)
+    if (hp->hp_token == token)
+      return hp;
+
+  return NULL;
+}
+
+/** Hand out a token that is not zero and not already outstanding.
+ *
+ * The counter wraps on a 32-bit unsigned long after four billion holds,
+ * and a reused token would resume somebody else's operation; the list is
+ * a handful of entries, so checking is free and the alternative is a bug
+ * that appears once a year.
+ */
+static hook_token_t hook_token_new(void)
+{
+  do {
+    ++hook_last_token;
+  } while (hook_last_token == 0 || hook_pending_find(hook_last_token));
+
+  return hook_last_token;
+}
+
+/** Unlink and free one hold.  Does not call its completion callback. */
+static void hook_pending_free(struct HookPending* hp)
+{
+  struct HookPending** hp_p;
+
+  for (hp_p = &hook_pending_list; *hp_p; hp_p = &(*hp_p)->hp_next) {
+    if (*hp_p == hp) {
+      *hp_p = hp->hp_next;
+      hook_pending_num--;
+      break;
+    }
+  }
+
+  MyFree(hp->hp_owner);
+  MyFree(hp);
+}
+
+/** Refuse one hold and tell the core.
+ *
+ * The hold is off the list before the callback runs: the callback usually
+ * ends up in exit_client(), which comes back through
+ * hook_pending_cancel(), and it must not find this entry still linked.
+ */
+static void hook_pending_refuse(struct HookPending* hp, const char* reason)
+{
+  HookResumeFn done = hp->hp_done;
+  void* data = hp->hp_data;
+
+  hook_pending_free(hp);
+  (*done)(data, HOOK_DENY, reason);
+}
+
+/** Number of operations currently held by a module. */
+unsigned int hook_pending_count(void)
+{
+  return hook_pending_num;
+}
+
+/** Earliest deadline of any outstanding hold, or 0 if there are none. */
+time_t hook_pending_deadline(void)
+{
+  struct HookPending* hp;
+  time_t earliest = 0;
+
+  for (hp = hook_pending_list; hp; hp = hp->hp_next)
+    if (!earliest || hp->hp_deadline < earliest)
+      earliest = hp->hp_deadline;
+
+  return earliest;
+}
+
+/** Refuse every hold whose deadline has passed.
+ *
+ * One at a time, restarting the walk after each: the completion callback
+ * can exit a client, and that removes further entries from this list.
+ *
+ * @param[in] now Current time.
+ * @return Number of holds that expired.
+ */
+int hook_pending_expire(time_t now)
+{
+  struct HookPending* hp;
+  int expired = 0;
+
+  for (;;) {
+    for (hp = hook_pending_list; hp; hp = hp->hp_next)
+      if (hp->hp_deadline <= now)
+        break;
+
+    if (!hp)
+      break;
+
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s held %s for too long without answering; refusing it",
+              hp->hp_owner, hook_type_name(hp->hp_type));
+
+    hook_pending_refuse(hp, "Timed out waiting for a module");
+    expired++;
+  }
+
+  return expired;
+}
+
+/** Drop every hold on a client, without resuming anything. */
+void hook_pending_cancel(struct Client* client)
+{
+  struct HookPending* hp;
+  struct HookPending* next;
+
+  if (!client)
+    return;
+
+  for (hp = hook_pending_list; hp; hp = next) {
+    next = hp->hp_next;
+    if (hp->hp_client == client)
+      hook_pending_free(hp);
+  }
+}
+
+/** Refuse every hold a module owes an answer for.
+ *
+ * Called when it is unloaded: the callback that was going to resume the
+ * operation is about to be unmapped, so the answer is never coming.
+ */
+static void hook_pending_drop_module(struct ModuleHandle* mod)
+{
+  struct HookPending* hp;
+
+  for (;;) {
+    for (hp = hook_pending_list; hp; hp = hp->hp_next)
+      if (hp->hp_mod == mod)
+        break;
+
+    if (!hp)
+      break;
+
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s was unloaded while holding %s; refusing it",
+              hp->hp_owner, hook_type_name(hp->hp_type));
+
+    hook_pending_refuse(hp, "The module deciding this was unloaded");
+  }
 }
 
 /** Release one hook node. */
@@ -348,6 +595,11 @@ void hook_del_module(struct ModuleHandle* mod)
   struct Hook* h;
   enum HookType type;
 
+  /* First the operations it was holding: the callback that would have
+   * resumed them is in the code about to be unmapped.
+   */
+  hook_pending_drop_module(mod);
+
   for (type = 0; type < HOOK_LAST; type++) {
     for (h_p = &hooks[type].chain; (h = *h_p); ) {
       if (h->h_mod != mod) {
@@ -409,12 +661,13 @@ enum HookResult hook_run(enum HookType type, struct HookContext* ctx)
     result = (*h->h_fn)(ctx, h->h_user);
 
     if (result == HOOK_PENDING) {
-      /* Reserved but not implemented.  Treat it as no opinion rather than
-       * stalling an operation the server has no way to resume.
+      /* This call site has no way back in -- which the module could have
+       * seen from HookContext::hc_token being zero.  Carry on rather than
+       * stall an operation that could never be resumed.
        */
       log_write(LS_SYSTEM, L_ERROR, 0,
-                "Module %s returned HOOK_PENDING from %s, which this server "
-                "does not implement; treating it as HOOK_CONTINUE",
+                "Module %s returned HOOK_PENDING from %s, which cannot be "
+                "suspended; treating it as HOOK_CONTINUE",
                 h->h_owner, hook_type_name(type));
       result = HOOK_CONTINUE;
     }
@@ -429,6 +682,142 @@ enum HookResult hook_run(enum HookType type, struct HookContext* ctx)
     hook_reap();
 
   return result;
+}
+
+/** Run a hook chain that a module may hold.
+ *
+ * The token is minted before the chain runs, because a module has to read
+ * it out of the context on its way to returning #HOOK_PENDING: the answer
+ * comes back long after this function has returned and the context, which
+ * is the caller's stack, is gone.  If nobody suspends, the token is simply
+ * never used.
+ *
+ * @param[in] type Hook point to run.
+ * @param[in,out] ctx Context describing the operation.
+ * @param[in] client Client the operation is about, or NULL.
+ * @param[in] done Called when the answer arrives, or when the hold ends
+ *   for any other reason.
+ * @param[in] data Opaque pointer for \a done.
+ * @param[in] deadline Absolute time after which the hold is refused.
+ * @return #HOOK_PENDING if the operation was suspended, otherwise what
+ *   hook_run() would have returned.
+ */
+enum HookResult hook_run_suspendable(enum HookType type,
+                                     struct HookContext* ctx,
+                                     struct Client* client,
+                                     HookResumeFn done, void* data,
+                                     time_t deadline)
+{
+  enum HookResult result = HOOK_CONTINUE;
+  struct HookPending* hp;
+  struct Hook* held = NULL;
+  struct Hook* h;
+  hook_token_t token;
+
+  assert(type >= 0 && type < HOOK_LAST);
+  assert(0 != ctx);
+  assert(0 != done);
+
+  if (!hooks[type].count)
+    return HOOK_CONTINUE;
+
+  token = hook_token_new();
+  ctx->hc_token = token;
+
+  hooks[type].calls++;
+  hook_run_depth++;
+
+  for (h = hooks[type].chain; h; h = h->h_next) {
+    if (h->h_dead)
+      continue;
+
+    result = (*h->h_fn)(ctx, h->h_user);
+
+    if (result == HOOK_PENDING) {
+      held = h;
+      break;
+    }
+
+    if (result != HOOK_CONTINUE)
+      break;
+  }
+
+  hook_run_depth--;
+
+  if (!hook_run_depth)
+    hook_reap();
+
+  /* The context outlives this call only in the caller's frame, and a token
+   * there would invite a resume for an operation that was never held.
+   */
+  ctx->hc_token = 0;
+
+  if (result != HOOK_PENDING)
+    return result;
+
+  if (hook_pending_num >= HOOK_PENDING_MAX) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Module %s suspended %s with %u operations already held; "
+              "refusing it", held->h_owner, hook_type_name(type),
+              hook_pending_num);
+    return HOOK_DENY;
+  }
+
+  hp = (struct HookPending*) MyCalloc(1, sizeof(struct HookPending));
+  hp->hp_token = token;
+  hp->hp_type = type;
+  hp->hp_mod = held->h_mod;
+  DupString(hp->hp_owner, held->h_owner);
+  hp->hp_client = client;
+  hp->hp_deadline = deadline;
+  hp->hp_done = done;
+  hp->hp_data = data;
+
+  hp->hp_next = hook_pending_list;
+  hook_pending_list = hp;
+  hook_pending_num++;
+
+  hook_pending_arm();
+
+  return HOOK_PENDING;
+}
+
+/** Answer a suspended hook.
+ *
+ * @param[in] token The value the module read from HookContext::hc_token.
+ * @param[in] result #HOOK_DENY to refuse, anything else to proceed.
+ * @param[in] reason Text explaining a refusal, or NULL.
+ * @return Non-zero if the token was outstanding.
+ */
+int hook_resume(hook_token_t token, enum HookResult result,
+                const char* reason)
+{
+  struct HookPending* hp;
+  HookResumeFn done;
+  void* data;
+
+  hp = hook_pending_find(token);
+
+  if (!hp) {
+    /* Not an error the server can do anything about, and not one it can
+     * hide either: the operation this was meant to answer has already
+     * been decided -- the client left, the deadline passed, or the module
+     * answered twice.
+     */
+    log_write(LS_SYSTEM, L_INFO, 0,
+              "hook_resume() for token %lu, which is no longer outstanding",
+              (unsigned long) token);
+    return 0;
+  }
+
+  /* Off the list before the callback runs; see hook_pending_refuse(). */
+  done = hp->hp_done;
+  data = hp->hp_data;
+  hook_pending_free(hp);
+
+  (*done)(data, result, reason);
+
+  return 1;
 }
 
 /** Run a notification hook.
@@ -543,9 +932,14 @@ enum HookResult hook_run_command(enum HookType type, struct HookContext* ctx)
     res = (*h->h_fn)(ctx, h->h_user);
 
     if (res == HOOK_PENDING) {
+      /* A command is dispatched, handled and finished before the next line
+       * is read; holding one would mean holding the line that produced it,
+       * and re-entering a handler halfway through is not something the
+       * server can do.  See hooks.h.
+       */
       log_write(LS_SYSTEM, L_ERROR, 0,
-                "Module %s returned HOOK_PENDING from %s, which this server "
-                "does not implement; treating it as HOOK_CONTINUE",
+                "Module %s returned HOOK_PENDING from %s, which cannot be "
+                "suspended; treating it as HOOK_CONTINUE",
                 h->h_owner, hook_type_name(type));
       res = HOOK_CONTINUE;
     }
@@ -629,7 +1023,20 @@ void hooks_init(void)
     }
   }
 
+  while (hook_pending_list) {
+    struct HookPending* hp = hook_pending_list;
+    hook_pending_list = hp->hp_next;
+    MyFree(hp->hp_owner);
+    MyFree(hp);
+  }
+
+  if (hook_timer_armed) {
+    timer_del(&hook_timer);
+    hook_timer_armed = 0;
+  }
+
   memset(hooks, 0, sizeof(hooks));
   hook_run_depth = 0;
   hook_reap_pending = 0;
+  hook_pending_num = 0;
 }

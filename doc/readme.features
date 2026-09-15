@@ -480,6 +480,21 @@ until the server runs out of memory.
 climbs means either the pool is too small for what is being asked of it
 or something is submitting work faster than any pool could absorb.
 
+HOOK_TIMEOUT
+ * Type: integer
+ * Default: 10
+
+How long, in seconds, a module may hold an operation after returning
+HOOK_PENDING from a hook before the server answers for it.  What it
+bounds is a question asked of something outside the server -- a
+database, a password hash on a worker thread -- so it is short: the
+client at the other end is waiting for it.  When it passes, the
+operation is refused, the same as if the module had said no; a module
+that suspends a veto point is deciding whether something may happen,
+and letting it through because the module never answered would be the
+outcome it was asked to prevent.  Nothing is armed and nothing is
+checked while no module is holding anything.  See doc/readme.modules.
+
 DEFAULT_LANGUAGE
  * Type: string
  * Default: (none)

@@ -861,6 +861,26 @@ int module_del_command_hook(struct ModuleHandle *mod, enum HookType type,
   return hook_del_command(mod, type, cmd, fn);
 }
 
+/** Answer a hook this module suspended.
+ *
+ * The handle is not needed to find the hold -- the token is unique across
+ * the server -- but it is asked for anyway, so that this reads like every
+ * other entry point a module has and so that a module answering from a
+ * context where it has no handle is a compile error rather than a
+ * question about which module was holding what.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] token Value read from HookContext::hc_token.
+ * @param[in] result What the module decided.
+ * @param[in] reason Text explaining a refusal, or NULL.
+ * @return Non-zero if the token was still outstanding.
+ */
+int module_hook_resume(struct ModuleHandle *mod, hook_token_t token,
+                       enum HookResult result, const char *reason) {
+  assert(0 != mod);
+  return hook_resume(token, result, reason);
+}
+
 /** Turn a module name into the path of its shared object.
  *
  * The name is a bare name: it may not contain a directory separator and

@@ -454,9 +454,8 @@ The callback:
   static enum HookResult my_hook(struct HookContext *ctx, void *user);
 
 Return HOOK_CONTINUE to abstain, HOOK_ALLOW to permit and stop the chain,
-or HOOK_DENY to refuse.  HOOK_PENDING is reserved for a future
-asynchronous hook and currently behaves as HOOK_CONTINUE, with a line in
-the log.
+or HOOK_DENY to refuse.  HOOK_PENDING says "hold this, I will answer
+later"; see SUSPENDING A HOOK below.
 
 Hooks of the same type run in priority order, lowest first, with ties
 broken by load order.  The chain stops at the first hook that does not
@@ -516,6 +515,64 @@ Some hook points listed in enum HookType are declared but not yet wired
 into the core -- CHANNEL_PRE_PART, CHANNEL_PRE_MODE, CHANNEL_PRE_TOPIC,
 CHANNEL_DESTROYED and SERVER_SPLIT.  Registering for one of them succeeds
 and simply never fires.
+
+
+SUSPENDING A HOOK
+=================
+
+A module that has to ask something slow -- a database, a password hash on
+a worker thread, a process of its own -- cannot answer from inside the
+hook.  The main thread is the one thread that touches core state, so a
+blocking call there stalls every other client on the server.  Such a hook
+suspends the operation instead:
+
+  static enum HookResult on_register(struct HookContext *ctx, void *user)
+  {
+    if (!ctx->hc_token)              /* cannot wait here; decide now */
+      return HOOK_CONTINUE;
+
+    ask_somebody_else(ctx->hc_token, cli_name(ctx->hc_client));
+    return HOOK_PENDING;
+  }
+
+and answers when it knows:
+
+  module_hook_resume(mod, token, HOOK_ALLOW, NULL);
+  module_hook_resume(mod, token, HOOK_DENY, "that nickname is reserved");
+
+Four things to know:
+
+  * hc_token is non-zero only where the server has a way back in.  Today
+    that is HOOK_CLIENT_PRE_REGISTER, which is held beside ident, DNS, CAP
+    negotiation and the PING cookie -- registration was already something
+    the server waits for.  A HOOK_PENDING anywhere else is logged and read
+    as HOOK_CONTINUE, so a module that does not check hc_token is a module
+    whose policy silently does not apply.
+
+  * Suspending stops the chain, the way HOOK_ALLOW and HOOK_DENY do.  The
+    module that suspended owns the decision.
+
+  * The hold has a deadline -- FEAT_HOOK_TIMEOUT, ten seconds by default
+    -- and expiring counts as HOOK_DENY.  A module that holds a veto point
+    is deciding whether something may happen; letting it through because
+    the module never answered would be the outcome it was asked to
+    prevent.  Unloading the module while it owes an answer ends the same
+    way.
+
+  * Resume from the main thread, once per token.  A worker thread must not
+    call it: the result comes back through the task's wt_done, which the
+    main thread runs, and that is where the answer belongs.  Resuming a
+    token the server no longer holds -- the client quit, the deadline
+    passed -- returns zero and does nothing, which is a normal outcome and
+    not an error to guard against.
+
+The context is the core's stack and is gone by the time the answer
+arrives, so a module copies what it needs out of it before returning
+HOOK_PENDING, and the reason for a refusal travels as an argument of
+module_hook_resume() rather than in hc_reason.
+
+modules/hooks/slowauth.c is the reference: it holds a registration, asks
+a worker thread, and resumes.
 
 
 COMMAND HOOKS
@@ -675,11 +732,11 @@ WHAT A MODULE MUST NOT DO
 
   * Block.  The server is single-threaded and hooks run in the middle of
     handling a client's command.  A hook that waits on a network round
-    trip or a slow disk stalls every other client.  There is no
-    asynchronous hook yet -- see HOOK_PENDING -- so a hook cannot suspend
-    the operation it is judging and answer later.  What it can do is hand
-    the slow part to a worker thread and act on the answer when it
-    arrives; see WORKER THREADS below and doc/readme.workers.
+    trip or a slow disk stalls every other client.  Hand the slow part to
+    a worker thread and act on the answer when it arrives -- see WORKER
+    THREADS below and doc/readme.workers -- and, where the hook point
+    offers a token, suspend the operation while that happens rather than
+    deciding without the answer; see SUSPENDING A HOOK.
 
   * Unload itself.  Unloading from inside a module callback would free the
     code that is executing.  The server refuses and logs it.
@@ -852,6 +909,8 @@ THE EXAMPLES
   hooks/trace_events.c   logs every notification hook; noisy, for
                          debugging a hook point
   hooks/nickpolicy.c     refuses nicknames; a worked veto
+  hooks/slowauth.c       holds a registration while a worker thread
+                         answers for it; the reference for HOOK_PENDING
   hooks/nocaps.c         refuses shouted channel messages and lowercases
                          shouted private ones; a veto and a rewrite
   modes/umode_nopm.c     adds user mode +P and gives it a meaning; the

@@ -398,6 +398,14 @@ static struct FeatureDesc {
   F_I(WORKER_THREADS, FEAT_OPER, 0, worker_feature_notify),
   F_I(WORKER_QUEUE_MAX, FEAT_OPER, 1024, worker_feature_notify),
 
+  /* How long a module may hold an operation after returning HOOK_PENDING
+   * before the server answers for it, in seconds.  It bounds a question
+   * asked of something outside the server -- a database, a hash on a
+   * worker -- so it is short: what it protects is the client waiting at
+   * the other end.  Expiring counts as a refusal; see include/hooks.h.
+   */
+  F_I(HOOK_TIMEOUT, FEAT_OPER, 10, 0),
+
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),
 

@@ -120,9 +120,11 @@ ninguna. Las que este producto necesita (`batch`, `labeled-response`,
 *de este servidor*. Las rutas `server_relay_*` no los disparan. Un módulo de
 historial sólo vería lo que se dijo en su propio servidor.
 
-### 3.6 Los hooks son síncronos
-`HOOK_PENDING` está reservado y sin implementar (`hooks.h`). Autenticar contra
-una base de datos, o verificar un token SSO, hoy bloquearía el servidor entero.
+### 3.6 Los hooks son síncronos (**resuelto**, §5.5)
+Todos los hooks corren en línea en el hilo principal, así que autenticar
+contra una base de datos o verificar un token SSO desde uno bloquearía el
+servidor entero. `HOOK_PENDING` ya deja suspender la operación y contestarla
+más tarde, donde el core sabe volver a entrar. Ver §5.5.
 
 ### 3.7 No hay visibilidad sobre los comandos (**resuelto**, §5.7)
 No existe ningún punto donde un módulo vea «este usuario va a hacer X sobre
@@ -382,15 +384,55 @@ verdad, con el servidor falso de `tests/p10_server.py`.
 El mismo mensaje tiene un solo nombre a los dos lados del enlace, y el cliente
 que no pidió nada no ve nada.
 
-### 5.5 Hooks asíncronos (`HOOK_PENDING`)
-Implementar el valor ya reservado: un hook devuelve `HOOK_PENDING`, la
-operación queda suspendida con su contexto, y el módulo la reanuda con
-`hook_resume(token, HOOK_ALLOW|HOOK_DENY)` cuando su consulta termina.
-Requiere congelar el estado del cliente mientras tanto y un plazo máximo.
-Es lo que hace posible autenticar contra un almacén externo sin parar el
-servidor — y, más adelante, lo que hace viable el aislamiento de módulos
-(§7.7), porque un módulo fuera de proceso responde por fuerza de forma
+### 5.5 Hooks asíncronos (`HOOK_PENDING`) — implementado
+Un hook devuelve `HOOK_PENDING`, la operación queda suspendida y el módulo la
+reanuda con `hook_resume(token, HOOK_ALLOW|HOOK_DENY, motivo)` cuando su
+consulta termina. Es lo que hace posible autenticar contra un almacén externo
+sin parar el servidor — y, más adelante, lo que hace viable el aislamiento de
+módulos (§7.7), porque un módulo fuera de proceso responde por fuerza de forma
 asíncrona.
+
+Cuatro decisiones, y la razón de cada una:
+
+- **Se suspende donde el core sabe volver a entrar, y el módulo lo ve.**
+  `hc_token` en el contexto vale distinto de cero exactamente en esos puntos;
+  en cualquier otro, un `HOOK_PENDING` se anota en el log y se lee como
+  `HOOK_CONTINUE`. Un módulo que no mira `hc_token` es un módulo cuya política
+  no se aplica, pero no en silencio.
+
+- **El único punto suspendible hoy es `HOOK_CLIENT_PRE_REGISTER`**, y por eso
+  se disparó desde `auth_module_check()` en `s_auth.c` y no desde
+  `register_user()`. El registro ya es una máquina de estados que espera
+  —ident, DNS, CAP, la *cookie* de PING, iauth—, así que la retención de un
+  módulo es una bandera más al lado de esas (`AR_MODULE_PENDING`,
+  `AR_MODULE_CHECKED`). Dentro de `register_user()` no habría a dónde volver.
+
+- **Suspender corta la cadena**, igual que `HOOK_ALLOW` y `HOOK_DENY`: el
+  módulo que suspendió se queda con la decisión. Mantener un iterador vivo
+  durante la espera sería guardar punteros a una cadena que una descarga de
+  módulo puede reescribir entre medias.
+
+- **Expirar es denegar.** `FEAT_HOOK_TIMEOUT` (10 s por defecto) pone el
+  plazo, y descargar el módulo mientras debe una respuesta acaba igual. Un
+  módulo que suspende un punto de veto está decidiendo si algo puede ocurrir;
+  dejar pasar la operación porque nunca contestó sería exactamente el
+  resultado que se le pidió evitar. El plazo lo vigila un temporizador propio
+  de `hooks.c` armado sobre el vencimiento más próximo: colgarlo de
+  `check_pings()` no servía, porque esa pasada se programa con minutos de
+  antelación en un servidor ocioso y un plazo que solo se cumple *a veces* no
+  es un plazo.
+
+Mientras un registro está retenido el nick queda congelado (`m_nick.c`
+responde 437): la pregunta que se le hizo al módulo era sobre esa conexión con
+ese nombre. Y si el cliente se va, la retención se descarta sin llamar a
+nadie — no hay a quién denegarle nada, y el *callback* no debe correr sobre un
+`struct Client` que se está liberando.
+
+`modules/hooks/slowauth.c` es el módulo de referencia: retiene el registro,
+pregunta en un *worker* y reanuda. Con ocho clientes conectando a la vez
+contra dos hilos de *worker* y 250 ms de consulta, el servidor los atiende a
+todos en paralelo; con la consulta en el hilo principal serían dos segundos
+con el servidor parado.
 
 ### 5.6 Puntos de extensión que faltan
 - `module_add_isupport()` — tokens en el 005 desde un módulo.
@@ -1016,7 +1058,7 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 
 ## 11. Estado y siguiente paso
 
-**Hecho** — falta una sola pieza para cerrar la fase 0:
+**Hecho** — la fase 0 está cerrada:
 
 - **§5.1, capacidades dinámicas.** Mapa de bits de 128 posiciones, registro en
   `ircd/capab.c`, `module_add_cap()` en el API, ABI 8.
@@ -1027,23 +1069,25 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 - **§5.2, `draft/multiline`.** Los trozos salen por el relay de siempre.
 - **§5.8, criptografía `ircd_*`.** SHA-256, HMAC, AES-256-GCM, BLAKE2b,
   Argon2id y la forma almacenable de una contraseña, con vectores oficiales.
+- **§5.5, hooks asíncronos.** `HOOK_PENDING` con plazo, congelación del nick
+  mientras dura y denegación por defecto al expirar.
 
 Todo lo de protocolo respeta la regla de compatibilidad: un cliente que no
 negocia nada recibe la línea de siempre, byte a byte. Lo de criptografía no
 cambia nada de lo que ve un cliente todavía: son primitivas, y su primer
 consumidor es la identidad (§6).
 
-**Queda:**
+Queda pendiente de §5.6 el resto de puntos de extensión —
+`module_add_isupport()`, `module_add_feature()`, `module_add_config_block()`,
+`module_add_numeric()`—, que no bloquean la fase 1 y se pagan cuando el primer
+módulo los necesite.
 
-1. **Hooks asíncronos** (§5.5): implementar el `HOOK_PENDING` que ya está
-   reservado en el enum. Suspender una operación con su contexto y reanudarla
-   cuando el módulo responda. Es lo más delicado de la fase — hay que congelar
-   el estado del cliente mientras tanto y poner un plazo máximo — y es lo que
-   abre F1 (autenticar contra una base de datos sin parar el servidor, con el
-   hash en un *worker*) y F7 (un módulo fuera de proceso responde por fuerza de
-   forma asíncrona).
-
-Con eso la fase 0 queda cerrada y empieza la identidad (§6).
+**Siguiente paso: la identidad (§6).** Es lo que consume lo que la fase 0 dejó
+puesto: `ircd_pwhash_*` en un *worker* para verificar sin parar el servidor,
+`HOOK_PENDING` para retener el registro mientras esa verificación ocurre, y
+`msgid`/`batch` para lo que venga después. Tendrá su propia propuesta, con el
+modelo de correo → hasta tres cuentas-nickname y el regreso de SASL y del
+comando `ACCOUNT` como piezas de core.
 
 Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
 necesitan: el modelo de identidad (§6), el aislamiento de módulos (§7.7) y,

@@ -113,6 +113,9 @@ enum Feature {
   FEAT_WORKER_THREADS,
   FEAT_WORKER_QUEUE_MAX,
 
+  /* Modules (see doc/readme.modules) */
+  FEAT_HOOK_TIMEOUT,
+
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,
 

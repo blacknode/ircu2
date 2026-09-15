@@ -388,6 +388,26 @@ another server already applied would desync this one); `POST` is skipped after
 `CPTR_KILLED` and after a veto; `hcc_parv` is read-only; recursion is capped.
 `modules/hooks/cmdaudit.c` is the reference module.
 
+**Suspending a hook** (`HOOK_PENDING`, `hook_run_suspendable()`,
+`hook_resume()`). A hook that has to ask something slow — a database, an
+Argon2 verification on a worker — holds the operation instead of answering.
+It works only where the core has a way back in, and a module sees exactly
+where that is: `hc_token` is non-zero there and zero everywhere else, where a
+`HOOK_PENDING` is logged and read as `HOOK_CONTINUE`. Today the one such point
+is `HOOK_CLIENT_PRE_REGISTER`, which is why it fires from `auth_module_check()`
+in `s_auth.c` and not from `register_user()`: registration is already a state
+machine that waits (ident, DNS, CAP, the PING cookie, iauth), so a module hold
+is one more flag beside them (`AR_MODULE_PENDING`/`AR_MODULE_CHECKED`) — inside
+`register_user()` there would be nothing to come back to. Suspending stops the
+chain; the hold is dropped when the client leaves, and **refused** when
+`FEAT_HOOK_TIMEOUT` passes or the module is unloaded still owing an answer
+(failing open would be the outcome the veto was asked to prevent). `hooks.c`
+keeps the list and arms one absolute timer over the earliest deadline — a ride
+on `check_pings()` was wrong because that pass is scheduled minutes ahead on an
+idle server. While a registration is held the nick is frozen (`m_nick.c` answers
+437), because the question the module was asked was about that name.
+`modules/hooks/slowauth.c` is the reference module.
+
 **Design docs.** `doc/proposals/` holds the accepted designs for the module API
 (001), the multithreading direction (002, in Spanish — option B is what
 `ircd/worker.c` implements), the channel modes by module (003, in Spanish),

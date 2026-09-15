@@ -97,15 +97,18 @@ enum HookResult {
   HOOK_ALLOW,      /**< Permit, and stop the chain. */
   HOOK_DENY,       /**< Refuse, and stop the chain.  The server aborts. */
 
-  /* Reserved for a future asynchronous hook: a module returning this would
-   * be saying "hold this operation, I will answer later".  It is not
-   * implemented -- returning it today is treated as HOOK_CONTINUE and
-   * logged -- but the value is spoken for so that adding asynchronous
-   * hooks later does not renumber this enum and break every module built
-   * against it.
+  /* "Hold this operation, I will answer later."  Honoured only where the
+   * server has a way back in, which a module recognises by
+   * HookContext::hc_token being non-zero; everywhere else it is logged and
+   * treated as HOOK_CONTINUE, because stalling an operation that can never
+   * be resumed would hang the client forever.  See "Suspending a hook"
+   * below.
    */
-  HOOK_PENDING     /**< Reserved; not yet implemented. */
+  HOOK_PENDING     /**< Suspend; answer later with hook_resume(). */
 };
+
+/** What hook_resume() is called with.  Zero is never a valid token. */
+typedef unsigned long hook_token_t;
 
 /** What a command hook is told about the command being dispatched.
  *
@@ -154,6 +157,15 @@ struct HookContext {
    * #HOOK_COMMAND_POST; NULL at every other hook point.
    */
   const struct HookCommand* hc_command;
+
+  /** Token for hook_resume(), or 0 if this point cannot be suspended.
+   *
+   * A module reads it *before* returning #HOOK_PENDING and keeps it; the
+   * context is the caller's stack and is gone by the time the answer
+   * arrives, which is why the reason travels as an argument of
+   * hook_resume() rather than in HookContext::hc_reason.
+   */
+  hook_token_t    hc_token;
 
   /** Numeric to send when denying, or 0 to let the server pick. */
   int             hc_numeric;
@@ -333,6 +345,111 @@ extern void hook_deny_reply(struct Client* to, const struct HookContext* ctx,
  * which is the normal case on a server with no modules loaded.
  */
 #define hook_is_active(type) (hook_count(type) > 0)
+
+/*
+ * Suspending a hook.
+ *
+ * A module that has to ask something slow -- a database, a password hash on
+ * a worker thread, a process of its own -- cannot answer from inside the
+ * hook: the main thread is the one thread that touches core state, and a
+ * blocking call there stalls every other client on the server.  Such a
+ * module reads HookContext::hc_token, returns #HOOK_PENDING, and calls
+ * hook_resume() with that token when it knows the answer.
+ *
+ * Three rules, and the reason for each:
+ *
+ *  - Only a call site that passed hook_run_suspendable() can be held, and a
+ *    module knows which those are: hc_token is non-zero exactly there.  A
+ *    #HOOK_PENDING anywhere else is logged and read as #HOOK_CONTINUE.  The
+ *    server cannot invent a way to re-enter an operation it has already
+ *    half-applied.
+ *
+ *  - Suspending stops the chain, like #HOOK_ALLOW and #HOOK_DENY do.  The
+ *    module that suspended owns the decision; the hooks behind it do not
+ *    run.  Keeping an iterator alive across a suspension would mean holding
+ *    pointers into a chain that a module unload may rewrite in between.
+ *
+ *  - The hold has a deadline, and expiring counts as #HOOK_DENY.  A module
+ *    that suspends a veto point is deciding whether something may happen;
+ *    letting it through because the module never answered would be exactly
+ *    the outcome it was asked to prevent.  Unloading the module while it
+ *    owes an answer ends the same way.
+ *
+ * All of this runs on the main thread.  A worker thread must never call
+ * hook_resume(): it hands its result back through the worker's completion
+ * callback, which the main thread runs, and that is where the resume goes.
+ */
+
+/** Called by the server when a suspended operation gets its answer.
+ *
+ * @param[in] data Opaque pointer the call site passed to
+ *   hook_run_suspendable().
+ * @param[in] result #HOOK_DENY to refuse; anything else to proceed.
+ * @param[in] reason Why it was refused, or NULL.
+ */
+typedef void (*HookResumeFn)(void* data, enum HookResult result,
+                             const char* reason);
+
+/** Run a hook chain that a module may hold.
+ *
+ * Identical to hook_run() except that a #HOOK_PENDING is honoured: the
+ * server records what it needs to come back, and the caller must return
+ * without applying the operation.
+ *
+ * @param[in] type Hook point to run.
+ * @param[in,out] ctx Context; HookContext::hc_token is set by this call.
+ * @param[in] client Client the operation is about, for cancellation when it
+ *   exits.  May be NULL.
+ * @param[in] done Called with \a data when the answer arrives, when the
+ *   deadline passes, or when the module that suspended goes away.  Never
+ *   called before this function returns.
+ * @param[in] data Opaque pointer for \a done.
+ * @param[in] deadline Absolute time (CurrentTime + n) after which the hold
+ *   is refused.  Must be in the future.
+ * @return #HOOK_PENDING if the operation was suspended, otherwise what
+ *   hook_run() would have returned.
+ */
+extern enum HookResult hook_run_suspendable(enum HookType type,
+                                            struct HookContext* ctx,
+                                            struct Client* client,
+                                            HookResumeFn done, void* data,
+                                            time_t deadline);
+
+/** Answer a suspended hook.
+ *
+ * Called by the module that returned #HOOK_PENDING, on the main thread,
+ * exactly once per token.  A token that is not outstanding -- because the
+ * client left, the deadline passed or the answer was already given -- is
+ * not an error: the module is told so and the call does nothing.
+ *
+ * @param[in] token The value read from HookContext::hc_token.
+ * @param[in] result #HOOK_DENY to refuse the operation, #HOOK_ALLOW or
+ *   #HOOK_CONTINUE to let it proceed.
+ * @param[in] reason Text to explain a refusal, or NULL.
+ * @return Non-zero if the token was outstanding and the operation resumed.
+ */
+extern int hook_resume(hook_token_t token, enum HookResult result,
+                       const char* reason);
+
+/** Drop every hold on a client, without resuming anything.
+ *
+ * Called when the client is leaving: the operation it was waiting for no
+ * longer has anybody to apply it to, and the completion callback must not
+ * run on a client that is being freed.
+ */
+extern void hook_pending_cancel(struct Client* client);
+
+/** Refuse every hold whose deadline has passed.
+ * @param[in] now Current time.
+ * @return Number of holds that expired.
+ */
+extern int hook_pending_expire(time_t now);
+
+/** Earliest deadline of any outstanding hold, or 0 if there are none. */
+extern time_t hook_pending_deadline(void);
+
+/** Number of operations currently held by a module. */
+extern unsigned int hook_pending_count(void);
 
 extern void hooks_init(void);
 

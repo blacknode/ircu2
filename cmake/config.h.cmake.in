@@ -87,8 +87,18 @@
 /* Enable debugging code */
 #cmakedefine DEBUGMODE 1
 
-/* Disable assertions */
+/* Disable assertions.
+ *
+ * Not for the unit tests: a test is its assertions, and with NDEBUG an
+ * assert(f(x)) does not merely stop checking, it stops calling f(x), so
+ * the cases after it run against state that was never set up.  The test
+ * targets define IRCU_TEST_KEEP_ASSERTS (see ircd/test/CMakeLists.txt) so
+ * that a build configured with IRCU_ENABLE_ASSERTS=OFF still tests
+ * something.
+ */
+#ifndef IRCU_TEST_KEEP_ASSERTS
 #cmakedefine NDEBUG 1
+#endif
 
 /* Force inlining for a few critical functions */
 #cmakedefine FORCEINLINE 1

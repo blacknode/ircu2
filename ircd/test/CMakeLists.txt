@@ -30,6 +30,14 @@ function(add_ircu_test name)
   target_include_directories(${name} PRIVATE
     "${PROJECT_BINARY_DIR}/ircd")   # chattr.tab.c
   target_link_libraries(${name} PRIVATE ircu_config ${IRCU_SYSTEM_LIBRARIES})
+  # A test is its assertions.  IRCU_ENABLE_ASSERTS=OFF puts NDEBUG in
+  # config.h, and with it an assert(f(x)) does not merely stop checking --
+  # it stops calling f(x), so every case after it runs against state that
+  # was never set up.  That is how the `release` preset turned capab_t into
+  # a null dereference.  config.h honours this definition and leaves NDEBUG
+  # alone, so the tests keep their asserts whatever the build is configured
+  # for; -UNDEBUG would not do it, because NDEBUG arrives from a header.
+  target_compile_definitions(${name} PRIVATE IRCU_TEST_KEEP_ASSERTS)
   target_compile_options(${name} PRIVATE -g -Wall)
   add_dependencies(${name} ircu_chattr)
   add_test(NAME ${name} COMMAND ${name})

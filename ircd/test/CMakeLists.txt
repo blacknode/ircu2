@@ -87,6 +87,12 @@ add_ircu_test(msgq_excise_t
 
 add_ircu_test(cache_t
   "${IRCU_IRCD_DIR}/cache.c"
+  "${IRCU_IRCD_DIR}/http.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(http_t
+  "${IRCU_IRCD_DIR}/http.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
@@ -189,6 +195,7 @@ add_ircu_test(module_t
   "${IRCU_IRCD_DIR}/module.c"
   "${IRCU_IRCD_DIR}/account.c"
   "${IRCU_IRCD_DIR}/cache.c"
+  "${IRCU_IRCD_DIR}/http.c"
   "${IRCU_IRCD_DIR}/ircd_base64.c"
   "${IRCU_IRCD_DIR}/ircd_sha256.c"
   "${IRCU_IRCD_DIR}/sasl.c"

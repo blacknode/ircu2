@@ -128,6 +128,9 @@ enum Feature {
   FEAT_HISTORY_EXPORT_DIR,
   FEAT_HISTORY_REDACT_WINDOW,
 
+  /* HTTP (see include/http.h, doc/readme.http) */
+  FEAT_HTTP_TIMEOUT,
+
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,
 

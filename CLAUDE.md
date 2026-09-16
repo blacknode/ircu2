@@ -501,6 +501,27 @@ driver: one dedicated worker per pooled connection, always `PQsendPrepare` +
 `PQsendQueryPrepared` (never `PQexec`), with a hard deadline capped at
 `DB_TIMEOUT_MAX_MS` (5s) enforced by `poll()` rather than by libpq.
 
+**HTTP** (`include/http.h`, `ircd/http.c`, `doc/readme.http`, proposal 006
+§7.4). The `db.h` arrangement a third time: the core holds the register,
+one module is the *provider* (it owns the listener, the parsing and its
+own TLS, and does the network work on its own thread), and other modules
+claim **routes** on it. A consumer **degrades, it does not guess** — it
+checks `http_available()` at load, says so in the log, and switches that
+part of itself off; a route may be claimed before any provider exists,
+because making load order matter would make it part of the configuration.
+Routing is exact match, or a path ending in `/` matching everything under
+it, longest prefix winning — deliberately the whole language, since a
+pattern syntax is something every consumer would have to learn and every
+provider agree about. A handler runs in the main thread and **does not
+have to answer there**: it keeps the `http_req_t` and calls
+`http_respond()` later, under a deadline (`FEAT_HTTP_TIMEOUT`) that
+answers 504 for it; answering after that is ignored, not fatal.
+`HTTP_BODY_MAX` bounds what crosses into the event loop, not what HTTP can
+transfer — a big upload is the provider's to stream. Unloading a consumer
+hands its in-flight requests back with `hp_cancel()`; unloading the
+provider drops them silently, and the routes wait for another. `http_t`
+covers all of it without a socket.
+
 **Cache** (`include/cache.h`, `ircd/cache.c`, `doc/readme.cache`, proposal 007
 §3.3). A key-value store in front of the database, with the `Database{}`
 arrangement exactly: the core holds the `Redis{}` block and the calls in
@@ -809,7 +830,8 @@ module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
 `doc/readme.sasl` (how a user earns `+r`: AUTHENTICATE, `ACCOUNT`, NickServ
 and the provider behind all three), `doc/readme.modules`,
 `doc/readme.workers`,
-`doc/readme.database`, `doc/readme.migrations`, `doc/readme.history`,
+`doc/readme.database`, `doc/readme.http`,
+`doc/readme.migrations`, `doc/readme.history`,
 `doc/readme.richtext`, `doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
 generates reference docs).

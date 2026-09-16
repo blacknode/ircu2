@@ -612,6 +612,17 @@ Channel operators are not bounded by it, because moderating is not
 undoing and a moderator who had to be quick about it would not be one.
 Neither are operators with history_admin.  See doc/readme.history.
 
+HTTP_TIMEOUT
+ * Type: integer
+ * Default: 5000
+
+How long, in milliseconds, a route's handler has to answer before the
+core answers 504 for it.  Long enough for a database and a worker, short
+enough that a client is not holding a socket open for a module that
+forgot; clamped to 30 seconds, past which the client has given up
+anyway.  A handler that answers after the deadline is ignored rather than
+refused: it has been slow, not wrong.  See doc/readme.http.
+
 DEFAULT_LANGUAGE
  * Type: string
  * Default: (none)

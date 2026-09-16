@@ -436,6 +436,11 @@ static struct FeatureDesc {
    * operators are not bounded by it -- moderating is not undoing. */
   F_I(HISTORY_REDACT_WINDOW, FEAT_OPER, 3600, 0),
 
+  /* How long a route's handler has to answer, in milliseconds.  Five
+   * seconds: long enough for a database and a worker, short enough that a
+   * client is not holding a socket open for a module that forgot. */
+  F_I(HTTP_TIMEOUT, FEAT_OPER, 5000, 0),
+
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),
 

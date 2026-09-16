@@ -1,0 +1,131 @@
+HTTP, as a thing a module provides and other modules use
+========================================================
+
+Phase 5 of doc/proposals/006-comunicaciones-unificadas.md.  The core holds
+a register; a module serves the HTTP; other modules ask it for routes.
+
+This is the same arrangement as doc/readme.database and doc/readme.cache,
+and for the same two reasons.  Modules are RTLD_LOCAL and cannot resolve
+each other's symbols, so the core has to be the meeting point between
+whoever serves and whoever wants to be served; and holding the requests in
+flight in the core is what lets either module be unloaded with some
+outstanding.
+
+The core knows nothing about sockets, TLS, chunked encoding or keep-alive.
+It knows there is a provider that might not be there, a set of routes
+modules have asked for, and a request that is a method, a path, some
+headers and a body.
+
+
+THE TWO SIDES
+=============
+
+The **provider** owns the listener, the parsing and its own TLS, and does
+the network work on its own thread.  What reaches the main thread is a
+request that is already parsed.  It registers with
+
+  http_register_provider(mod, &provider)
+
+and hands the core each request with http_dispatch().  One provider at a
+time: a second is refused rather than replacing the first, because two
+things owning the same socket is not a state to arrive at silently.
+
+The **consumer** claims routes:
+
+  http_add_route(mod, "POST", "/upload", handle_upload, self)
+
+and checks, when it loads:
+
+  if (!http_available())
+    /* say so in the log; switch that part off; carry on */
+
+It does not fail to load and it does not wait.  The part of it that needed
+HTTP is off and the rest works.  That is the contract db.h has too, and it
+is what keeps "the HTTP module is not loaded" from being an outage.
+
+A route may be claimed before any provider exists.  The module that wants
+one loads first as often as not, and making that an error would make load
+order part of the configuration.
+
+
+ROUTING
+=======
+
+A path ending in `/` matches everything under it; anything else matches
+exactly.  An exact match beats a prefix, and a longer prefix beats a
+shorter one:
+
+  /files/index        matches only that
+  /files/thumb/       matches /files/thumb/anything
+  /files/             matches everything else under /files/
+
+That is the whole routing language, on purpose.  A pattern syntax is a
+thing every consumer would have to learn and every provider would have to
+agree about, and nothing here has needed one.
+
+The method is part of the route.  Two claims on the same method and path
+are refused: two handlers for one route is a question with no right
+answer.
+
+Nothing claimed means the core never owned the request: http_dispatch()
+says so, the provider sends its own 404, and there is nothing to clean up.
+
+
+ANSWERING LATER
+===============
+
+A handler runs in the main thread and does **not** have to answer there.
+Authorising an upload means asking a database, and a handler that blocked
+for it would stop every client on the server.  So it is given an
+http_req_t and it either
+
+  - fills in the response and returns non-zero, or
+  - keeps the identifier, returns zero, and calls http_respond() when the
+    answer arrives.
+
+Every request has a deadline -- HTTP_TIMEOUT, five seconds by default --
+on a timer of the core's own.  One that passes is answered 504 and a later
+answer is dropped.  A client holding a socket open because a module forgot
+about it is the failure the deadline exists to bound; answering late is
+not a crash, because a module that answers late has been slow rather than
+wrong.
+
+
+WHAT UNLOADING TAKES
+====================
+
+A consumer unloading takes its routes, and the requests it will never
+answer are handed back to the provider -- hp_cancel() -- so the connection
+is let go rather than held to the deadline.
+
+The provider unloading takes every request in flight with it, silently:
+there is nobody left to answer through.  The consumers' routes stay, and
+wait for another provider.
+
+
+LIMITS
+======
+
+  HTTP_BODY_MAX       65536   what crosses into the main thread
+  HTTP_HEADERS_MAX    32      headers in either direction
+  HTTP_PATH_MAX       255
+  HTTP_ROUTES_MAX     64      per module
+
+HTTP_BODY_MAX is not a limit on what HTTP can transfer.  It is a limit on
+what the event loop holds: a file upload is streamed to storage by the
+provider and its handler is given the metadata, because a hundred
+megabytes buffered here would be a hundred megabytes every other client
+waits behind.
+
+
+WHAT THIS IS FOR
+================
+
+File upload and download with object storage behind it, with the ircd
+issuing a short-lived token -- HMAC-SHA256 or AES-256-GCM from
+include/ircd_sha256.h and include/ircd_aes.h -- bound to the account and
+the channel, which the provider validates.  Incoming webhooks and a REST
+API for integrations are routes on the same provider.
+
+None of that is in the tree yet.  What is here is the register, which is
+the part that has to exist before any of it can be written as a module.

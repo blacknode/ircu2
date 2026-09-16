@@ -28,6 +28,7 @@
 #include "client.h"
 #include "db.h"
 #include "hooks.h"
+#include "http.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_log.h"
@@ -1375,6 +1376,7 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    */
   db_drop_module(mod);
   cache_drop_module(mod);
+  http_drop_module(mod);
   /* Modes last: taking a mode off a user or a channel announces a MODE
    * change, and the module's own hooks are already detached by then, so
    * none of its code runs on the way out.

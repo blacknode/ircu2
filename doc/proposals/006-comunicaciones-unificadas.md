@@ -997,6 +997,32 @@ un tag que miente es peor que ningún tag (`msg_tag_suppress()`).
 **Decisión tomada: HTTP es un módulo**, y un módulo que quiera usarlo debe
 comprobar que está disponible.
 
+**El registro del core está implementado** (`include/http.h`, `ircd/http.c`,
+`doc/readme.http`, `http_t`). La interfaz quedó como estaba escrita aquí,
+con tres cosas que el diseño no decía y hubo que decidir:
+
+- **Un manejador no tiene que contestar en el hilo principal.** Autorizar
+  una subida es preguntarle a una base de datos, y un manejador que se
+  bloqueara para eso pararía a todos los clientes del servidor. Así que
+  recibe un `http_req_t` y o rellena la respuesta y devuelve distinto de
+  cero, o se queda el identificador y llama a `http_respond()` cuando
+  tenga la respuesta. Con plazo (`HTTP_TIMEOUT`): el que se pasa se
+  contesta 504, y una respuesta posterior se ignora —quien contesta tarde
+  ha sido lento, no ha hecho nada mal.
+- **El enrutado es coincidencia exacta, o un camino acabado en `/` que
+  toma todo lo que cuelga de él**, ganando el prefijo más largo. Eso es
+  todo el lenguaje, a propósito: una sintaxis de patrones es algo que
+  todos los consumidores tendrían que aprender y todos los proveedores que
+  acordar.
+- **`HTTP_BODY_MAX` no limita lo que HTTP puede transferir**, limita lo
+  que entra en el hilo principal. Una subida grande la va guardando el
+  proveedor y a su manejador le llegan los metadatos, porque cien
+  megabytes almacenados aquí son cien megabytes que el resto de los
+  clientes esperan.
+
+Falta el proveedor (`modules/workers/http/`) y, encima de él, los
+ficheros.
+
 Por §4, un módulo no puede llamar a otro. La forma correcta es la misma que la
 de la base de datos, y va en el core como interfaz delgada:
 

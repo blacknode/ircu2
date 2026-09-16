@@ -108,6 +108,7 @@ set(IRCU_SOURCES
   batch.c
   bot.c
   cache.c
+  http.c
   capab.c
   chan_modes.c
   channel.c

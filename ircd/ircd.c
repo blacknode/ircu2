@@ -36,6 +36,7 @@
 #include "db.h"
 #include "destruct_event.h"
 #include "hash.h"
+#include "http.h"
 #include "ircd_alloc.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
@@ -904,6 +905,7 @@ int main(int argc, char **argv) {
   migration_shutdown();
   db_shutdown();
   cache_shutdown();
+  http_shutdown();
   i18n_close();
 
   return 0;

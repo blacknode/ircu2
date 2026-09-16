@@ -245,8 +245,15 @@ class IRCClient:
             else:
                 self._buffer.append(msg)
 
-        # Request the caps the server supports
-        available = [c for c in caps if c in ls_caps]
+        # Request the caps the server supports.
+        #
+        # Under CAP LS 302 an entry may carry a value -- "sasl=PLAIN",
+        # "draft/chathistory=100", "blacknode/richtext=markdown" -- and the
+        # name is what a client asks for.  Comparing whole entries silently
+        # dropped every capability that had one, so a test could negotiate
+        # nothing and only notice when it tested something that needed it.
+        ls_names = {entry.split("=", 1)[0] for entry in ls_caps}
+        available = [c for c in caps if c.split("=", 1)[0] in ls_names]
         if not available:
             await self.send("CAP END")
             return []

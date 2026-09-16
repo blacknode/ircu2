@@ -94,10 +94,13 @@ All changes go through `do_user_mode()` in `ircd/s_user.c` (`set_user_mode()`
 for a user's own modes, `set_user_mode_on()` for a server or `+S` bot changing
 somebody else's — `m_mode.c` decides who may reach it).
 
-**Accounting** (`doc/readme.accounting`). There are no account names, ids or
-flags and no `ACCOUNT` command. Umode `+r` means "identified to the nick in
-use", `cli_user()->account` is that nick, and only a server, a `+S` service bot
-(`bot_set_user_mode()`, never on an oper) or a NICK burst sets or clears it;
+**Accounting** (`doc/readme.accounting` for the model, `doc/readme.sasl` for
+how a user earns `+r`). There are no account names, ids or flags: an account
+**is** a nickname. Umode `+r` means "identified to the nick in use",
+`cli_user()->account` is that nick, and only a server, a `+S` service bot
+(`bot_set_user_mode()`, never on an oper), a NICK burst or the core itself
+(`account_login()`, when the core is what checked the credential) sets or
+clears it;
 a nick change clears it on every server without anything on the wire, and the
 `+r` letter takes no parameter in P10. WHOIS reports it as 307. Every user is
 `+x` from `register_user()` on and cannot remove it: `hide_hostmask()` derives
@@ -107,9 +110,10 @@ the visible host from the IP with the TEA cipher in `ircd/ircd_vhost.c`
 chars>"; }` block, which must be identical on every server; bots (`+B`/`+S`)
 keep their configured host. account-notify, account-tag, extended-join,
 WHOX `%a` and the HOST_HIDING/HIDDEN_HOST features are gone and stay gone —
-with an account that *is* the nick, the first three repeat the prefix. SASL is
-coming back as phase 1 of the roadmap (proposal 007); `doc/readme.accounting`
-still describes the state before it and is rewritten when that phase closes.
+with an account that *is* the nick, the first three repeat the prefix. SASL
+and `ACCOUNT` came back with phase 1 of the roadmap (proposal 007) and are
+documented in `doc/readme.sasl`; the `AC` P10 token did not, and is left
+unclaimed on purpose.
 
 **Accounts** (`include/account.h`, `ircd/account.c` + `ircd/account_user.c`,
 proposal 007). An account **is** a nickname, so `+r` keeps its literal meaning
@@ -657,7 +661,10 @@ SASL, `ACCOUNT`, an account that *is* a nickname, the `guest-*` rename, the
 freeze, Redis in front of PostgreSQL, and the split between the `identity`
 module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
 `User::email` and `+f` are its first two slices; §11 has the rest in order. Other useful docs:
-`doc/p10.html` (protocol), `doc/readme.modules`, `doc/readme.workers`,
+`doc/p10.html` (protocol), `doc/readme.accounting` (the identity model),
+`doc/readme.sasl` (how a user earns `+r`: AUTHENTICATE, `ACCOUNT`, NickServ
+and the provider behind all three), `doc/readme.modules`,
+`doc/readme.workers`,
 `doc/readme.database`, `doc/readme.migrations`, `doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
 generates reference docs).

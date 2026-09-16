@@ -744,10 +744,19 @@ Cada punto compila, pasa pruebas y se sube por separado.
    declara. `REGISTER`, `PASSWORD` y `DROP` escriben por `ap_change()`, y
    los cerrojos están en la migración v2 (§9.1). Queda la verificación del
    correo, que no toca `struct Client` y puede ir cuando haga falta.
-9. **Documentación y pruebas** — `doc/readme.accounting` reescrito entero,
-   `doc/readme.sasl`, y las de integración: que el email no cruza el enlace,
-   que un congelado no puede hacer nada, que el `guest-*` ocurre en los cuatro
-   sitios en que debe ocurrir.
+9. **Documentación y pruebas** *(hecho)* — `doc/readme.accounting` reescrito,
+   `doc/readme.sasl` nuevo, y `tests/identity/`: el congelado y lo que le
+   bloquea, el `+r` que lo levanta, el renombrado a `guest-*`, lo que
+   `ACCOUNT` rechaza, la capacidad `sasl` sin proveedor que la conteste, y
+   que ninguna dirección llega en un burst.
+
+   Lo que **no** cubre una prueba de integración es todo lo que necesita un
+   proveedor de verdad —un login de punta a punta, la dirección en el 691,
+   el listado de cuentas—, porque eso necesita un contenedor de PostgreSQL
+   que las topologías de prueba todavía no tienen. Eso está comprobado a
+   mano, contra un PostgreSQL y un Redis reales, y por debajo del protocolo
+   en `ircd/test/*_t.c`. Añadir esa topología es trabajo aparte, y se hace
+   cuando toque.
 
 ---
 

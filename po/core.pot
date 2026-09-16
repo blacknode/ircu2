@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ircu2\n"
 "Report-Msgid-Bugs-To: coder-com@undernet.org\n"
-"POT-Creation-Date: 2026-09-16 09:21+0000\n"
+"POT-Creation-Date: 2026-09-16 10:24+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -233,32 +233,32 @@ msgstr ""
 msgid "available"
 msgstr ""
 
-#: ircd/m_account.c:172
+#: ircd/m_account.c:175
 #, no-c-format
 msgid "that is not an address"
 msgstr ""
 
-#: ircd/m_account.c:176
+#: ircd/m_account.c:179
 #, no-c-format
 msgid "that password is too long"
 msgstr ""
 
-#: ircd/m_account.c:200
+#: ircd/m_account.c:203
 #, no-c-format
 msgid "another login is already under way"
 msgstr ""
 
-#: ircd/m_account.c:204
+#: ircd/m_account.c:207
 #, no-c-format
 msgid "you have already authenticated"
 msgstr ""
 
-#: ircd/m_account.c:208
+#: ircd/m_account.c:211
 #, no-c-format
 msgid "too many failed attempts on this connection"
 msgstr ""
 
-#: ircd/m_account.c:212
+#: ircd/m_account.c:215
 #, no-c-format
 msgid "this server will not take a password over an unencrypted connection"
 msgstr ""

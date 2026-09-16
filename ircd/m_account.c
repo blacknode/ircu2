@@ -164,8 +164,11 @@ static int account_do_login(struct Client* cptr, int parc, char* parv[])
   enum SaslLogin how;
   int res;
 
+  /* The command, not "ACCOUNT LOGIN": 461 takes one parameter and a
+   * space in it makes two, which a client parses as two.  Every other
+   * command in the server names itself here and nothing more. */
   if (parc < 4 || EmptyString(parv[2]) || EmptyString(parv[3]))
-    return send_reply(cptr, ERR_NEEDMOREPARAMS, "ACCOUNT LOGIN");
+    return send_reply(cptr, ERR_NEEDMOREPARAMS, MSG_ACCOUNT);
 
   if (strlen(parv[2]) > ACCOUNT_EMAIL_MAX)
     return send_reply(cptr, ERR_ACCOUNTFAIL,
@@ -276,8 +279,6 @@ static int account_do_list(struct Client* cptr)
  */
 int m_account(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 {
-  char sub[32];
-
   assert(0 != cptr);
   assert(cptr == sptr);
 
@@ -294,8 +295,8 @@ int m_account(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     return account_do_list(cptr);
 
   /* 421 rather than a failed authentication: nothing was attempted, and
-   * the three subcommands are the whole command. */
-  ircd_snprintf(0, sub, sizeof(sub), "ACCOUNT %s", parv[1]);
-
-  return send_reply(cptr, ERR_UNKNOWNCOMMAND, sub);
+   * the three subcommands are the whole command.  The subcommand alone
+   * is the parameter, the way ERR_INVALIDCAPCMD names a CAP subcommand:
+   * one token, because that is what the numeric is. */
+  return send_reply(cptr, ERR_UNKNOWNCOMMAND, parv[1]);
 }

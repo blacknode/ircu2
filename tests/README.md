@@ -95,6 +95,10 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
   accounting/
     test_accounting.py       # umode +r (server / +S bot / burst), the hidden host
                              # every user carries, who may change whose modes
+  identity/
+    test_identity.py         # umode +f and what it blocks, +r clearing it, the
+                             # guest-* rename, what ACCOUNT refuses, the sasl
+                             # capability with no provider to answer for it
   i18n/
     test_language.py         # LANGUAGE, draft/languages, translated numerics from
                              # po/es.po (the image installs it), the LG token

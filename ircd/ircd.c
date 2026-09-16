@@ -28,6 +28,7 @@
 #include "capab.h"
 #include "batch.h"
 #include "account.h"
+#include "cache.h"
 #include "channel.h"
 #include "class.h"
 #include "client.h"
@@ -902,6 +903,7 @@ int main(int argc, char **argv) {
   worker_shutdown();
   migration_shutdown();
   db_shutdown();
+  cache_shutdown();
   i18n_close();
 
   return 0;

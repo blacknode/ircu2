@@ -53,6 +53,9 @@
 #ifndef INCLUDED_account_h
 #include "account.h"    /* struct AccountProvider, account_id_t */
 #endif
+#ifndef INCLUDED_cache_h
+#include "cache.h"      /* struct CacheDriver, cache_id_t */
+#endif
 #ifndef INCLUDED_worker_h
 #include "worker.h"     /* struct WorkTask, WorkerMainFn */
 #endif
@@ -70,7 +73,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 11
+#define IRCU_MODULE_ABI 12
 
 /** Description of a module, exported by the shared object.
  *
@@ -547,6 +550,40 @@ extern int module_add_account_provider(struct ModuleHandle* mod,
  * @param[in] mod Handle passed to mi_init.
  */
 extern void module_del_account_provider(struct ModuleHandle* mod);
+
+/*
+ * The cache driver, and using the cache.
+ *
+ * One module implements the store (modules/workers/redis/); any module may
+ * use it.  The core holds both ends for the reasons in include/cache.h.
+ *
+ * The cache is never the truth: read it first, read the database second,
+ * and a cache that is missing or empty costs a query and nothing else.
+ * That is why module_cache_get() returning zero needs no special
+ * handling -- it is the same thing as a miss.
+ */
+
+/** Register this module as the cache driver.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] driver Static description; must outlive the module.
+ * @return Non-zero on success; zero if one is already registered.
+ */
+extern int module_add_cache_driver(struct ModuleHandle* mod,
+                                   const struct CacheDriver* driver);
+
+/** Withdraw this module's cache driver, failing its calls in flight. */
+extern void module_del_cache_driver(struct ModuleHandle* mod);
+
+/** Read a key.  Zero means there is no cache; go to the database. */
+extern cache_id_t module_cache_get(struct ModuleHandle* mod, const char* key,
+                                   CacheResultFn fn, void* user);
+/** Write a key, with an expiry in seconds (0 for the default). */
+extern cache_id_t module_cache_set(struct ModuleHandle* mod, const char* key,
+                                   const char* value, size_t len, int ttl,
+                                   CacheResultFn fn, void* user);
+/** Delete a key.  What every writer calls after writing to the database. */
+extern cache_id_t module_cache_del(struct ModuleHandle* mod, const char* key,
+                                   CacheResultFn fn, void* user);
 
 /*
  * Server-side interface.  Not for use by modules.

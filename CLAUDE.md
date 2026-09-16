@@ -266,6 +266,29 @@ driver: one dedicated worker per pooled connection, always `PQsendPrepare` +
 `PQsendQueryPrepared` (never `PQexec`), with a hard deadline capped at
 `DB_TIMEOUT_MAX_MS` (5s) enforced by `poll()` rather than by libpq.
 
+**Cache** (`include/cache.h`, `ircd/cache.c`, `doc/readme.cache`, proposal 007
+§3.3). A key-value store in front of the database, with the `Database{}`
+arrangement exactly: the core holds the `Redis{}` block and the calls in
+flight and dispatches to one registered driver — a module —
+`modules/workers/redis/` being it (hiredis, one dedicated worker per pooled
+connection, synchronous on purpose because an event-driven client would have
+to be woven into the server's own loop to avoid what the workers already
+avoid). **The cache is never the truth**: everything that reads it reads the
+database too, so a cache that is missing, empty, stale or down costs a query
+and nothing else — which is why `cache_get()` returning 0 (no driver, no
+block) needs no branch of its own, being the same thing as a miss. The rules
+that make it worth having: **cache the misses too** (the majority answer is
+"not registered", and a cache of hits only leaves most traffic reaching the
+database anyway), and **invalidate on write** rather than waiting for the TTL
+(the store is shared, so one `cache_del()` clears it for every server). The
+prefix is applied by the core, once, so a driver cannot forget it and two
+networks sharing a store cannot read each other's keys. Values are opaque
+bytes, binary-safe, and carry JSON in practice. A call has its own deadline
+(clamped to `CACHE_TIMEOUT_MAX_MS`, 2s — slower than that is not a cache) on a
+timer of `cache.c`'s own, is dropped when its module unloads, and is failed
+when the driver is withdrawn still owing it. `cache_t` covers the register
+without a store.
+
 **Migrations** (`include/migration.h`, `ircd/migration.c` + `ircd/migration_run.c`,
 `doc/readme.migrations`). A module with SQL migrations is a *directory* module
 with a `migrations/` subdirectory holding `v<N>_<name>.{up,down}.sql`. The build

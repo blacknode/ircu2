@@ -25,6 +25,7 @@
 #include "s_conf.h"
 #include "channel.h"
 #include "class.h"
+#include "cache.h"
 #include "client.h"
 #include "crule.h"
 #include "db.h"
@@ -119,6 +120,7 @@ enum ConfigBlock
   BLOCK_WEBIRC,
   BLOCK_IPCHECK,
   BLOCK_DATABASE,
+  BLOCK_REDIS,
   BLOCK_SERVICE,
   BLOCK_SECURITY,
   BLOCK_LAST_BLOCK
@@ -141,7 +143,7 @@ permitted(enum ConfigBlock type)
     "Admin", "Class", "Client", "Connect", "CRule", "Features",
     "General", "IAuth", "Include", "Jupe", "Kill", "Module", "Motd",
     "Oper", "Port", "Pseudo", "Quarantine", "UWorld", "WebIRC", "IPCheck",
-    "Database", "Service", "Security",
+    "Database", "Redis", "Service", "Security",
     NULL
   };
 
@@ -251,6 +253,9 @@ static void free_slist(struct SLink **link) {
 %token TIMEOUT
 %token TIMEOUT_MS
 %token MIGRATION_TIMEOUT
+%token REDIS
+%token SOCKET
+%token PREFIX
 %token SECURITY
 %token VIRTUAL_HOST_KEY
 %token INCLUDE
@@ -297,7 +302,7 @@ block: adminblock | generalblock | classblock | connectblock |
        uworldblock | operblock | portblock | jupeblock | clientblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
-       moduleblock | databaseblock | serviceblock | securityblock |
+       moduleblock | databaseblock | redisblock | serviceblock | securityblock |
        includeblock |
        error '}' ';' { yyerrok; };
 
@@ -1705,6 +1710,76 @@ databasemigrationtimeout: MIGRATION_TIMEOUT '=' timespec ';'
   db_conf_set_migration_timeout($3 * 1000);
 };
 
+/* Redis { host = "127.0.0.1"; port = 6379; ... };
+ *
+ * The cache in front of the database.  The server does not use a single
+ * field of this itself: it keeps it so that a cache driver -- loaded
+ * before or after the block, or not at all -- can ask.  See
+ * include/cache.h.
+ *
+ * Everything has a default except somewhere to connect: either a host or,
+ * instead of one, a Unix socket.
+ */
+redisblock: REDIS
+{
+  if (!permitted(BLOCK_REDIS)) YYERROR;
+  cache_conf_clear();
+} '{' redisitems '}' ';'
+{
+  const char *err = 0;
+
+  if (!cache_conf_commit(&err))
+    parse_error("%s", err ? err : "Redis: block is incomplete");
+};
+
+redisitems: redisitem redisitems | redisitem;
+redisitem: redishost | redisport | redispassword | redissocket |
+  redisdatabase | redispool | redistimeout | redistimeoutms | redisprefix;
+
+redishost: HOST '=' QSTRING ';'
+{
+  cache_conf_set_host($3);
+};
+redisport: PORT '=' expr ';'
+{
+  cache_conf_set_port($3);
+};
+redispassword: PASS '=' QSTRING ';'
+{
+  cache_conf_set_password($3);
+};
+redissocket: SOCKET '=' QSTRING ';'
+{
+  cache_conf_set_socket($3);
+};
+redisdatabase: DATABASE '=' expr ';'
+{
+  cache_conf_set_database($3);
+};
+redispool: POOL '=' expr ';'
+{
+  cache_conf_set_pool($3);
+};
+/* Two spellings of one knob, as the Database block has.  Both are clamped
+ * to CACHE_TIMEOUT_MAX_MS on commit: a cache slower than that is not a
+ * cache, because the point of asking it first is that it answers before
+ * the database would.
+ */
+redistimeout: TIMEOUT '=' timespec ';'
+{
+  cache_conf_set_timeout($3 * 1000);
+};
+redistimeoutms: TIMEOUT_MS '=' expr ';'
+{
+  cache_conf_set_timeout($3);
+};
+/* Prepended to every key, so two networks can share one store without
+ * reading each other's. */
+redisprefix: PREFIX '=' QSTRING ';'
+{
+  cache_conf_set_prefix($3);
+};
+
 /* Security { virtual_host_key = "AbCdEfGhIjKl"; };
  *
  * The block is mandatory: every user's visible host is a cipher of its
@@ -1764,6 +1839,7 @@ blocktype: ALL { $$ = ~0; }
   | WEBIRC { $$ = 1 << BLOCK_WEBIRC; }
   | IPCHECK { $$ = 1 << BLOCK_IPCHECK; }
   | DATABASE { $$ = 1 << BLOCK_DATABASE; }
+  | REDIS { $$ = 1 << BLOCK_REDIS; }
   | SERVICE { $$ = 1 << BLOCK_SERVICE; }
   | SECURITY { $$ = 1 << BLOCK_SECURITY; }
   ;

@@ -1,0 +1,165 @@
+THE CACHE
+=========
+
+A key-value store in front of the database, so that the same question is
+not put to PostgreSQL on every connection and every nick change.
+
+The one thing to understand before anything else:
+
+  **The cache is never the truth.**
+
+Everything that reads it reads the database too.  A cache that is missing,
+empty, stale, slow or down costs a query and nothing else: there is no
+degraded mode to design for, no failover, and no error a caller has to
+handle specially.  That is why cache_get() returning zero -- which is what
+happens when no cache module is loaded, or ircd.conf has no Redis{} block
+-- needs no branch of its own.  It is the same thing as a miss.
+
+What does matter is the database not answering, and that is db.h's to
+report.
+
+
+THE SHAPE
+=========
+
+The same as the database driver, for the same two reasons: modules are
+RTLD_LOCAL and cannot resolve each other's symbols, so the core has to be
+the meeting point between whoever caches and whoever implements the cache;
+and holding the calls in flight in the core is what lets the driver module
+be unloaded with some still outstanding.
+
+  include/cache.h       the API, the Redis{} block, the driver interface
+  ircd/cache.c          the register, the calls in flight, the config
+  modules/workers/redis the driver
+
+The core knows nothing about Redis.  It knows there is a store with keys,
+values and an expiry, and that it may not be there.
+
+
+USING IT
+========
+
+From the core:
+
+  cache_get(NULL, "nick:maria", on_result, data);
+  cache_set(NULL, "nick:maria", json, len, 300, NULL, NULL);
+  cache_del(NULL, "nick:maria", NULL, NULL);
+
+From a module, with its handle so its calls are dropped if it unloads:
+
+  module_cache_get(mod, "nick:maria", on_result, data);
+  module_cache_set(mod, "nick:maria", json, len, 300, NULL, NULL);
+  module_cache_del(mod, "nick:maria", NULL, NULL);
+
+The answer arrives in the main thread:
+
+  static void on_result(const struct CacheResult *res, void *user)
+  {
+    if (res->cres_code != CACHE_OK || !res->cres_hit) {
+      ask_the_database();      /* a miss and a failure are the same path */
+      return;
+    }
+    use(res->cres_value, res->cres_len);
+  }
+
+Nothing in the result outlives the call: copy what is needed.
+
+
+THE PATTERN
+===========
+
+Read through, write around, invalidate on write:
+
+  1. Ask the cache.
+  2. On a hit, answer from it.
+  3. On a miss -- or on any failure -- ask the database, answer, and write
+     what was found back to the cache.
+  4. **Cache the misses too.**  "This nickname is not registered" is the
+     majority answer, and a cache that only holds hits leaves most of the
+     traffic reaching the database anyway, which is what it was put there
+     to stop.
+  5. After writing to the database, cache_del() the keys that changed.
+     Do not wait for the expiry: the store is shared, so deleting a key on
+     one server deletes it for all of them, and the alternative is every
+     other server serving a stale answer until the clock runs out.  The
+     TTL is the net under whatever is written outside the server, not the
+     mechanism.
+
+
+VALUES
+======
+
+Opaque bytes to the core, and binary-safe end to end: a value may contain
+NUL.  What actually goes in them is JSON, with jansson, because the things
+worth caching have more than one field and a string with separators in it
+is a format that will need versioning one day.
+
+  CACHE_KEY_MAX     255 bytes, prefix included
+  CACHE_VALUE_MAX   64 KiB -- bigger belongs in the database
+  CACHE_TTL_DEFAULT 300 seconds when a caller asks for none
+  CACHE_TTL_MAX     one day; an entry that outlives the server that wrote
+                    it is one nobody remembers the reason for
+
+The prefix from the Redis{} block is applied by the core, once, on the way
+in.  A driver that had to remember to do it would be a driver that one day
+forgot, and two networks sharing a store would read each other's keys.
+
+
+THE Redis{} BLOCK
+=================
+
+  Redis {
+    host = "127.0.0.1";     # or: socket = "/run/redis/redis.sock";
+    port = 6379;
+    password = "${IRCU_REDIS_PASSWORD}";
+    database = 0;
+    pool = 2;
+    timeout_ms = 200;       # or: timeout = 1 seconds;
+    prefix = "ircu:";
+  };
+
+  Module { name = "redis"; };
+
+Either host or socket is required; everything else has a default.  A
+timeout over two seconds is corrected down with a warning: a cache slower
+than that is not a cache, because the point of asking it first is that it
+answers before the database would.
+
+The driver needs worker threads -- a connection is a thread -- so
+WORKER_THREADS must be at least the pool size.  With workers off the
+module loads and refuses every call, which costs a database query and
+nothing else.
+
+Taking the block out and rehashing stops the cache being used.  The driver
+keeps whatever connections it has rather than dropping them mid-call, but
+cache_available() is false without a block, so nothing new is asked.
+
+
+WRITING A DRIVER
+================
+
+Register a struct CacheDriver with module_add_cache_driver().  Its three
+entry points start the work and return; the answer goes back later, in the
+main thread, with cache_complete(), exactly once per call accepted.
+
+  * One driver at a time.  A second registration is refused rather than
+    replacing the first.
+  * Never block the main thread.  The driver in this tree uses hiredis
+    synchronously in a worker thread per connection, which is the simplest
+    thing that works: an event-driven client would have to be woven into
+    the server's own event loop, and what that would avoid -- the main
+    thread waiting on a socket -- the worker threads already avoid.
+  * A call the core no longer holds is not an error to answer:
+    cache_complete() says so and does nothing.
+  * The core has its own deadline and will fail a call the driver never
+    answers, so a driver that loses one costs a query, not a hang.
+
+
+STATISTICS
+==========
+
+  cache_calls_total()    calls made
+  cache_calls_hit()      of those, how many found the key
+  cache_calls_failed()   of those, how many failed
+
+A miss is neither a hit nor a failure.  It is an answer.

@@ -670,6 +670,30 @@ Five things to know:
     is unmapped, so nothing waits for an answer that is never coming.
 
 
+THE CACHE
+=========
+
+Any module may use the cache; one module implements it.  See
+doc/readme.cache for the whole of it, and include/cache.h for the API.
+
+  module_cache_get(mod, "nick:maria", on_result, data);
+  module_cache_set(mod, "nick:maria", json, len, 300, NULL, NULL);
+  module_cache_del(mod, "nick:maria", NULL, NULL);
+
+The handle is passed so that the calls are dropped if the module unloads
+before they are answered.
+
+A zero return means there is no cache -- no driver, or no Redis{} block --
+and it needs no branch of its own: the cache is never the truth, so that
+is the same thing as a miss.  Read the cache first, read the database
+second, cache the misses as well as the hits, and delete the key after
+writing to the database rather than waiting for the expiry.
+
+To implement one instead, register a struct CacheDriver with
+module_add_cache_driver().  One driver at a time, it must never block the
+main thread, and it answers with cache_complete() exactly once per call.
+
+
 COMMAND HOOKS
 =============
 

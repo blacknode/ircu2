@@ -151,7 +151,7 @@ email — el email porque la corrección 1 lo pide en `struct User`, y sólo ah�
 (§8). Descargar el módulo falla toda petición en vuelo con
 `ACCOUNT_ERR_UNAVAILABLE` antes de volver, como `db_unregister_driver()`.
 
-### 3.3 Caché — `include/cache.h`, `ircd/cache.c`
+### 3.3 Caché — `include/cache.h`, `ircd/cache.c` *(hecho)*
 
 Tercer registro, misma forma, un driver: `modules/workers/redis/`. El core no
 sabe qué es Redis; sabe que hay un almacén clave-valor con plazo de caducidad
@@ -564,16 +564,16 @@ Cada punto compila, pasa pruebas y se sube por separado.
 
 1. **`sasl.c` + `sasl.h`** — el registro de mecanismos, `PLAIN` y `EXTERNAL`.
    *(hecho)*
-2. **El estado en el core** — `User::email` y su `WHOIS`, el modo `+f`,
+2. **El estado en el core** *(hecho)* — `User::email` y su `WHOIS`, el modo `+f`,
    `MFLG_FROZEN_OK` y la puerta en `parse_dispatch()`, los numerics.
    Comprobable sin proveedor: se pone `+f` a mano desde un servidor.
-3. **`account.c` + `account.h`** — el registro de proveedor, las peticiones en
+3. **`account.c` + `account.h`** *(hecho)* — el registro de proveedor, las peticiones en
    vuelo, `account_login()` / `account_logout()` y el renombrado a `guest-*`.
-4. **`m_authenticate.c` + `AR_SASL_PENDING`** — el diálogo y la retención del
+4. **`m_authenticate.c` + `AR_SASL_PENDING`** *(hecho)* — el diálogo y la retención del
    registro. Con un proveedor de pruebas ya se autentica de punta a punta.
 5. **`m_account.c`** — `LOGIN`, `LOGOUT`, `LIST`, token `AC`.
 6. **`cache.c` + `cache.h` + `modules/workers/redis/`** — el tercer registro y
-   su driver, con el bloque `Redis{}`.
+   su driver, con el bloque `Redis{}`. *(hecho; ver `doc/readme.cache`)*
 7. **`modules/services/identity/`** — el almacén, las migraciones con sus
    cerrojos, Redis delante, el Argon2 en un `worker`.
 8. **`module_add_config_block()`** (006 §5.6) y **`modules/services/nickserv/`**

@@ -21,6 +21,7 @@
 #include "config.h"
 
 #include "account.h"
+#include "cache.h"
 #include "channel.h"
 #include "bot.h"
 #include "capab.h"
@@ -932,6 +933,68 @@ void module_del_account_provider(struct ModuleHandle *mod) {
   account_unregister_provider(mod);
 }
 
+/** Register this module as the cache driver.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] driver Static description of the driver.
+ * @return Non-zero on success.
+ */
+int module_add_cache_driver(struct ModuleHandle *mod,
+                            const struct CacheDriver *driver) {
+  assert(0 != mod);
+  return cache_register_driver(mod, driver);
+}
+
+/** Withdraw this module's cache driver.
+ * @param[in] mod Handle passed to mi_init.
+ */
+void module_del_cache_driver(struct ModuleHandle *mod) {
+  assert(0 != mod);
+  cache_unregister_driver(mod);
+}
+
+/** Read a key from the cache on a module's behalf.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] key Key, without the configured prefix.
+ * @param[in] fn Called with the answer, or NULL.
+ * @param[in] user Opaque pointer for \a fn.
+ * @return The handle, or 0 when there is no cache.
+ */
+cache_id_t module_cache_get(struct ModuleHandle *mod, const char *key,
+                            CacheResultFn fn, void *user) {
+  assert(0 != mod);
+  return cache_get(mod, key, fn, user);
+}
+
+/** Write a key on a module's behalf.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] key Key, without the configured prefix.
+ * @param[in] value Bytes to store.
+ * @param[in] len How many, or 0 for strlen().
+ * @param[in] ttl Seconds until it expires, or 0 for the default.
+ * @param[in] fn Called with the answer, or NULL.
+ * @param[in] user Opaque pointer for \a fn.
+ * @return The handle, or 0.
+ */
+cache_id_t module_cache_set(struct ModuleHandle *mod, const char *key,
+                            const char *value, size_t len, int ttl,
+                            CacheResultFn fn, void *user) {
+  assert(0 != mod);
+  return cache_set(mod, key, value, len, ttl, fn, user);
+}
+
+/** Delete a key on a module's behalf.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] key Key, without the configured prefix.
+ * @param[in] fn Called with the answer, or NULL.
+ * @param[in] user Opaque pointer for \a fn.
+ * @return The handle, or 0.
+ */
+cache_id_t module_cache_del(struct ModuleHandle *mod, const char *key,
+                            CacheResultFn fn, void *user) {
+  assert(0 != mod);
+  return cache_del(mod, key, fn, user);
+}
+
 /** Turn a module name into the path of its shared object.
  *
  * The name is a bare name: it may not contain a directory separator and
@@ -1311,6 +1374,7 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    * failed, rather than answered into code that is about to be unmapped.
    */
   db_drop_module(mod);
+  cache_drop_module(mod);
   /* Modes last: taking a mode off a user or a channel announces a MODE
    * change, and the module's own hooks are already detached by then, so
    * none of its code runs on the way out.

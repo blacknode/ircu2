@@ -107,6 +107,7 @@ set(IRCU_SOURCES
   account_user.c
   batch.c
   bot.c
+  cache.c
   capab.c
   chan_modes.c
   channel.c

@@ -425,6 +425,10 @@ static struct FeatureDesc {
   F_I(HISTORY_RETENTION, FEAT_OPER, 90, 0),
   F_B(HISTORY_PRIVATE, FEAT_OPER, 1, 0),
   F_I(HISTORY_MAX_LIMIT, FEAT_OPER, 100, 0),
+  /* Empty, so an export has nowhere to go until an operator names a
+   * directory.  Writing files is a thing a server should be told to do
+   * rather than something it is able to do by default. */
+  F_S(HISTORY_EXPORT_DIR, FEAT_OPER | FEAT_NULL, 0, 0),
 
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),

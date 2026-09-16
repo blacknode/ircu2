@@ -310,13 +310,28 @@ constraint without its partition key — travels *with* the message, which
 needs `FEAT_NETWORK_FEATURES` and `FEAT_NETWORK_TIME` on; the module says so
 at load if either is off. The schema is one table partitioned by month, BRIN
 over the time, GIN over the text, applied with `/MODULE MIGRATION APPLY
-history`. `hist_store.c` holds **every** statement the module sends — not to
+history`. **A `DEFAULT` partition is a trap unless something moves rows out
+of it**: PostgreSQL refuses to create a partition whose range the default
+already holds rows for, so everything stored before the schema was migrated
+blocked its own month for ever — `history_ensure_partition()` (v3) rescues
+them inside the statement that creates the partition, and the maintenance
+timer runs every five minutes instead of every six hours until the schema
+answers. `hist_store.c` holds **every** statement the module sends — not to
 leave a door open for another engine (§7.1 closes that) but because
 retention, purging and deletion by account need one place to happen;
 `history_forget()` ships in v1 rather than being added later, and takes the
 other end's copy of a direct message with it, because a direct message is one
-row and what is being deleted is the message. A **direct message is stored
-only when both ends have identified**: the only durable handle on a person is
+row and what is being deleted is the message. **`/HISTORY STATUS|PURGE|EXPORT|FORGET`** (`hist_admin.c`) is the
+operator's side, behind a privilege of its own — `history_admin`,
+`PRIV_HISTORY`, cleared from the global defaults because it is the
+difference between an operator and somebody who can read every
+conversation on the network. **`EXPORT` and `FORGET` use the same
+predicate**, deliberately: what a person is handed has to be what a person
+can have destroyed. The export is a file (JSON Lines, mode 0600, never over
+an existing one) under `FEAT_HISTORY_EXPORT_DIR`, empty by default so a
+server writes nothing until told where; it is paged by **keyset**, not
+offset, so a long export never re-reads what it has written. A **direct
+message is stored only when both ends have identified**: the only durable handle on a person is
 the nickname they proved, and filing one under a bare nickname would show it
 to whoever wears that nickname next week. Messages to a service are never
 even reported to the module, non-ACTION CTCP and TAGMSG are dropped by

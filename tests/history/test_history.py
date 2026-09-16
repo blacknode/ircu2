@@ -532,6 +532,98 @@ async def test_a_client_without_batch_is_told_in_words(schema, ircd_identity):
     await client.disconnect()
 
 
+# --------------------------------------------------------------------- #
+# /HISTORY: the operator's side                                         #
+# --------------------------------------------------------------------- #
+
+
+async def _notices(client, command, seconds=6.0):
+    """Send \a command and collect the text the server answers with."""
+    await client.send(command)
+    return await _collect(client, seconds)
+
+
+async def test_history_needs_its_own_privilege(schema, ircd_identity):
+    """Reading everyone's messages is not something being an oper grants."""
+    client = await _connect(ircd_identity, f"hpriv{TAG}")
+    await client.send("HISTORY STATUS")
+    msg = await client.wait_for("481", timeout=5)
+
+    assert "privileges" in msg.params[-1].lower()
+
+    await client.disconnect()
+
+
+async def test_history_status_counts_what_is_stored(schema, ircd_identity):
+    speaker = await _connect(ircd_identity, f"hstat{TAG}")
+    await speaker.send(f"JOIN #hstat{TAG}")
+    await _drain(speaker)
+    await speaker.send(f"PRIVMSG #hstat{TAG} :counted")
+    await asyncio.sleep(1.5)
+
+    oper = await _oper(ircd_identity)
+    lines = await _notices(oper, "HISTORY STATUS")
+
+    assert any("messages stored" in line for line in lines)
+    assert any("keeping" in line for line in lines)
+
+    await speaker.disconnect()
+    await oper.disconnect()
+
+
+async def test_export_and_forget_agree_on_what_is_yours(schema,
+                                                        ircd_identity):
+    """What a person is handed is what a person can have destroyed.
+
+    Both are the same predicate -- everything the account sent and every
+    direct message it received -- so the count the export writes is the
+    count the delete removes.
+    """
+    a = await _register(ircd_identity, f"hgdpr1{TAG}", f"hgdpr1{TAG}@ex.org")
+    b = await _register(ircd_identity, f"hgdpr2{TAG}", f"hgdpr2{TAG}@ex.org")
+
+    await a.send(f"JOIN #hgdpr{TAG}")
+    await _drain(a)
+    await a.send(f"PRIVMSG #hgdpr{TAG} :in public")
+    await a.send(f"PRIVMSG hgdpr2{TAG} :in private")
+    await asyncio.sleep(0.3)
+    await b.send(f"PRIVMSG hgdpr1{TAG} :answered")
+    await asyncio.sleep(2)
+
+    oper = await _oper(ircd_identity)
+
+    lines = await _notices(oper, f"HISTORY STATUS hgdpr1{TAG}")
+    assert any(f"hgdpr1{TAG} has 3 of" in line for line in lines), lines
+
+    lines = await _notices(oper, f"HISTORY EXPORT hgdpr1{TAG}")
+    assert any("exported 3 messages" in line for line in lines), lines
+    assert any(".jsonl" in line for line in lines), lines
+
+    lines = await _notices(oper, f"HISTORY FORGET hgdpr1{TAG}")
+    assert any("forgot 3 messages" in line for line in lines), lines
+
+    lines = await _notices(oper, f"HISTORY STATUS hgdpr1{TAG}")
+    assert any(f"hgdpr1{TAG} has 0 of" in line for line in lines), lines
+
+    # The other end's copy went with it: a direct message is one row.
+    _, inside, _ = await _chathistory(
+        b, f"CHATHISTORY LATEST hgdpr1{TAG} * 10")
+    assert inside == []
+
+    await a.disconnect()
+    await b.disconnect()
+    await oper.disconnect()
+
+
+async def test_an_unknown_history_subcommand_fails(schema, ircd_identity):
+    oper = await _oper(ircd_identity)
+    lines = await _notices(oper, "HISTORY SIDEWAYS", seconds=3)
+
+    assert any("STATUS, PURGE, EXPORT or FORGET" in line for line in lines)
+
+    await oper.disconnect()
+
+
 async def test_the_capability_advertises_the_limit(schema, ircd_identity):
     """A client learns the ceiling before it asks, not by being cut down."""
     client = IRCClient()

@@ -167,6 +167,74 @@ typedef void (*HistReadFn)(int ok, const struct HistRow* rows,
 extern int hist_store_read(const struct HistQuery* q, HistReadFn cb,
                            void* user);
 
+/** One page of an export, on its way out.
+ *
+ * Everything about a message, including the two accounts, because what is
+ * being handed over is the record rather than a transcript to read.
+ */
+struct HistExportRow {
+  const char* he_time;       /**< When, ISO 8601. */
+  const char* he_msgid;      /**< Its name. */
+  int         he_kind;       /**< 0 PRIVMSG, 1 NOTICE, 2 TAGMSG. */
+  int         he_channel;    /**< Whether the target is a channel. */
+  const char* he_target;     /**< Channel or nickname, as addressed. */
+  const char* he_prefix;     /**< nick!user@host at the time. */
+  const char* he_from;       /**< Sender's account, or "". */
+  const char* he_to;         /**< Recipient's account, or "". */
+  const char* he_body;       /**< The text. */
+};
+
+/** Receives one page of an export.  Runs in the main thread.
+ *
+ * Called once per page, oldest first, and once more with \a count zero
+ * when there are no more; \a ok is zero if the store stopped answering,
+ * in which case the export is incomplete and its caller has to say so.
+ *
+ * @param[in] ok Non-zero if the page was read.
+ * @param[in] rows The messages.
+ * @param[in] count How many, zero at the end.
+ * @param[in] done Non-zero on the last call.
+ * @param[in] user What was handed to hist_store_export().
+ */
+typedef void (*HistExportFn)(int ok, const struct HistExportRow* rows,
+                             unsigned int count, int done, void* user);
+
+/** Read everything one account said or was told.
+ *
+ * The same predicate hist_store_forget() deletes by, which is the point:
+ * what a person is given has to be what a person can have deleted, or one
+ * of the two is lying.
+ *
+ * Paged with a keyset rather than an offset -- @c (sent_at, @c msgid)
+ * greater than the last row of the page before -- so a long export is a
+ * series of index range scans and never re-reads what it has already
+ * handed over.  There is no cursor to hold open: db.h has no
+ * transactions, and a pooled connection is not the caller's to keep.
+ *
+ * @param[in] account The account, canonical.
+ * @param[in] cb Called once per page and once at the end.
+ * @param[in] user Passed through.
+ * @return Non-zero if the export started.
+ */
+extern int hist_store_export(const char* account, HistExportFn cb,
+                             void* user);
+
+/** How much of the store belongs to one account, and how big it all is.
+ *
+ * @param[in] rows Messages the account sent or received, -1 on failure.
+ * @param[in] total Messages stored altogether.
+ * @param[in] user What was handed to hist_store_count().
+ */
+typedef void (*HistCountFn)(long long rows, long long total, void* user);
+
+/** Count what is stored.
+ * @param[in] account The account to count, canonical, or NULL for none.
+ * @param[in] cb Called in the main thread with the answer.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted.
+ */
+extern int hist_store_count(const char* account, HistCountFn cb, void* user);
+
 /** Store one message.
  *
  * Fire and forget: there is nobody to tell if it fails, and a message
@@ -182,6 +250,14 @@ extern int hist_store_read(const struct HistQuery* q, HistReadFn cb,
  * @return Non-zero if the write was accepted for sending.
  */
 extern int hist_store_write(const struct HistMessage* msg);
+
+/** Non-zero once a statement of this module's has reached the schema.
+ *
+ * The schema is applied by an operator, which may well be minutes or days
+ * after the module was loaded, so "is it there yet" is a question with a
+ * changing answer rather than a configuration setting.
+ */
+extern int hist_store_ready(void);
 
 /** Make sure the partitions around \a when exist.
  *

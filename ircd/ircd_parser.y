@@ -280,6 +280,7 @@ static void free_slist(struct SLink **link) {
 %token TPRIV_UNLIMIT_QUERY TPRIV_DISPLAY TPRIV_SEE_OPERS TPRIV_WIDE_GLINE
 %token TPRIV_FORCE_OPMODE TPRIV_FORCE_LOCAL_OPMODE TPRIV_APASS_OPMODE
 %token TPRIV_MODULE
+%token TPRIV_HISTORY
 %token TPRIV_LIST_CHAN
 /* and some types... */
 %type <num> sizespec
@@ -852,6 +853,7 @@ privtype: TPRIV_CHAN_LIMIT { $$ = PRIV_CHAN_LIMIT; } |
           TPRIV_WHOX { $$ = PRIV_WHOX; } |
           TPRIV_BADCHAN { $$ = PRIV_BADCHAN; } |
           TPRIV_MODULE { $$ = PRIV_MODULE; } |
+          TPRIV_HISTORY { $$ = PRIV_HISTORY; } |
           TPRIV_LOCAL_BADCHAN { $$ = PRIV_LOCAL_BADCHAN; } |
           TPRIV_SEE_CHAN { $$ = PRIV_SEE_CHAN; } |
           TPRIV_SHOW_INVIS { $$ = PRIV_SHOW_INVIS; } |

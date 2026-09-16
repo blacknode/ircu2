@@ -88,6 +88,17 @@ static int hist_cap = -1;
 /** How often maintenance runs, in seconds. */
 #define HIST_MAINTENANCE_EVERY (6 * 60 * 60)
 
+/** How often it runs while the schema is not there yet.
+ *
+ * A module is loaded from ircd.conf and its migrations are applied by an
+ * operator afterwards, so the first maintenance pass usually finds
+ * nothing to talk to.  Six hours later is too late: everything said in
+ * between lands in the default partition, and although the migration in
+ * v3 rescues it when the month's partition is finally created, the point
+ * is not to need rescuing.
+ */
+#define HIST_MAINTENANCE_WAITING (5 * 60)
+
 /** The maintenance timer. */
 static struct Timer hist_timer;
 /** Whether #hist_timer has been initialised.
@@ -133,7 +144,8 @@ static void hist_timer_expired(struct Event* ev)
   hist_maintenance();
 
   timer_add(&hist_timer, hist_timer_expired, 0, TT_RELATIVE,
-            HIST_MAINTENANCE_EVERY);
+            hist_store_ready() ? HIST_MAINTENANCE_EVERY
+                               : HIST_MAINTENANCE_WAITING);
 }
 
 /** Say what an operator needs to hear before the first user does. */
@@ -194,6 +206,21 @@ static MessageHandler handlers[] = {
   0                     /* service */
 };
 
+/** And /HISTORY.
+ *
+ * The oper slot only.  The client slot answers too, so that somebody who
+ * is not an operator is told they have no privileges rather than that the
+ * command does not exist -- which would be a difference they could use to
+ * find out whether this server keeps history at all.
+ */
+static MessageHandler admin_handlers[] = {
+  0,                /* unregistered */
+  hist_m_history,   /* client */
+  0,                /* server */
+  hist_m_history,   /* oper */
+  0                 /* service */
+};
+
 /** Attach to the hook and start maintaining the schema.
  * @param[in] mod Handle for this module.
  * @return Zero on success.
@@ -212,6 +239,12 @@ static int history_init(struct ModuleHandle* mod)
 
   if (!module_add_command(mod, MSG_CHATHISTORY, TOK_CHATHISTORY, MAXPARA,
                           0, handlers)) {
+    hist_mod = NULL;
+    return -1;
+  }
+
+  if (!module_add_command(mod, MSG_HISTORY, TOK_HISTORY, MAXPARA,
+                          0, admin_handlers)) {
     hist_mod = NULL;
     return -1;
   }
@@ -254,6 +287,12 @@ static void history_fini(struct ModuleHandle* mod)
 
   hist_cap = -1;
   hist_i18n = NULL;
+
+  /* An export writes to a file this module holds open, and the pages it
+   * is waiting for will be dropped with the rest of this module's
+   * queries.  Closing it here leaves a partial file and says so, which is
+   * better than a file that looks finished. */
+  hist_admin_shutdown();
 
   if (hist_timer_ready) {
     timer_del(&hist_timer);

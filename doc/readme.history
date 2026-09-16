@@ -122,9 +122,20 @@ does not know what language a channel speaks, and stemming the wrong one
 is worse than not stemming at all.
 
 Partitions are created ahead of time, for this month and next, at load
-and every six hours.  A message that lands outside every partition goes
-to message_default rather than being refused -- a safety net, not a place
-to keep things.
+and every six hours -- every five minutes until the schema answers, since
+a module is loaded from ircd.conf and its migrations are applied by an
+operator some time afterwards.  A message that lands outside every
+partition goes to message_default rather than being refused: a safety net,
+not a place to keep things.
+
+The net needed a floor under it.  PostgreSQL will not create a partition
+whose range the default already holds rows for, so every message stored
+before the schema was migrated permanently blocked its own month, and
+that month's traffic stayed in the default for ever -- where retention
+cannot drop it as a partition and the time-ordered locality BRIN depends
+on is gone.  Since v3 of the schema, history_ensure_partition() moves
+those rows out of the default, creates the partition and puts them back,
+all inside the one statement it is called by.
 
 
 READING IT BACK: CHATHISTORY
@@ -200,24 +211,60 @@ That is the honest shape of an asynchronous answer; the batch names its
 target and identifies itself well enough to be matched without one.
 
 
-RETENTION, PURGING AND DELETION
-===============================
+RETENTION, PURGING, EXPORT AND DELETION
+=======================================
+
+An operator does all four through one command, and they are all the same
+thing seen from different sides -- what is kept, for how long, how it is
+handed over, and how it is destroyed:
+
+  HISTORY STATUS [<account>]   how much there is
+  HISTORY PURGE                apply the retention now
+  HISTORY EXPORT <account>     write out everything about one person
+  HISTORY FORGET <account>     and delete it
+
+All four need `history_admin` in the Operator{} block.  It is not a
+default for anybody, which is deliberate: it is the difference between an
+operator and somebody who can read every conversation on the network, and
+that has to be written down rather than arrived at by being an operator at
+all.
 
 HISTORY_RETENTION is how many days are kept; 0 keeps everything.  Every
 six hours the module drops whole monthly partitions that end before the
 cutoff, which costs nothing whatever they hold, and deletes what is left
-straddling it.
+straddling it.  PURGE runs that pass now.
 
-Deletion by account is history_forget(), shipped in v1 of the schema
-rather than added later, because what is stored here is what people said
-and in most places how long that may be kept is not a technical
-question.  It deletes every message an account sent and every direct
-message it received.
+EXPORT and FORGET read and delete by the same predicate -- every message
+the account sent and every direct message it received -- and that is the
+point.  What a person is handed has to be what a person can have
+destroyed, or one of the two is lying about what "their data" means.
 
 A direct message is one row, not two, so forgetting an account takes the
 other end's copy of that conversation with it.  That is the answer being
 asked for and not a side effect: what is being deleted is the message,
-and there is only one of it.
+and there is only one of it.  The delete is logged at NOTICE with the
+count and the account, because which operator destroyed somebody's record
+is the part nobody can reconstruct afterwards.
+
+The export is a file, not something sent over IRC: what it is for is a
+request that arrives by post and is answered by post, and an operator
+hands the file over.  It goes to HISTORY_EXPORT_DIR, which is empty by
+default -- a server writes no files until it has been told where to.  The
+name is the account and the moment, the mode is 0600, and it is never
+written over an existing file.
+
+The format is JSON Lines, one message per line:
+
+  {"time":"2026-09-16T15:43:52.000Z","msgid":"AB8aqtoa5z9","kind":0,
+   "channel":false,"target":"ben","from":"ana!ana@xxxxxx.yyyyyy.v4",
+   "from_account":"ana","to_account":"ben","text":"a private one"}
+
+It is read in pages of five hundred, by keyset -- everything after the
+last row handed over -- rather than by offset, so a long export is a
+series of index range scans and never re-reads what it has already
+written.  There is no cursor held open: db.h has no transactions, and a
+pooled connection is not the caller's to keep.  One export runs at a
+time; a second is told to wait.
 
 
 FEATURES
@@ -226,6 +273,7 @@ FEATURES
   HISTORY_RETENTION   days to keep, 0 for forever      (default 90)
   HISTORY_PRIVATE     store direct messages            (default TRUE)
   HISTORY_MAX_LIMIT   cap on one CHATHISTORY request   (default 100)
+  HISTORY_EXPORT_DIR  where HISTORY EXPORT writes      (default none)
 
 See doc/readme.features.
 
@@ -236,6 +284,7 @@ HOW IT IS PUT TOGETHER
   history.c        the module: the hook, the command, the capability, the
                    maintenance timer, and the warnings an operator needs
                    before the first user does
+  hist_admin.c     /HISTORY: what an operator does about what is stored
   hist_capture.c   which of what the server delivers is a conversation
   hist_read.c      what a client asked for, whether it may see it, and
                    how the answer goes on the wire

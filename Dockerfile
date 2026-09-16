@@ -164,3 +164,8 @@ RUN chown -R ircu:ircu /opt/ircu/lib/po
 # for one; tests/identity_db is the first that does.
 COPY --from=builder-tree /opt/ircu/lib/modules /opt/ircu/lib/modules
 RUN chown -R ircu:ircu /opt/ircu/lib/modules
+
+# Somewhere for HISTORY EXPORT to write; tests/history/ checks that a file
+# lands there.  Empty in the image: what goes in it is one person's whole
+# record, so it is created per container and never baked in.
+RUN mkdir -p /opt/ircu/lib/export && chown ircu:ircu /opt/ircu/lib/export

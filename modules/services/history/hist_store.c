@@ -75,13 +75,29 @@ static void hist_complain(const char* what, const struct DbResult* res,
   hist_suppressed = 0;
 }
 
+/** Non-zero once the schema has answered a statement of ours. */
+static int hist_ready;
+
+int hist_store_ready(void)
+{
+  return hist_ready;
+}
+
 /** Callback for a write nobody is waiting on. */
 static void hist_write_done(const struct DbResult* res, void* user)
 {
   const char* what = (const char*) user;
 
-  if (res->err.dberr_code != DB_OK)
+  if (res->err.dberr_code != DB_OK) {
     hist_complain(what, res, DB_OK);
+    return;
+  }
+
+  /* The partition statement is the one that says the schema is really
+   * there: it names a function the migrations create.  Until it has
+   * worked once, the module keeps looking. */
+  if (!strcmp(what, "partition"))
+    hist_ready = 1;
 }
 
 /* ------------------------------------------------------------------- *
@@ -396,6 +412,8 @@ struct HistCell {
   char hc_target[CHANNELLEN + 1];
   char hc_prefix[NICKLEN + USERLEN + HOSTLEN + 3];
   char hc_body[BUFSIZE];
+  char hc_from[NICKLEN + 1];
+  char hc_to[NICKLEN + 1];
 };
 
 /** What came back from a read. */
@@ -748,5 +766,260 @@ int hist_store_read(const struct HistQuery* q, HistReadFn cb, void* user)
   }
 
   hist_read_run(rd);
+  return 1;
+}
+
+/* ------------------------------------------------------------------- *
+ * Exporting                                                           *
+ * ------------------------------------------------------------------- */
+
+/** Rows handed over at a time.
+ *
+ * Big enough that a long export is not a thousand round trips, small
+ * enough that one page is a few hundred kilobytes rather than the whole
+ * table in memory at once.
+ */
+#define HIST_EXPORT_PAGE 500
+
+/** One export in flight. */
+struct HistExport {
+  char         hx_account[NICKLEN + 1];   /**< Whose. */
+  HistExportFn hx_cb;                     /**< Who to hand the pages to. */
+  void*        hx_user;                   /**< What to hand them with. */
+  char         hx_time[40];               /**< Last row of the page before. */
+  char         hx_msgid[MSGIDLEN + 1];    /**< Its identifier. */
+  char         hx_limit[16];              /**< #HIST_EXPORT_PAGE, as text. */
+};
+
+/** The statement one page of an export runs.
+ *
+ * The keyset -- everything after the last row handed over -- rather than
+ * an offset.  An offset re-reads and re-sorts everything before it on
+ * every page, so exporting an account with a hundred thousand messages
+ * would cost more the further it got; this is a range scan that starts
+ * where the last one stopped.  The first page starts from the empty pair,
+ * which sorts before every real row.
+ */
+static const char* hist_sql_export =
+  "SELECT to_char(sent_at AT TIME ZONE 'UTC', "
+  "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, msgid, kind, is_channel, "
+  "target, coalesce(sender_prefix, sender_nick) AS prefix, "
+  "coalesce(sender_account, '') AS from_account, "
+  "coalesce(recipient_account, '') AS to_account, body "
+  "FROM message "
+  "WHERE (sender_account = $1 OR recipient_account = $1) "
+  "AND (sent_at, msgid) > ($2, $3) "
+  "ORDER BY sent_at ASC, msgid ASC LIMIT $4";
+
+static void hist_export_page(struct HistExport* hx);
+
+/** Tell the caller the export stopped, and let it go. */
+static void hist_export_fail(struct HistExport* hx)
+{
+  if (hx->hx_cb)
+    (hx->hx_cb)(0, 0, 0, 1, hx->hx_user);
+  MyFree(hx);
+}
+
+/** One page came back. */
+static void hist_export_done(const struct DbResult* res, void* user)
+{
+  struct HistExport* hx = (struct HistExport*) user;
+  struct HistExportRow* rows;
+  struct HistCell* cells;
+  char from[NICKLEN + 1];
+  char to[NICKLEN + 1];
+  unsigned int count;
+  unsigned int i;
+  int last;
+
+  if (res->err.dberr_code != DB_OK) {
+    hist_complain("export", res, DB_OK);
+    hist_export_fail(hx);
+    return;
+  }
+
+  count = db_rows(res->data);
+
+  if (!count) {
+    if (hx->hx_cb)
+      (hx->hx_cb)(1, 0, 0, 1, hx->hx_user);
+    MyFree(hx);
+    return;
+  }
+
+  rows = (struct HistExportRow*) MyCalloc(count, sizeof(*rows));
+  cells = (struct HistCell*) MyCalloc(count, sizeof(*cells));
+
+  for (i = 0; i < count; i++) {
+    ircd_strncpy(cells[i].hc_time, db_row_str(res->data, i, "sent_at"),
+                 sizeof(cells[i].hc_time) - 1);
+    ircd_strncpy(cells[i].hc_msgid, db_row_str(res->data, i, "msgid"),
+                 sizeof(cells[i].hc_msgid) - 1);
+    ircd_strncpy(cells[i].hc_target, db_row_str(res->data, i, "target"),
+                 sizeof(cells[i].hc_target) - 1);
+    ircd_strncpy(cells[i].hc_prefix, db_row_str(res->data, i, "prefix"),
+                 sizeof(cells[i].hc_prefix) - 1);
+    ircd_strncpy(cells[i].hc_body, db_row_str(res->data, i, "body"),
+                 sizeof(cells[i].hc_body) - 1);
+    ircd_strncpy(from, db_row_str(res->data, i, "from_account"),
+                 sizeof(from) - 1);
+    from[sizeof(from) - 1] = '\0';
+    ircd_strncpy(to, db_row_str(res->data, i, "to_account"), sizeof(to) - 1);
+    to[sizeof(to) - 1] = '\0';
+    ircd_strncpy(cells[i].hc_from, from, sizeof(cells[i].hc_from) - 1);
+    ircd_strncpy(cells[i].hc_to, to, sizeof(cells[i].hc_to) - 1);
+
+    rows[i].he_time = cells[i].hc_time;
+    rows[i].he_msgid = cells[i].hc_msgid;
+    rows[i].he_kind = (int) db_row_int(res->data, i, "kind");
+    rows[i].he_channel =
+      !ircd_strcmp(db_row_str(res->data, i, "is_channel"), "true");
+    rows[i].he_target = cells[i].hc_target;
+    rows[i].he_prefix = cells[i].hc_prefix;
+    rows[i].he_from = cells[i].hc_from;
+    rows[i].he_to = cells[i].hc_to;
+    rows[i].he_body = cells[i].hc_body;
+  }
+
+  /* A short page is the last one: there was nothing else to fill it. */
+  last = (count < HIST_EXPORT_PAGE);
+
+  /* Where the next page starts, taken before the cells go. */
+  ircd_strncpy(hx->hx_time, cells[count - 1].hc_time, sizeof(hx->hx_time) - 1);
+  hx->hx_time[sizeof(hx->hx_time) - 1] = '\0';
+  ircd_strncpy(hx->hx_msgid, cells[count - 1].hc_msgid,
+               sizeof(hx->hx_msgid) - 1);
+  hx->hx_msgid[sizeof(hx->hx_msgid) - 1] = '\0';
+
+  if (hx->hx_cb)
+    (hx->hx_cb)(1, rows, count, last, hx->hx_user);
+
+  MyFree(cells);
+  MyFree(rows);
+
+  if (last)
+    MyFree(hx);
+  else
+    hist_export_page(hx);
+}
+
+/** Ask for the page after the one already handed over. */
+static void hist_export_page(struct HistExport* hx)
+{
+  struct DbParam p_account = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam p_time = { DB_TYPE_TIMESTAMPTZ, 0, DB_FORMAT_TEXT };
+  struct DbParam p_msgid = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam p_limit = { DB_TYPE_INT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[5];
+  struct DbQuery query;
+  enum DbError err;
+
+  p_account.value = hx->hx_account;
+  p_time.value = hx->hx_time;
+  p_msgid.value = hx->hx_msgid;
+  p_limit.value = hx->hx_limit;
+
+  params[0] = &p_account;
+  params[1] = &p_time;
+  params[2] = &p_msgid;
+  params[3] = &p_limit;
+  params[4] = NULL;
+
+  query.sql = hist_sql_export;
+  query.params = params;
+
+  err = db_query(hist_mod, &query, hist_export_done, hx);
+
+  if (err != DB_OK) {
+    hist_complain("export", 0, err);
+    hist_export_fail(hx);
+  }
+}
+
+int hist_store_export(const char* account, HistExportFn cb, void* user)
+{
+  struct HistExport* hx;
+
+  assert(0 != account);
+
+  hx = (struct HistExport*) MyCalloc(1, sizeof(*hx));
+  ircd_strncpy(hx->hx_account, account, sizeof(hx->hx_account) - 1);
+  hx->hx_cb = cb;
+  hx->hx_user = user;
+
+  /* The beginning of time, as a pair that sorts before every row. */
+  ircd_strncpy(hx->hx_time, "0001-01-01T00:00:00.000Z",
+               sizeof(hx->hx_time) - 1);
+  hx->hx_msgid[0] = '\0';
+  ircd_snprintf(0, hx->hx_limit, sizeof(hx->hx_limit), "%d",
+                HIST_EXPORT_PAGE);
+
+  hist_export_page(hx);
+
+  return 1;
+}
+
+/* ------------------------------------------------------------------- *
+ * Counting                                                            *
+ * ------------------------------------------------------------------- */
+
+/** What a caller of hist_store_count() is waiting on. */
+struct HistCount {
+  HistCountFn hc_cb;
+  void*       hc_user;
+};
+
+/** What a count came back with. */
+static void hist_count_done(const struct DbResult* res, void* user)
+{
+  struct HistCount* hc = (struct HistCount*) user;
+  long long rows = -1;
+  long long total = -1;
+
+  if (res->err.dberr_code != DB_OK)
+    hist_complain("count", res, DB_OK);
+  else if (db_rows(res->data)) {
+    rows = db_row_int(res->data, 0, "mine");
+    total = db_row_int(res->data, 0, "total");
+  }
+
+  if (hc->hc_cb)
+    (hc->hc_cb)(rows, total, hc->hc_user);
+
+  MyFree(hc);
+}
+
+int hist_store_count(const char* account, HistCountFn cb, void* user)
+{
+  struct DbParam p_account = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[2];
+  struct DbQuery query;
+  struct HistCount* hc;
+  enum DbError err;
+
+  /* One statement for both numbers: an operator asking how much of the
+   * store is one person's wants to know what that is out of. */
+  query.sql = "SELECT count(*) FILTER (WHERE sender_account = $1 "
+              "OR recipient_account = $1) AS mine, count(*) AS total "
+              "FROM message";
+
+  p_account.value = account ? account : "";
+  params[0] = &p_account;
+  params[1] = NULL;
+  query.params = params;
+
+  hc = (struct HistCount*) MyCalloc(1, sizeof(*hc));
+  hc->hc_cb = cb;
+  hc->hc_user = user;
+
+  err = db_query(hist_mod, &query, hist_count_done, hc);
+
+  if (err != DB_OK) {
+    hist_complain("count", 0, err);
+    MyFree(hc);
+    return 0;
+  }
+
   return 1;
 }

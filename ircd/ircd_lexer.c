@@ -105,6 +105,7 @@ static const struct lexer_token tokens[] = {
   { "gigabytes", GBYTES },
   { "gline", TPRIV_GLINE },
   { "hidden", HIDDEN },
+  { "history_admin", TPRIV_HISTORY },
   { "host", HOST },
   { "hours", HOURS },
   { "hub", HUB },

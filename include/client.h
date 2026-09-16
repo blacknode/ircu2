@@ -176,6 +176,7 @@ enum Priv
     PRIV_FORCE_LOCAL_OPMODE, /**< can hack modes on quarantined local channels */
     PRIV_APASS_OPMODE, /**< can hack modes +A/-A/+U/-U */
     PRIV_MODULE, /**< oper can load and unload modules */
+    PRIV_HISTORY, /**< oper can read, export and delete stored history */
     PRIV_LAST_PRIV /**< number of privileges */
   };
 

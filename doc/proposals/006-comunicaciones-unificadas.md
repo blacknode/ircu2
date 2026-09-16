@@ -849,9 +849,24 @@ dentro de un año:
   servidor se inventa su propio nombre y su propia lectura del reloj para el
   mismo mensaje. El módulo lo dice en el registro al cargarse si falta
   alguno.
-- **Falta** la exportación (§9.6: historial + adjuntos son datos
-  personales, y exportarlos es tan requisito como borrarlos). Lo demás de
-  la fase 2 está.
+- **Exportación implementada** (`hist_admin.c`), y con ella la fase 2 está
+  entera salvo los adjuntos, que son de la fase 5. Un operador con el
+  privilegio `history_admin` —que no es de nadie por defecto: es la
+  diferencia entre un operador y alguien que puede leer todas las
+  conversaciones de la red— tiene `HISTORY STATUS|PURGE|EXPORT|FORGET`.
+
+  **`EXPORT` y `FORGET` usan el mismo predicado**, a propósito: lo que se
+  le entrega a una persona tiene que ser lo que esa persona puede hacer
+  borrar, o una de las dos cosas está mintiendo sobre qué son «sus datos».
+
+  La exportación es un fichero y no algo que viaje por IRC: para lo que
+  sirve es para una petición que llega por escrito y se contesta por
+  escrito. JSON Lines, modo 0600, nunca sobre un fichero que ya exista, en
+  `HISTORY_EXPORT_DIR` —vacío por defecto, así que un servidor no escribe
+  ficheros hasta que se le dice dónde—. Se lee por páginas con *keyset* y
+  no con *offset*, así que una exportación larga no vuelve a leer lo que ya
+  ha escrito; no hay cursor abierto, porque `db.h` no tiene transacciones y
+  una conexión del *pool* no es de quien la pide.
 
 ### 7.2 Fase 3 — Semántica de conversación moderna
 

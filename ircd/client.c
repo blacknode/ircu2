@@ -175,6 +175,11 @@ void client_set_privs(struct Client *client, struct ConfItem *oper,
     FlagClr(&privs_global, PRIV_BADCHAN);
     FlagClr(&privs_global, PRIV_LOCAL_BADCHAN);
     FlagClr(&privs_global, PRIV_APASS_OPMODE);
+    /* Not a default for anybody.  It is the difference between an
+     * operator and somebody who can read every conversation on the
+     * network, and that has to be written down in the Operator{} block
+     * rather than arrived at by being an operator at all. */
+    FlagClr(&privs_global, PRIV_HISTORY);
 
     memset(&privs_local, 0, sizeof(privs_local));
     FlagSet(&privs_local, PRIV_CHAN_LIMIT);
@@ -283,6 +288,7 @@ static struct {
     P(FORCE_LOCAL_OPMODE),
     P(APASS_OPMODE),
     P(MODULE),
+    P(HISTORY),
 #undef P
     {0, 0}};
 

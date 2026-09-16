@@ -40,6 +40,10 @@ struct Client;
 #define MSG_CHATHISTORY "CHATHISTORY"
 #define TOK_CHATHISTORY "CHATHISTORY"
 
+/** The operator's side of the same store. */
+#define MSG_HISTORY "HISTORY"
+#define TOK_HISTORY "HISTORY"
+
 /** The capability that advertises it, and its limit as the value. */
 #define HIST_CAP_NAME "draft/chathistory"
 
@@ -75,5 +79,16 @@ extern void hist_canon(char* buf, size_t buflen, const char* name);
 /** CHATHISTORY, from a client. */
 extern int hist_m_chathistory(struct Client* cptr, struct Client* sptr,
                               int parc, char* parv[]);
+
+/*
+ * Administration (hist_admin.c).
+ */
+
+/** HISTORY, from an operator with the history_admin privilege. */
+extern int hist_m_history(struct Client* cptr, struct Client* sptr,
+                          int parc, char* parv[]);
+
+/** Abandon an export in progress, because the module is going away. */
+extern void hist_admin_shutdown(void);
 
 #endif /* INCLUDED_history_h */

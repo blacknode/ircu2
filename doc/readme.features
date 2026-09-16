@@ -563,6 +563,17 @@ client asking for more is given this many rather than an error: the
 limit is the server's, and a client that has to discover it by being
 refused would just ask again with a smaller number.
 
+HISTORY_EXPORT_DIR
+ * Type: string
+ * Default: (none)
+
+Where HISTORY EXPORT writes.  Empty by default, so a server writes no
+files until it has been told where to: what goes in this directory is one
+person's whole record, and a server should be asked to produce that
+rather than be able to by default.  Each export is a file of its own,
+named for the account and the moment, created with mode 0600 and never
+over an existing file.  See doc/readme.history.
+
 DEFAULT_LANGUAGE
  * Type: string
  * Default: (none)

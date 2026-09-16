@@ -952,7 +952,7 @@ Todo esto son tags sobre `msgid`, y cabe en módulos una vez existe la fase 0:
   servidor no se pone a interpretar prosa para adivinar a quién se
   menciona, que es trabajo del cliente y además frágil.
 
-### 7.3 Fase 4 — Texto enriquecido
+### 7.3 Fase 4 — Texto enriquecido — **implementado**
 
 IRC no tiene tipo de contenido. **No inventar un dialecto de códigos de
 control.** Negociar el formato con una capacidad propia (`blacknode/richtext`)
@@ -964,6 +964,33 @@ bloque, cita, lista, enlace, mención), señalizado con `+blacknode/format=markd
 - El saneado (nada de HTML, límites de anidamiento y de longitud) se hace en el
   servidor, en un hook de reescritura. Nunca en el cliente.
 - Bloques largos → `draft/multiline` de la fase 0.
+
+Está en `modules/hooks/richtext.c` y en `doc/readme.richtext`. Dos cosas
+que el diseño no decía y que hubo que decidir:
+
+**Un mensaje sale como dos cuerpos, y el módulo no entrega ninguno.** El
+relevo ordinario construye uno y lo manda a todos, así que hacía falta
+algo en el core. La forma elegida no es que el módulo se quede el mensaje
+—eso le habría obligado a rehacer el *fan-out*, el eco al remitente, el
+P10 y el hook de almacenamiento— sino un **segundo cuerpo en el
+`HookContext`**: el módulo escribe el texto plano en `hc_alt`, nombra la
+capacidad que elige entre los dos en `hc_alt_cap` y el tag que no debe
+acompañar al plano en `hc_alt_tag`, y `ircd/ircd_relay.c` hace el resto.
+Mecanismo en el core, política en el módulo: *cómo* llega un mensaje a
+dos clases de cliente es cosa del relevo, y *qué significa Markdown* es
+cosa del módulo. Cualquier otro módulo que dé tipo de contenido a un
+mensaje se encuentra el mecanismo hecho.
+
+**Lo que se guarda es el texto plano.** Una transcripción la lee quien la
+lea, y el único cuerpo que puede guardar es el que todo el mundo puede
+leer: `CHATHISTORY` tiene un cuerpo por mensaje, y un Markdown guardado se
+le enseñaría con sus marcas a todo cliente que no lo pidió. El formato se
+pierde en el historial. Es una limitación de verdad y es el lado correcto
+por el que equivocarse.
+
+El tag `+blacknode/format` **no acompaña al cuerpo plano**: dice «este
+cuerpo es Markdown», que es verdad de uno de los dos y mentira del otro, y
+un tag que miente es peor que ningún tag (`msg_tag_suppress()`).
 
 ### 7.4 Fase 5 — HTTP como módulo, y ficheros
 

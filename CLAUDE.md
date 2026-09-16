@@ -387,6 +387,31 @@ servers' copies of that person are told by their own server. Mentions need
 no code at all — an account *is* a nickname, so mentioning `maria` is
 mentioning the account whenever `+r` says she proved it.
 
+**Rich text** (`modules/hooks/richtext.c`, `doc/readme.richtext`, proposal
+006 §7.3). IRC has no content type, and the thing not to do about that is
+invent a dialect of control codes. The format is negotiated
+(`blacknode/richtext`), the body is bounded Markdown marked with
+`+blacknode/format=markdown`, and **every client that did not negotiate it
+is sent the plain-text equivalent the server generated** — that is the
+whole design, not a nicety.
+
+One message therefore goes out as **two bodies**, which the ordinary relay
+cannot do. The mechanism is in the core, not the module: `HookContext`
+gained `hc_alt` (the other body), `hc_alt_cap` (the capability that chooses
+between them), `hc_alt_tag` (a client tag not to relay with the
+alternative, because a tag saying "this body is Markdown" is a lie on the
+other one — `msg_tag_suppress()`) and `hc_alt_set`. A `HOOK_MESSAGE_PRE_*`
+hook fills them in and `ircd_relay.c` does the fan-out, the S2S copy (the
+**rich** body — the next server has the same choice to make), the echo and
+the delivered hook. Any module that gives a message a content type gets
+this without asking. Sanitising is the **server's** (no `<`/`>` at all, no
+IRC formatting codes, nesting ≤ 3, links http(s) and ≤ 256 chars, nothing
+that renders empty), because a client that enforced it could be replaced by
+one that did not. **What is stored is the plain text**: a transcript is
+read back by whoever reads it, `CHATHISTORY` has one body per message, and
+the formatting is lost to history — a real limitation and the right side to
+err on.
+
 **Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
 (`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`
 (`channel_chan_modes()` and friends) so modules can add their own; test them with
@@ -784,7 +809,7 @@ module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
 and the provider behind all three), `doc/readme.modules`,
 `doc/readme.workers`,
 `doc/readme.database`, `doc/readme.migrations`, `doc/readme.history`,
-`doc/readme.translations`,
+`doc/readme.richtext`, `doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
 generates reference docs).
 

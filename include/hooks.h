@@ -202,6 +202,38 @@ struct HookContext {
   size_t          hc_rewrite_len;  /**< Size of #hc_rewrite in bytes. */
   int             hc_rewritten;    /**< Set by a module that rewrote. */
 
+  /** A second body, for recipients that do *not* have #hc_alt_cap.
+   *
+   * One message, delivered two ways.  A module that gives a message a
+   * content type -- rich text is the one this exists for -- has to be
+   * able to say what the message looks like to a client that never
+   * agreed to that type, because the alternative is a network split
+   * between the clients that understand the new thing and the clients
+   * that see its markup.
+   *
+   * The module writes the alternative into #hc_alt, names the capability
+   * in #hc_alt_cap and sets #hc_alt_set.  The relay then sends
+   * HookContext::hc_arg (rewritten or not) to the clients that have the
+   * capability and over the links, and #hc_alt to everybody else.  What
+   * a hook that stores messages is told is the **alternative**: a
+   * transcript is read back by whoever reads it, and the one body it can
+   * keep is the one everybody can read.
+   *
+   * The server owns the buffer; a module writes into it and must never
+   * store a pointer of its own here.
+   */
+  char*           hc_alt;
+  size_t          hc_alt_len;      /**< Size of #hc_alt in bytes. */
+  int             hc_alt_cap;      /**< Capability position, or CAP_NONE. */
+  int             hc_alt_set;      /**< Set by a module that filled it in. */
+  /** A client tag not to relay with #hc_alt, with its @c + , or NULL.
+   *
+   * The tag that says what the rich body is would be a lie on the other
+   * one.  The module names it because the core never learned what it
+   * means.
+   */
+  const char*     hc_alt_tag;
+
   /** The command being dispatched, for #HOOK_COMMAND_PRE and
    * #HOOK_COMMAND_POST; NULL at every other hook point.
    */

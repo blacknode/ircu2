@@ -122,6 +122,22 @@ void msg_tag_line_replay_end(void);
 /** The client tags of the replay in force, or NULL. */
 const char *msg_tag_line_replay_tags(void);
 
+/** Do not relay one client tag until this is cleared.
+ *
+ * For a module that delivers one message two ways -- rich text to the
+ * clients that negotiated it, plain text to everybody else.  A tag that
+ * describes the body is true of one of those and a lie about the other,
+ * and a tag that is a lie is worse than no tag.
+ *
+ * One key at a time, and it lasts until it is cleared: the caller sends
+ * the half the tag does not belong on and clears it immediately, which is
+ * a window with no other send in it because the core is one thread and
+ * the handler does not yield.
+ *
+ * @param[in] key The tag, with its @c + , or NULL to clear.
+ */
+void msg_tag_suppress(const char *key);
+
 /** The line's network-stable timestamp, in ISO 8601 with milliseconds.
  *
  * The @c time tag the line arrived with, when it had one -- every server

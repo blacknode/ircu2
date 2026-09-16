@@ -573,6 +573,9 @@ everything and a "-" entry takes one name back out of the denial, so the
 default is "deny everything except these three".  Empty allows every
 tag.
 
+A network running the richtext module adds -blacknode/format, or nothing
+is ever treated as Markdown; the module says so in the log at load.
+
 The three are what the conversation model is built out of: +draft/reply
 says which message this one answers, +draft/react carries the reaction a
 TAGMSG came to deliver, and +typing says somebody is typing.  They are

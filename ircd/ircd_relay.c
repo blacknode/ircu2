@@ -150,6 +150,71 @@ static void relay_delivered(struct Client* sptr, struct Client* acptr,
   hook_run(HOOK_MESSAGE_DELIVERED, &hc);
 }
 
+/** Deliver one message to a channel as two bodies.
+ *
+ * What #HookContext::hc_alt is for: a module has given the message a
+ * content type, and the clients that never agreed to that type have to be
+ * sent something they can read.  So the channel hears it twice, with the
+ * capability deciding which half hears which -- and the links hear the
+ * rich body, because the next server has the same choice to make and
+ * cannot make it from the plain one.
+ *
+ * What is stored, and what a service bot is handed, is the **alternative**.
+ * A transcript is read back by whoever reads it, and the one body it can
+ * keep is the one everybody can read.
+ *
+ * @param[in] sptr Who sent it.
+ * @param[in] chptr The channel.
+ * @param[in] cmd Command name (PRIVMSG or NOTICE).
+ * @param[in] tok Its P10 token.
+ * @param[in] cap Capability that decides which body a client gets.
+ * @param[in] rich The body for clients that have it.
+ * @param[in] alt The body for everybody else.
+ * @param[in] alt_tag A client tag not to relay with \a alt, or NULL.
+ */
+static void relay_channel_two_ways(struct Client* sptr, struct Channel* chptr,
+                                   const char* cmd, const char* tok, int cap,
+                                   const char* rich, const char* alt,
+                                   const char* alt_tag)
+{
+  int notice = !strcmp(cmd, MSG_NOTICE);
+
+  sendcmdto_capflag_channel_butserv_butone(sptr, cmd, tok, chptr,
+                                           cli_from(sptr),
+                                           SKIP_DEAF | SKIP_BURST,
+                                           cap, CAP_NONE, "%H :%s", chptr,
+                                           rich);
+
+  /* The tag that says what the rich body is would be a lie on the other
+   * one, and a tag that is a lie is worse than no tag. */
+  msg_tag_suppress(alt_tag);
+  sendcmdto_capflag_channel_butserv_butone(sptr, cmd, tok, chptr,
+                                           cli_from(sptr),
+                                           SKIP_DEAF | SKIP_BURST,
+                                           CAP_NONE, cap, "%H :%s", chptr,
+                                           alt);
+  msg_tag_suppress(0);
+
+  sendcmdto_channel_servers_butone(sptr, cmd, tok, chptr, cli_from(sptr),
+                                   SKIP_BURST, "%H :%s", chptr, rich);
+
+  bot_deliver_channel(sptr, chptr, notice, alt);
+
+  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE)) {
+    int mine = CapHas(cli_active(sptr), cap);
+
+    if (!mine)
+      msg_tag_suppress(alt_tag);
+    sendcmdto_one(sptr, cmd, tok, cli_from(sptr), "%H :%s", chptr,
+                  mine ? rich : alt);
+    msg_tag_suppress(0);
+  }
+
+  relay_delivered(sptr, 0, chptr, alt,
+                  notice ? HOOK_MSG_NOTICE : HOOK_MSG_PRIVMSG,
+                  chptr->chname);
+}
+
 /** Relay a local user's message to a channel.
  * Generates an error if the client cannot send to the channel.
  * @param[in] sptr Client that originated the message.
@@ -214,6 +279,7 @@ void relay_channel_message(struct Client* sptr, const char* name, const char* te
   if (hook_is_active(HOOK_MESSAGE_PRE_CHANNEL)) {
     struct HookContext hc;
     char rewrite[BUFSIZE];
+    char alt[BUFSIZE];
 
     hook_context_init(&hc);
     hc.hc_client = sptr;
@@ -222,7 +288,11 @@ void relay_channel_message(struct Client* sptr, const char* name, const char* te
     hc.hc_arg = text;
     hc.hc_rewrite = rewrite;
     hc.hc_rewrite_len = sizeof(rewrite);
+    hc.hc_alt = alt;
+    hc.hc_alt_len = sizeof(alt);
+    hc.hc_alt_cap = CAP_NONE;
     rewrite[0] = '\0';
+    alt[0] = '\0';
 
     if (hook_run(HOOK_MESSAGE_PRE_CHANNEL, &hc) == HOOK_DENY) {
       hook_deny_reply(sptr, &hc, ERR_CANNOTSENDTOCHAN, chptr->chname);
@@ -232,6 +302,14 @@ void relay_channel_message(struct Client* sptr, const char* name, const char* te
     if (hc.hc_rewritten) {
       rewrite[sizeof(rewrite) - 1] = '\0';
       text = rewrite;
+    }
+
+    if (hc.hc_alt_set && hc.hc_alt_cap != CAP_NONE) {
+      alt[sizeof(alt) - 1] = '\0';
+      RevealDelayedJoinIfNeeded(sptr, chptr);
+      relay_channel_two_ways(sptr, chptr, CMD_PRIVATE, hc.hc_alt_cap,
+                             text, alt, hc.hc_alt_tag);
+      return;
     }
   }
 
@@ -652,6 +730,7 @@ void relay_private_message(struct Client* sptr, const char* name, const char* te
   if (hook_is_active(HOOK_MESSAGE_PRE_PRIVATE)) {
     struct HookContext hc;
     char rewrite[BUFSIZE];
+    char alt[BUFSIZE];
 
     hook_context_init(&hc);
     hc.hc_client = acptr;      /* who it is going to */
@@ -659,7 +738,11 @@ void relay_private_message(struct Client* sptr, const char* name, const char* te
     hc.hc_arg = text;
     hc.hc_rewrite = rewrite;
     hc.hc_rewrite_len = sizeof(rewrite);
+    hc.hc_alt = alt;
+    hc.hc_alt_len = sizeof(alt);
+    hc.hc_alt_cap = CAP_NONE;
     rewrite[0] = '\0';
+    alt[0] = '\0';
 
     if (hook_run(HOOK_MESSAGE_PRE_PRIVATE, &hc) == HOOK_DENY) {
       hook_deny_reply(sptr, &hc, ERR_CANNOTSENDTOCHAN, cli_name(acptr));
@@ -669,6 +752,40 @@ void relay_private_message(struct Client* sptr, const char* name, const char* te
     if (hc.hc_rewritten) {
       rewrite[sizeof(rewrite) - 1] = '\0';
       text = rewrite;
+    }
+
+    /* One recipient, so the choice is simply which body they get -- and
+     * the rich one over a link, because their server makes the same
+     * choice for them. */
+    if (hc.hc_alt_set && hc.hc_alt_cap != CAP_NONE) {
+      int theirs;
+
+      alt[sizeof(alt) - 1] = '\0';
+      theirs = MyUser(acptr) && CapHas(cli_active(acptr), hc.hc_alt_cap);
+
+      if (IsLocalServiceBot(acptr))
+        bot_deliver_private(sptr, acptr, 0, alt);
+      else {
+        if (!theirs && MyUser(acptr))
+          msg_tag_suppress(hc.hc_alt_tag);
+        sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr,
+                      (theirs || !MyUser(acptr)) ? text : alt);
+        msg_tag_suppress(0);
+      }
+
+      if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE)) {
+        int mine = CapHas(cli_active(sptr), hc.hc_alt_cap);
+
+        if (!mine)
+          msg_tag_suppress(hc.hc_alt_tag);
+        sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%C :%s", acptr,
+                      mine ? text : alt);
+        msg_tag_suppress(0);
+      }
+
+      relay_delivered(sptr, acptr, 0, alt, HOOK_MSG_PRIVMSG,
+                      cli_name(acptr));
+      return;
     }
   }
 

@@ -282,6 +282,16 @@ static char replay_time[32];
  */
 static char replay_tags[512];
 
+/** One client tag not to relay for the moment, or "".
+ *
+ * A module that delivers one message two ways -- rich text to the clients
+ * that negotiated it, plain text to everybody else -- has to be able to
+ * say which half a tag belongs to.  @c +blacknode/format=markdown is true
+ * of one of those bodies and a lie about the other, and a tag that is a
+ * lie is worse than no tag.
+ */
+static char suppress_key[CAPVALUELEN];
+
 int
 msg_tag_needs_msgid(const char *tok)
 {
@@ -415,6 +425,18 @@ const char *
 msg_tag_line_replay_tags(void)
 {
   return replay_tags[0] ? replay_tags : 0;
+}
+
+void
+msg_tag_suppress(const char *key)
+{
+  if (!key || !*key) {
+    suppress_key[0] = '\0';
+    return;
+  }
+
+  ircd_strncpy(suppress_key, key, sizeof(suppress_key) - 1);
+  suppress_key[sizeof(suppress_key) - 1] = '\0';
 }
 
 void
@@ -867,6 +889,8 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
       if (!msg_tag_key_client_only(tag->key))
         continue;
       if (!msg_tag_client_allowed(tag->key))
+        continue;
+      if (suppress_key[0] && !ircd_strcmp(tag->key, suppress_key))
         continue;
       pos = msg_tag_append(pos, end, &wrote, tag->key, tag->value);
       if (!pos)

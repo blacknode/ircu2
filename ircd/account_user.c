@@ -238,7 +238,8 @@ int account_logout(struct Client* cptr)
    * "maria" but no longer +r is exactly what an onlooker cannot tell
    * apart from an impostor; see proposal 007 section 5.
    */
-  account_force_guest(cptr, "Logged out");
+  if (account_force_guest(cptr, "Logged out"))
+    return CPTR_KILLED;
 
   return 1;
 }

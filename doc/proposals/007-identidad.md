@@ -137,9 +137,16 @@ struct AccountProvider {
   void (*ap_verify)(account_id_t id, const struct AccountRequest* req);
   /* ¿De quién es este nick?  Misma forma, misma respuesta diferida. */
   void (*ap_lookup)(account_id_t id, const char* nick);
+  /* ¿Qué cuentas tiene esta dirección?  La que responde a ACCOUNT LIST. */
+  void (*ap_list)(account_id_t id, const char* email);
   void (*ap_cancel)(account_id_t id);
 };
 ```
+
+Las tres son obligatorias. Un proveedor que verificara pero no supiera
+listar haría que `ACCOUNT LIST` contestase «el servicio de identidad no está
+disponible» en un servidor donde la identidad funciona, que es la única
+respuesta que un usuario no puede distinguir de una caída.
 
 `struct AccountRequest` lleva el mecanismo, el authcid, el authzid, el secreto,
 la huella TLS y el numnick del cliente. **El secreto se borra con
@@ -232,19 +239,43 @@ razonamiento que llevó `HOOK_CLIENT_PRE_REGISTER` a `s_auth.c` en la fase 0.
   ACCOUNT LIST
 ```
 
-Token P10 `AC`, libre. `LOGIN` funciona **antes y después** de completar la
-conexión: antes se comporta como `PASS` y retiene el registro con la misma
-`AR_SASL_PENDING`; después identifica o cambia de cuenta activa.
+**Sin token P10**, por la razón de `AUTHENTICATE` (§2) y por una más: `AC`
+es lo que usaba el burst de cuentas del ircu histórico, y darle aquí otro
+significado haría que el burst de un par antiguo cayera en un comando de
+cliente. Nada de `ACCOUNT` cruza un enlace.
+
+`LOGIN` funciona **antes y después** de completar la conexión: antes se
+comporta como `PASS` y retiene el registro con la misma `AR_SASL_PENDING`;
+después identifica o cambia de cuenta activa.
+
+La credencial se entrega por `sasl_login_request()`, que es por donde entran
+también las de `AUTHENTICATE`: la pregunta es la misma y lo que se hace con
+la respuesta —el `+r`, el nick, la retención del registro— también, así que
+hay un solo camino y no dos que haya que mantener sincronizados. Lo único
+que decide el comando es en qué numerics se le habla al cliente: quien nunca
+negoció la capacidad `sasl` no oye hablar de SASL. Los fallos van en un
+`ERR_ACCOUNTFAIL` (983) con el motivo; el éxito, en el 900 de siempre; el
+`LOGOUT`, en el 901 con el `guest-*` que ya lleva puesto.
+
+El tope de intentos es de **fallos seguidos**, no de intentos: un `LOGIN`
+correcto lo pone a cero, porque cambiar de cuenta es identificarse y quien
+acaba de demostrar quién es no ha atacado nada.
 
 **`LIST`** enumera las cuentas del email con el que estás autenticado, marcando
 la que estás usando y la que es la de por defecto:
 
 ```
-  :servidor 984 maria maria :* (en uso)
-  :servidor 984 maria maria_movil :
-  :servidor 984 maria mrodriguez :(por defecto)
-  :servidor 985 maria :End of ACCOUNT LIST
+  :servidor 984 maria maria * :en uso
+  :servidor 984 maria maria_movil - :disponible
+  :servidor 984 maria mrodriguez d :por defecto
+  :servidor 985 maria :Fin de ACCOUNT LIST
 ```
+
+El segundo parámetro son banderas para el cliente —`*` la que está en uso,
+`d` la de por defecto, `-` ninguna— y el texto es para la persona, y se
+traduce. Cuál está en uso lo sabe el servidor, no el proveedor: el proveedor
+sabe qué cuentas tiene la dirección, el servidor sabe cuál lleva puesta el
+cliente.
 
 **`LIST` exige estar autenticado**, y no por prudencia: el dato de entrada es
 `cli_user(sptr)->email`, que sólo existe si hubo un `LOGIN`. Sin él la consulta
@@ -584,7 +615,9 @@ Cada punto compila, pasa pruebas y se sube por separado.
    vuelo, `account_login()` / `account_logout()` y el renombrado a `guest-*`.
 4. **`m_authenticate.c` + `AR_SASL_PENDING`** *(hecho)* — el diálogo y la retención del
    registro. Con un proveedor de pruebas ya se autentica de punta a punta.
-5. **`m_account.c`** — `LOGIN`, `LOGOUT`, `LIST`, token `AC`.
+5. **`m_account.c`** *(hecho)* — `LOGIN`, `LOGOUT` y `LIST`, sin token P10
+   (ver §4.2), sobre `sasl_login_request()`: la misma pregunta que hace
+   `AUTHENTICATE` y el mismo camino de la respuesta a `+r`.
 6. **`cache.c` + `cache.h` + `modules/workers/redis/`** — el tercer registro y
    su driver, con el bloque `Redis{}`. *(hecho; ver `doc/readme.cache`)*
 7. **`modules/services/identity/`** — el almacén, las migraciones con sus

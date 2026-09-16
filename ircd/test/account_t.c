@@ -67,19 +67,23 @@ static struct Client* const CLI_B = (struct Client*) 0x20;
 
 static int prov_verify_calls;
 static int prov_lookup_calls;
+static int prov_list_calls;
 static int prov_cancel_calls;
 static account_id_t prov_last_id;
 static char prov_last_authcid[ACCOUNT_EMAIL_MAX + 1];
 static char prov_last_nick[NICKLEN + 1];
+static char prov_last_email[ACCOUNT_EMAIL_MAX + 1];
 /** When non-zero, the provider answers from inside the ask. */
 static int prov_answer_now;
 
 static void prov_reset(void)
 {
-  prov_verify_calls = prov_lookup_calls = prov_cancel_calls = 0;
+  prov_verify_calls = prov_lookup_calls = prov_list_calls = 0;
+  prov_cancel_calls = 0;
   prov_last_id = 0;
   prov_last_authcid[0] = '\0';
   prov_last_nick[0] = '\0';
+  prov_last_email[0] = '\0';
   prov_answer_now = 0;
 }
 
@@ -100,6 +104,13 @@ static void prov_lookup(account_id_t id, const char* nick)
   ircd_strncpy(prov_last_nick, nick, NICKLEN);
 }
 
+static void prov_list(account_id_t id, const char* email)
+{
+  prov_list_calls++;
+  prov_last_id = id;
+  ircd_strncpy(prov_last_email, email, ACCOUNT_EMAIL_MAX);
+}
+
 static void prov_cancel(account_id_t id)
 {
   prov_cancel_calls++;
@@ -107,17 +118,22 @@ static void prov_cancel(account_id_t id)
 }
 
 static const struct AccountProvider provider = {
-  "test", prov_verify, prov_lookup, prov_cancel
+  "test", prov_verify, prov_lookup, prov_list, prov_cancel
 };
 
 /** A second provider, to prove only one may register. */
 static const struct AccountProvider provider_two = {
-  "other", prov_verify, prov_lookup, prov_cancel
+  "other", prov_verify, prov_lookup, prov_list, prov_cancel
 };
 
 /** One with a hole in it. */
 static const struct AccountProvider provider_broken = {
-  "broken", 0, prov_lookup, prov_cancel
+  "broken", 0, prov_lookup, prov_list, prov_cancel
+};
+
+/** One that can verify but cannot list, which is also a hole. */
+static const struct AccountProvider provider_no_list = {
+  "nolist", prov_verify, prov_lookup, 0, prov_cancel
 };
 
 /* --- what the core was told ----------------------------------------- */
@@ -133,9 +149,39 @@ static int owner_calls;
 static enum AccountOwner owner_result;
 static char owner_nick[NICKLEN + 1];
 
+static int list_calls;
+static enum AccountResult list_result;
+static struct Client* list_client;
+static unsigned int list_count;
+static char list_first[NICKLEN + 1];
+static int list_first_default;
+
+static void on_list(struct Client* cptr, enum AccountResult result,
+                    const struct AccountEntry* entries, unsigned int count,
+                    const char* reason, void* data)
+{
+  (void) reason; (void) data;
+  list_calls++;
+  list_result = result;
+  list_client = cptr;
+  list_count = count;
+  list_first[0] = '\0';
+  list_first_default = 0;
+
+  if (entries && count) {
+    ircd_strncpy(list_first, entries[0].ae_nick, NICKLEN);
+    list_first_default = entries[0].ae_default;
+  }
+}
+
 static void done_reset(void)
 {
-  done_calls = owner_calls = 0;
+  done_calls = owner_calls = list_calls = 0;
+  list_client = 0;
+  list_count = 0;
+  list_first[0] = '\0';
+  list_first_default = 0;
+  list_result = ACCOUNT_OK;
   done_result = ACCOUNT_OK;
   done_client = 0;
   done_nick[0] = done_email[0] = owner_nick[0] = '\0';
@@ -199,6 +245,11 @@ static void test_register(void)
 
   /* A provider that cannot verify is not a provider. */
   assert(!account_register_provider(MOD_A, &provider_broken));
+  /* Nor is one that can verify but cannot list: ACCOUNT LIST would then
+   * answer "the identity service is not available" on a server where
+   * identity works, which is the one answer a user cannot tell from an
+   * outage. */
+  assert(!account_register_provider(MOD_A, &provider_no_list));
   assert(!account_register_provider(MOD_A, 0));
   assert(!account_have_provider());
 
@@ -485,6 +536,86 @@ static void test_guest_nick(void)
   printf("ok - guest nicknames are distinct and fit\n");
 }
 
+/** A listing is asked of the address and answered on its own. */
+static void test_list(void)
+{
+  static const struct AccountEntry entries[] = {
+    { "maria", 0 },
+    { "maria_movil", 0 },
+    { "mrodriguez", 1 }
+  };
+  account_id_t id;
+
+  setup();
+  assert(account_register_provider(MOD_A, &provider));
+
+  assert(account_list(CLI_A, "", on_list, 0) == 0);
+  assert(account_list(CLI_A, 0, on_list, 0) == 0);
+  assert(prov_list_calls == 0);
+
+  id = account_list(CLI_A, "maria@example.org", on_list, 0);
+  assert(id != 0);
+  assert(prov_list_calls == 1);
+  assert(0 == strcmp(prov_last_email, "maria@example.org"));
+
+  /* The three kinds of answer do not cross. */
+  assert(!account_complete(id, ACCOUNT_OK, "maria", 0, 0));
+  assert(!account_complete_owner(id, ACCOUNT_NICK_FREE));
+  assert(done_calls == 0 && owner_calls == 0);
+  assert(account_pending_count() == 1);
+
+  assert(account_complete_list(id, ACCOUNT_OK, entries, 3, 0));
+  assert(list_calls == 1);
+  assert(list_result == ACCOUNT_OK);
+  assert(list_client == CLI_A);
+  assert(list_count == 3);
+  assert(0 == strcmp(list_first, "maria"));
+  assert(!list_first_default);
+  assert(account_pending_count() == 0);
+
+  /* And the handle is spent. */
+  assert(!account_complete_list(id, ACCOUNT_OK, entries, 3, 0));
+  assert(list_calls == 1);
+
+  printf("ok - a listing is answered on its own\n");
+}
+
+/** A listing that fails reaches the caller with no entries. */
+static void test_list_fails(void)
+{
+  account_id_t id;
+
+  setup();
+  assert(account_register_provider(MOD_A, &provider));
+
+  id = account_list(CLI_A, "maria@example.org", on_list, 0);
+  assert(id != 0);
+
+  assert(account_complete_list(id, ACCOUNT_ERR_UNAVAILABLE, 0, 0, 0));
+  assert(list_calls == 1);
+  assert(list_result == ACCOUNT_ERR_UNAVAILABLE);
+  assert(list_count == 0);
+
+  /* So does a provider that goes away owing one, and a deadline. */
+  done_reset();
+  id = account_list(CLI_A, "maria@example.org", on_list, 0);
+  assert(id != 0);
+  account_unregister_provider(MOD_A);
+  assert(list_calls == 1);
+  assert(list_result == ACCOUNT_ERR_UNAVAILABLE);
+  assert(account_pending_count() == 0);
+
+  done_reset();
+  assert(account_register_provider(MOD_A, &provider));
+  id = account_list(CLI_A, "maria@example.org", on_list, 0);
+  assert(id != 0);
+  assert(account_expire(CurrentTime + 3600) == 1);
+  assert(list_calls == 1);
+  assert(list_result == ACCOUNT_ERR_TIMEOUT);
+
+  printf("ok - a listing that fails carries no entries\n");
+}
+
 int main(void)
 {
   test_register();
@@ -492,6 +623,8 @@ int main(void)
   test_verify();
   test_verify_answers_immediately();
   test_lookup();
+  test_list();
+  test_list_fails();
   test_client_gone();
   test_expire();
   test_provider_withdrawn();

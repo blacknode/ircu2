@@ -154,6 +154,7 @@ set(IRCU_SOURCES
   jupe.c
   list.c
   listener.c
+  m_account.c
   m_admin.c
   m_asll.c
   m_authenticate.c

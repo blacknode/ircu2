@@ -847,6 +847,72 @@ msgctxt "690"
 msgid "%s %s :can speak these languages."
 msgstr "%s %s :habla estos idiomas."
 
+#: ircd/s_err.c:1427
+#, no-c-format
+msgctxt "691"
+msgid "%s %s :is the address this account belongs to"
+msgstr "%s %s :es la dirección a la que pertenece esta cuenta"
+
+#: ircd/s_err.c:1429
+#, no-c-format
+msgctxt "692"
+msgid "%s :must identify to this nickname before doing anything else"
+msgstr "%s :tiene que identificarse a este nick antes de hacer nada más"
+
+#: ircd/s_err.c:1845
+#, no-c-format
+msgctxt "900"
+msgid "%s %s :You are now logged in as %s"
+msgstr "%s %s :Has iniciado sesión como %s"
+
+#: ircd/s_err.c:1847
+#, no-c-format
+msgctxt "901"
+msgid "%s :You are now logged out"
+msgstr "%s :Has cerrado la sesión"
+
+#: ircd/s_err.c:1849
+#, no-c-format
+msgctxt "902"
+msgid ":You must use a different nickname"
+msgstr ":Tienes que usar otro nick"
+
+#: ircd/s_err.c:1851
+#, no-c-format
+msgctxt "903"
+msgid ":SASL authentication successful"
+msgstr ":Autenticación SASL correcta"
+
+#: ircd/s_err.c:1853
+#, no-c-format
+msgctxt "904"
+msgid ":SASL authentication failed"
+msgstr ":La autenticación SASL ha fallado"
+
+#: ircd/s_err.c:1855
+#, no-c-format
+msgctxt "905"
+msgid ":SASL message too long"
+msgstr ":Mensaje SASL demasiado largo"
+
+#: ircd/s_err.c:1857
+#, no-c-format
+msgctxt "906"
+msgid ":SASL authentication aborted"
+msgstr ":Autenticación SASL cancelada"
+
+#: ircd/s_err.c:1859
+#, no-c-format
+msgctxt "907"
+msgid ":You have already authenticated using SASL"
+msgstr ":Ya te has autenticado con SASL"
+
+#: ircd/s_err.c:1861
+#, no-c-format
+msgctxt "908"
+msgid "%s :are the available SASL mechanisms"
+msgstr "%s :son los mecanismos SASL disponibles"
+
 #: ircd/s_err.c:2007
 #, no-c-format
 msgctxt "981"
@@ -858,6 +924,36 @@ msgstr "%u :Has indicado demasiados idiomas."
 msgctxt "982"
 msgid "%s :Languages are not supported by this server."
 msgstr "%s :Este servidor no dispone de esos idiomas."
+
+#: ircd/s_err.c:2011
+#, no-c-format
+msgctxt "983"
+msgid ":Authentication failed: %s"
+msgstr ":La autenticación ha fallado: %s"
+
+#: ircd/s_err.c:2013
+#, no-c-format
+msgctxt "984"
+msgid "%s %s :%s"
+msgstr "%s %s :%s"
+
+#: ircd/s_err.c:2015
+#, no-c-format
+msgctxt "985"
+msgid ":End of ACCOUNT LIST"
+msgstr ":Fin de ACCOUNT LIST"
+
+#: ircd/s_err.c:2017
+#, no-c-format
+msgctxt "986"
+msgid ":You have not authenticated to an account"
+msgstr ":No te has autenticado a ninguna cuenta"
+
+#: ircd/s_err.c:2019
+#, no-c-format
+msgctxt "987"
+msgid "%s :You must identify to this nickname before you can use that"
+msgstr "%s :Tienes que identificarte a este nick antes de poder usar eso"
 
 #
 # Explicit formats (SND_EXPLICIT) and notices to one client.
@@ -1254,3 +1350,93 @@ msgstr "%C :UPING: sin respuesta de %s en %d segundos"
 #, no-c-format
 msgid "%C :UPING: Could not start ping to %s"
 msgstr "%C :UPING: No se ha podido iniciar el ping a %s"
+
+#: ircd/m_nick.c:225
+#, no-c-format
+msgid "%s :Registration is being checked, try again in a moment"
+msgstr "%s :Se está comprobando el registro, inténtalo dentro de un momento"
+
+#: ircd/m_account.c:139
+#, no-c-format
+msgid "in use, default"
+msgstr "en uso, por defecto"
+
+#: ircd/m_account.c:140
+#, no-c-format
+msgid "in use"
+msgstr "en uso"
+
+#: ircd/m_account.c:141
+#, no-c-format
+msgid "default"
+msgstr "por defecto"
+
+#: ircd/m_account.c:142
+#, no-c-format
+msgid "available"
+msgstr "disponible"
+
+#: ircd/m_account.c:170
+#, no-c-format
+msgid "that is not an address"
+msgstr "eso no es una dirección"
+
+#: ircd/m_account.c:174
+#, no-c-format
+msgid "that password is too long"
+msgstr "esa contraseña es demasiado larga"
+
+#: ircd/m_account.c:198
+#, no-c-format
+msgid "another login is already under way"
+msgstr "ya hay otra identificación en curso"
+
+#: ircd/m_account.c:202
+#, no-c-format
+msgid "you have already authenticated"
+msgstr "ya te has autenticado"
+
+#: ircd/m_account.c:206
+#, no-c-format
+msgid "too many failed attempts on this connection"
+msgstr "demasiados intentos fallidos en esta conexión"
+
+#: ircd/m_account.c:210
+#, no-c-format
+msgid "this server will not take a password over an unencrypted connection"
+msgstr "este servidor no acepta contraseñas por una conexión sin cifrar"
+
+#: ircd/account.c:156
+#, no-c-format
+msgid "authentication succeeded"
+msgstr "autenticación correcta"
+
+#: ircd/account.c:157
+#, no-c-format
+msgid "no such account, or the password is wrong"
+msgstr "no existe esa cuenta, o la contraseña no es correcta"
+
+#: ircd/account.c:158
+#, no-c-format
+msgid "that identity has no such account"
+msgstr "esa identidad no tiene esa cuenta"
+
+#: ircd/account.c:159
+#, no-c-format
+msgid "that account is suspended"
+msgstr "esa cuenta está suspendida"
+
+#: ircd/account.c:160
+#, no-c-format
+msgid "somebody else is using that nickname"
+msgstr "otra persona está usando ese nick"
+
+#: ircd/account.c:161
+#, no-c-format
+msgid "the identity service is not available"
+msgstr "el servicio de identidad no está disponible"
+
+#: ircd/account.c:162
+#, no-c-format
+msgid "the identity service did not answer in time"
+msgstr "el servicio de identidad no ha respondido a tiempo"

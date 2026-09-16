@@ -514,6 +514,7 @@ extern const struct Numeric* get_error_numeric(int err);
 #define ERR_TOOMANYLANGUAGES 981        /* IRCv3 draft/languages */
 #define ERR_NOLANGUAGE       982        /* IRCv3 draft/languages */
 
+#define ERR_ACCOUNTFAIL      983        /* proposal 007 */
 #define RPL_ACCOUNTLIST      984        /* proposal 007 */
 #define RPL_ENDOFACCOUNTLIST 985        /* proposal 007 */
 #define ERR_NOTAUTHENTICATED 986        /* proposal 007 */

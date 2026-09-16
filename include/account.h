@@ -78,6 +78,17 @@ enum AccountOwner {
   ACCOUNT_NICK_UNKNOWN     /**< Could not be established.  See below. */
 };
 
+/** One account in a listing.
+ *
+ * What ACCOUNT LIST shows: the nickname, and whether it is the address's
+ * default.  Whether it is the one in use is the core's own knowledge, not
+ * the provider's, so it is not here.
+ */
+struct AccountEntry {
+  const char* ae_nick;    /**< The account; a nickname. */
+  int         ae_default; /**< Non-zero if this is the address's default. */
+};
+
 /** One credential to check.
  *
  * The core's, and it does not outlive the ap_verify() call: a provider
@@ -121,6 +132,14 @@ struct AccountProvider {
    * @param[in] nick Nickname to ask about.
    */
   void (*ap_lookup)(account_id_t id, const char* nick);
+
+  /** List the accounts an address holds.
+   *
+   * Same contract: answer later with account_complete_list().
+   * @param[in] id Handle to hand back.
+   * @param[in] email Address to list, which the caller has authenticated.
+   */
+  void (*ap_list)(account_id_t id, const char* email);
 
   /** Forget a question.  The core has stopped caring about the answer.
    * @param[in] id Handle it was given.
@@ -185,6 +204,21 @@ typedef void (*AccountDoneFn)(struct Client* cptr, enum AccountResult result,
 typedef void (*AccountOwnerFn)(struct Client* cptr, enum AccountOwner owner,
                                const char* nick, void* data);
 
+/** Called when a listing is answered.
+ *
+ * @param[in] cptr Client it was about, or NULL if it has since left.
+ * @param[in] result #ACCOUNT_OK, or why there is no listing.
+ * @param[in] entries The accounts, or NULL.  The provider's, and it does
+ *   not outlive the call: a caller that keeps one keeps a dangling pointer.
+ * @param[in] count How many.
+ * @param[in] reason Text to show the user, or NULL for the default.
+ * @param[in] data Opaque pointer the caller passed in.
+ */
+typedef void (*AccountListFn)(struct Client* cptr, enum AccountResult result,
+                              const struct AccountEntry* entries,
+                              unsigned int count, const char* reason,
+                              void* data);
+
 /** Ask whether a credential is good.
  *
  * @param[in] cptr Client it is about; the question is dropped if it leaves.
@@ -217,6 +251,22 @@ extern account_id_t account_verify(struct Client* cptr,
 extern account_id_t account_lookup(struct Client* cptr, const char* nick,
                                    AccountOwnerFn done, void* data);
 
+/** Ask what accounts an address holds.
+ *
+ * The address is not a search key the caller may invent: it is the one the
+ * client proved was its own by authenticating with it, which is why
+ * ACCOUNT LIST refuses a client that has not.  Asking this about an
+ * arbitrary address would be an account enumerator.
+ *
+ * @param[in] cptr Client it is about; the question is dropped if it leaves.
+ * @param[in] email The address, as authenticated.
+ * @param[in] done Called with the answer.
+ * @param[in] data Opaque pointer for \a done.
+ * @return The handle, or 0 if there is no provider.
+ */
+extern account_id_t account_list(struct Client* cptr, const char* email,
+                                 AccountListFn done, void* data);
+
 /** Answer a credential check.  Main thread only.
  *
  * Consumes the handle: \a id is invalid afterwards, and the provider must
@@ -241,6 +291,18 @@ extern int account_complete(account_id_t id, enum AccountResult result,
  * @return Non-zero if the handle was outstanding.
  */
 extern int account_complete_owner(account_id_t id, enum AccountOwner owner);
+
+/** Answer a listing.  Main thread only.
+ * @param[in] id Handle from #AccountProvider::ap_list.
+ * @param[in] result #ACCOUNT_OK, or why there is no listing.
+ * @param[in] entries The accounts; not kept past this call.
+ * @param[in] count How many.
+ * @param[in] reason Text for the user, or NULL for the default.
+ * @return Non-zero if the handle was outstanding.
+ */
+extern int account_complete_list(account_id_t id, enum AccountResult result,
+                                 const struct AccountEntry* entries,
+                                 unsigned int count, const char* reason);
 
 /** Drop every question about a client, without answering any.
  *
@@ -321,7 +383,9 @@ extern int account_claim_nick(struct Client* cptr, const char* nick);
  * apart from an impostor, so the nickname goes back with the session.
  *
  * @param[in,out] cptr Client to log out; must be local.
- * @return Non-zero if it was logged in.
+ * @return Zero if it was not logged in, 1 if it is now logged out, and
+ *   CPTR_KILLED if the guest nickname was somehow taken and the client is
+ *   gone -- so a caller must test for that before touching it again.
  */
 extern int account_logout(struct Client* cptr);
 

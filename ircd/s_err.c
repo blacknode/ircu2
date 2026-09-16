@@ -2008,9 +2008,9 @@ static Numeric replyTable[] = {
 /* 982 */
   N(ERR_NOLANGUAGE, "982", "%s :Languages are not supported by this server."),
 /* 983 */
-  { 0 },
+  N(ERR_ACCOUNTFAIL, "983", ":Authentication failed: %s"),
 /* 984 */
-  N(RPL_ACCOUNTLIST, "984", "%s :%s"),
+  N(RPL_ACCOUNTLIST, "984", "%s %s :%s"),
 /* 985 */
   N(RPL_ENDOFACCOUNTLIST, "985", ":End of ACCOUNT LIST"),
 /* 986 */

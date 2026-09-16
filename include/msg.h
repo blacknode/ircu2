@@ -395,6 +395,15 @@ struct Client;
 #define TOK_AUTHENTICATE	"AUTHENTICATE"
 #define CMD_AUTHENTICATE	MSG_AUTHENTICATE, TOK_AUTHENTICATE
 
+/* ACCOUNT has no P10 token either, for AUTHENTICATE's reason and one
+ * more: "AC" is what the historical ircu account burst used, and giving
+ * it a different meaning here would have an old peer's burst land on a
+ * client command.  Nothing about ACCOUNT crosses a link.
+ */
+#define MSG_ACCOUNT		"ACCOUNT"
+#define TOK_ACCOUNT		"ACCOUNT"
+#define CMD_ACCOUNT		MSG_ACCOUNT, TOK_ACCOUNT
+
 #define MSG_XQUERY		"XQUERY"
 #define TOK_XQUERY		"XQ"
 #define CMD_XQUERY		MSG_XQUERY, TOK_XQUERY

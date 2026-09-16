@@ -274,4 +274,34 @@ extern int sasl_in_progress(struct Client* cptr);
  */
 extern void sasl_registered(struct Client* cptr);
 
+/** What sasl_login_request() did with a credential. */
+enum SaslLogin {
+  SASL_LOGIN_ASKED,       /**< The provider has the question. */
+  SASL_LOGIN_BUSY,        /**< One credential is already in flight here. */
+  SASL_LOGIN_ALREADY,     /**< This connection has already authenticated. */
+  SASL_LOGIN_TOOMANY,     /**< Too many failures on this connection. */
+  SASL_LOGIN_NOTLS,       /**< The password would travel in the clear. */
+  SASL_LOGIN_UNAVAILABLE  /**< Nobody can answer for it. */
+};
+
+/** Hand the identity provider a credential that did not come from SASL.
+ *
+ * ACCOUNT LOGIN asks exactly the question AUTHENTICATE asks, and what
+ * happens to the answer -- the @c +r grant, the nickname, the hold on
+ * registration -- is the same, so both go through here rather than
+ * through two copies of it.  The client is answered in the numerics of
+ * the command it used: one that never negotiated the @c sasl capability
+ * is never told about SASL.
+ *
+ * @param[in,out] cptr Client that sent the command; must be local.
+ * @param[in] authcid The address it gave.
+ * @param[in] authzid Which of that address's accounts, or "".
+ * @param[in] secret The password.
+ * @param[out] how What happened.
+ * @return Zero, or CPTR_KILLED.
+ */
+extern int sasl_login_request(struct Client* cptr, const char* authcid,
+                              const char* authzid, const char* secret,
+                              enum SaslLogin* how);
+
 #endif /* INCLUDED_sasl_h */

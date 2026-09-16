@@ -29,6 +29,7 @@
 #include "ircd_alloc.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_string.h"
 #include "random.h"
@@ -45,8 +46,10 @@ struct AccountCall {
   time_t              ac_deadline;  /**< When it is given up on. */
   AccountDoneFn       ac_done;      /**< For a credential check. */
   AccountOwnerFn      ac_owner;     /**< For a nickname lookup. */
+  AccountListFn       ac_list;      /**< For a listing. */
   void*               ac_data;      /**< The caller's opaque pointer. */
   char                ac_nick[NICKLEN + 1]; /**< Nickname a lookup asked about. */
+  char                ac_email[ACCOUNT_EMAIL_MAX + 1]; /**< Address a listing asked about. */
 };
 
 /** The registered provider, or NULL. */
@@ -146,15 +149,21 @@ static const char account_b62[] =
  */
 #define ACCOUNT_GUEST_RANDOM 8
 
-/** Text for each #AccountResult, indexed by the enum. */
+/** Text for each #AccountResult, indexed by the enum.
+ *
+ * Marked for translation but never translated here: this half of the
+ * subsystem has no client to translate for, and the reason reaches a user
+ * as a parameter of a numeric.  Whoever shows it to somebody wraps it in
+ * _(), and the catalog has the entry because N_() put it in the template.
+ */
 static const char* account_result_text[ACCOUNT_ERR_LAST] = {
-  "authentication succeeded",
-  "no such account, or the password is wrong",
-  "that identity has no such account",
-  "that account is suspended",
-  "somebody else is using that nickname",
-  "the identity service is not available",
-  "the identity service did not answer in time"
+  N_("authentication succeeded"),
+  N_("no such account, or the password is wrong"),
+  N_("that identity has no such account"),
+  N_("that account is suspended"),
+  N_("somebody else is using that nickname"),
+  N_("the identity service is not available"),
+  N_("the identity service did not answer in time")
 };
 
 /** Text for a result, for a log line or a default reason.
@@ -218,6 +227,7 @@ static void account_answer(struct AccountCall* call, enum AccountResult result,
 {
   AccountDoneFn done = call->ac_done;
   AccountOwnerFn ownerfn = call->ac_owner;
+  AccountListFn listfn = call->ac_list;
   struct Client* cptr = call->ac_client;
   void* data = call->ac_data;
   char nickbuf[NICKLEN + 1];
@@ -230,6 +240,29 @@ static void account_answer(struct AccountCall* call, enum AccountResult result,
     (*done)(cptr, result, nick, email, reason, data);
   else if (ownerfn)
     (*ownerfn)(cptr, owner, nickbuf, data);
+  else if (listfn)
+    (*listfn)(cptr, result, NULL, 0, reason, data);
+}
+
+/** Take a listing off the list and answer it.
+ *
+ * Its own function rather than a case of account_answer(), because the
+ * entries are a parameter that no other kind of answer has and that
+ * nothing here may keep.
+ */
+static void account_answer_list(struct AccountCall* call,
+                                enum AccountResult result,
+                                const struct AccountEntry* entries,
+                                unsigned int count, const char* reason)
+{
+  AccountListFn listfn = call->ac_list;
+  struct Client* cptr = call->ac_client;
+  void* data = call->ac_data;
+
+  account_free(call);
+
+  if (listfn)
+    (*listfn)(cptr, result, entries, count, reason, data);
 }
 
 /** Register the loaded module as the identity provider.
@@ -240,11 +273,18 @@ static void account_answer(struct AccountCall* call, enum AccountResult result,
 int account_register_provider(struct ModuleHandle* mod,
                               const struct AccountProvider* provider)
 {
+  /* All three questions, not just the one a provider happens to care
+   * about.  A provider that can say whether a credential is good can say
+   * what accounts an address holds, and one that could not would make
+   * ACCOUNT LIST answer "the identity service is not available" on a
+   * server where identity works -- which is the one answer a user cannot
+   * tell from an outage.
+   */
   if (!provider || !provider->ap_name || !provider->ap_verify
-      || !provider->ap_lookup) {
+      || !provider->ap_lookup || !provider->ap_list) {
     log_write(LS_SYSTEM, L_ERROR, 0,
               "Refusing an identity provider that is missing a name, "
-              "ap_verify or ap_lookup");
+              "ap_verify, ap_lookup or ap_list");
     return 0;
   }
 
@@ -319,7 +359,8 @@ const char* account_provider_name(void)
  */
 static struct AccountCall* account_begin(struct Client* cptr,
                                          AccountDoneFn done,
-                                         AccountOwnerFn owner, void* data)
+                                         AccountOwnerFn owner,
+                                         AccountListFn list, void* data)
 {
   struct AccountCall* call;
 
@@ -339,6 +380,7 @@ static struct AccountCall* account_begin(struct Client* cptr,
   call->ac_deadline = CurrentTime + feature_int(FEAT_ACCOUNT_TIMEOUT);
   call->ac_done = done;
   call->ac_owner = owner;
+  call->ac_list = list;
   call->ac_data = data;
 
   call->ac_next = account_calls;
@@ -367,7 +409,7 @@ account_id_t account_verify(struct Client* cptr,
   assert(0 != req);
   assert(0 != done);
 
-  if (!(call = account_begin(cptr, done, NULL, data)))
+  if (!(call = account_begin(cptr, done, NULL, NULL, data)))
     return 0;
 
   id = call->ac_id;
@@ -399,13 +441,42 @@ account_id_t account_lookup(struct Client* cptr, const char* nick,
   if (EmptyString(nick))
     return 0;
 
-  if (!(call = account_begin(cptr, NULL, done, data)))
+  if (!(call = account_begin(cptr, NULL, done, NULL, data)))
     return 0;
 
   ircd_strncpy(call->ac_nick, nick, NICKLEN);
   id = call->ac_id;
 
   (*account_provider->ap_lookup)(id, call->ac_nick);
+
+  return id;
+}
+
+/** Ask what accounts an address holds.
+ * @param[in] cptr Client it is about.
+ * @param[in] email The address, as authenticated.
+ * @param[in] done Called with the answer.
+ * @param[in] data Opaque pointer for \a done.
+ * @return The handle, or 0 if there is no provider.
+ */
+account_id_t account_list(struct Client* cptr, const char* email,
+                          AccountListFn done, void* data)
+{
+  struct AccountCall* call;
+  account_id_t id;
+
+  assert(0 != done);
+
+  if (EmptyString(email))
+    return 0;
+
+  if (!(call = account_begin(cptr, NULL, NULL, done, data)))
+    return 0;
+
+  ircd_strncpy(call->ac_email, email, ACCOUNT_EMAIL_MAX);
+  id = call->ac_id;
+
+  (*account_provider->ap_list)(id, call->ac_email);
 
   return id;
 }
@@ -452,6 +523,32 @@ int account_complete_owner(account_id_t id, enum AccountOwner owner)
   }
 
   account_answer(call, ACCOUNT_ERR_UNAVAILABLE, owner, NULL, NULL, NULL);
+
+  return 1;
+}
+
+/** Answer a listing.
+ * @param[in] id Handle the provider was given.
+ * @param[in] result #ACCOUNT_OK, or why there is no listing.
+ * @param[in] entries The accounts; not kept past this call.
+ * @param[in] count How many.
+ * @param[in] reason Text for the user, or NULL.
+ * @return Non-zero if the handle was outstanding.
+ */
+int account_complete_list(account_id_t id, enum AccountResult result,
+                          const struct AccountEntry* entries,
+                          unsigned int count, const char* reason)
+{
+  struct AccountCall* call = account_find(id);
+
+  if (!call || !call->ac_list) {
+    log_write(LS_SYSTEM, L_INFO, 0,
+              "account_complete_list() for %lu, which is no longer "
+              "outstanding", (unsigned long) id);
+    return 0;
+  }
+
+  account_answer_list(call, result, entries, count, reason);
 
   return 1;
 }

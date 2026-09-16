@@ -49,6 +49,7 @@
 #include "ircd_alloc.h"
 #include "ircd_base64.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -82,16 +83,37 @@ struct SaslState {
    * that is not a user yet.
    */
   int                ss_deferred;
+  /** The credential in flight came from ACCOUNT, not AUTHENTICATE.
+   *
+   * The same question, asked by a different command, and the client is
+   * answered in the terms of the one it used: a client that never
+   * negotiated the sasl capability must not be told that "SASL
+   * authentication" succeeded or failed.
+   */
+  int                ss_from_account;
   char               ss_account[NICKLEN + 1];
   char               ss_email[ACCOUNT_EMAIL_MAX + 1];
 };
 
-/** Most attempts one connection may make.
+/** Most failures in a row one connection may make.
  *
- * Each costs a database query, and a client that has failed this many is
- * not going to succeed on the next one.
+ * Failures, not attempts: a successful login resets the count, because an
+ * account switch is a login and a client that has just proved who it is
+ * has not attacked anything.  Each failure costs a database query, and a
+ * connection that has failed this many is not about to succeed.
  */
 #define SASL_MAX_ATTEMPTS 3
+
+/** Set while sasl_answer() runs, so that the call which asked can tell a
+ * provider that answered from inside account_verify() -- one with a cache
+ * will -- from one that will answer later.  It matters because applying an
+ * answer can exit the client, which frees both the client and the state
+ * that asked: after a synchronous answer there is nothing left to read.
+ */
+static int sasl_answer_ran;
+
+/** What applying that answer returned: zero, or #CPTR_KILLED. */
+static int sasl_answer_killed;
 
 /** Recompute what the "sasl" capability advertises, and whether at all. */
 void sasl_advertise(void)
@@ -179,6 +201,7 @@ static int sasl_fail(struct Client* cptr, int numeric)
 
   if (st) {
     st->ss_query = 0;
+    st->ss_from_account = 0;
     sasl_session_clear(&st->ss_session);
   }
 
@@ -221,11 +244,37 @@ static void sasl_tell_logged_in(struct Client* cptr, struct SaslState* st)
                 (user && *user->host) ? user->host : "*");
 
   send_reply(cptr, RPL_LOGGEDIN, mask, st->ss_account, st->ss_account);
-  send_reply(cptr, RPL_SASLSUCCESS);
+
+  /* 903 says SASL, and means it: a client that logged in with ACCOUNT
+   * never asked for the capability and is not expecting the numeric. */
+  if (!st->ss_from_account)
+    send_reply(cptr, RPL_SASLSUCCESS);
 
   st->ss_done = 1;
   st->ss_query = 0;
+  st->ss_attempts = 0;
+  st->ss_from_account = 0;
   sasl_session_clear(&st->ss_session);
+}
+
+/** Report a failed attempt in the terms of the command that made it.
+ * @param[in] cptr Client.
+ * @param[in,out] st Its exchange.
+ * @param[in] result What was decided.
+ * @param[in] reason Text from the provider, or NULL.
+ * @return Zero, or CPTR_KILLED.
+ */
+static int sasl_report_fail(struct Client* cptr, struct SaslState* st,
+                            enum AccountResult result, const char* reason)
+{
+  if (st->ss_from_account) {
+    send_reply(cptr, ERR_ACCOUNTFAIL,
+               reason ? reason : _(cptr, account_strerror(result)));
+    return sasl_fail(cptr, 0);
+  }
+
+  return sasl_fail(cptr, result == ACCOUNT_ERR_INUSE ? ERR_NICKLOCKED
+                                                     : ERR_SASLFAIL);
 }
 
 /** Grant what a successful exchange earned, for a registered client.
@@ -240,7 +289,7 @@ static int sasl_succeed(struct Client* cptr, struct SaslState* st)
      * for and its arriving.  Nothing has changed, and the client is told
      * so in the one numeric that says exactly that.
      */
-    return sasl_fail(cptr, ERR_NICKLOCKED);
+    return sasl_report_fail(cptr, st, ACCOUNT_ERR_INUSE, NULL);
   }
 
   sasl_tell_logged_in(cptr, st);
@@ -277,7 +326,7 @@ void sasl_registered(struct Client* cptr)
      */
     log_write(LS_USER, L_ERROR, 0, "Could not complete SASL login for %s "
               "as %s", get_client_name(cptr, HIDE_IP), st->ss_account);
-    send_reply(cptr, ERR_SASLFAIL);
+    sasl_report_fail(cptr, st, ACCOUNT_ERR_INUSE, NULL);
   }
 }
 
@@ -297,6 +346,9 @@ static void sasl_answer(struct Client* cptr, enum AccountResult result,
 
   (void) data;
 
+  sasl_answer_ran = 1;
+  sasl_answer_killed = 0;
+
   if (!cptr || !MyConnect(cptr) || !cli_connect(cptr))
     return;
 
@@ -310,8 +362,7 @@ static void sasl_answer(struct Client* cptr, enum AccountResult result,
               get_client_name(cptr, HIDE_IP),
               reason ? reason : account_strerror(result));
 
-    sasl_fail(cptr, result == ACCOUNT_ERR_INUSE ? ERR_NICKLOCKED
-                                                : ERR_SASLFAIL);
+    sasl_answer_killed = sasl_report_fail(cptr, st, result, reason);
     return;
   }
 
@@ -319,7 +370,7 @@ static void sasl_answer(struct Client* cptr, enum AccountResult result,
   ircd_strncpy(st->ss_email, email ? email : "", ACCOUNT_EMAIL_MAX);
 
   if (IsRegistered(cptr)) {
-    sasl_succeed(cptr, st);
+    sasl_answer_killed = sasl_succeed(cptr, st);
     return;
   }
 
@@ -329,7 +380,7 @@ static void sasl_answer(struct Client* cptr, enum AccountResult result,
    * as one thing and being renamed a moment later.
    */
   if (!account_claim_nick(cptr, nick)) {
-    sasl_fail(cptr, ERR_NICKLOCKED);
+    sasl_answer_killed = sasl_report_fail(cptr, st, ACCOUNT_ERR_INUSE, NULL);
     return;
   }
 
@@ -338,10 +389,53 @@ static void sasl_answer(struct Client* cptr, enum AccountResult result,
   st->ss_deferred = 1;
 
   if (cli_auth(cptr))
-    auth_sasl_done(cli_auth(cptr));
+    sasl_answer_killed = auth_sasl_done(cli_auth(cptr));
 }
 
-/** Hand a completed credential to the identity provider.
+/** Hand a credential to the identity provider.
+ *
+ * @param[in] cptr Client.
+ * @param[in,out] st Its exchange.
+ * @param[in] req The credential.
+ * @param[out] asked Set non-zero if the question was taken -- which
+ *   includes its having been answered from inside this call.  Zero means
+ *   nobody took it and the caller has to say so.
+ * @return Zero, or CPTR_KILLED.
+ */
+static int sasl_submit(struct Client* cptr, struct SaslState* st,
+                       const struct AccountRequest* req, int* asked)
+{
+  account_id_t id;
+
+  sasl_answer_ran = 0;
+  sasl_answer_killed = 0;
+
+  id = account_verify(cptr, req, sasl_answer, 0);
+
+  /* Answered from inside that call.  sasl_answer() has done everything
+   * there is to do, including possibly exiting the client -- which frees
+   * both it and \a st -- so neither may be touched from here.
+   */
+  if (sasl_answer_ran) {
+    *asked = 1;
+    return sasl_answer_killed;
+  }
+
+  if (!id) {
+    *asked = 0;
+    return 0;
+  }
+
+  st->ss_query = id;
+  *asked = 1;
+
+  /* The password has been handed on; this copy of it has no further use. */
+  sasl_session_clear(&st->ss_session);
+
+  return 0;
+}
+
+/** Hand a completed SASL credential to the identity provider.
  * @param[in] cptr Client.
  * @param[in,out] st Its exchange.
  * @return Zero, or CPTR_KILLED.
@@ -350,6 +444,8 @@ static int sasl_ask(struct Client* cptr, struct SaslState* st)
 {
   struct SaslSession* ses = &st->ss_session;
   struct AccountRequest req;
+  int asked = 0;
+  int res;
 
   memset(&req, 0, sizeof(req));
   req.ar_mech = ses->ss_mech ? ses->ss_mech->sm_name : "";
@@ -361,17 +457,110 @@ static int sasl_ask(struct Client* cptr, struct SaslState* st)
   req.ar_ip = ircd_ntoa(&cli_ip(cptr));
   req.ar_tls = ses->ss_tls;
 
-  st->ss_query = account_verify(cptr, &req, sasl_answer, 0);
+  if ((res = sasl_submit(cptr, st, &req, &asked)))
+    return res;
 
-  /* The provider may have answered from inside that call, in which case
-   * the exchange is already over and its secret already wiped.
-   */
-  if (!st->ss_query && !st->ss_done)
+  if (!asked)
     return sasl_fail(cptr, ERR_SASLFAIL);
 
-  /* Whatever happens next, the password has been handed on. */
-  if (st->ss_query)
-    sasl_session_clear(&st->ss_session);
+  return 0;
+}
+
+/** Hand the identity provider a credential that came from ACCOUNT LOGIN.
+ *
+ * ACCOUNT asks the same question AUTHENTICATE does, and everything after
+ * the question is the same too -- the answer, the @c +r grant, the
+ * nickname, the hold on registration -- so it is the same code.  What
+ * differs is which numerics the client is answered in, and that is one
+ * flag on the state.
+ *
+ * @param[in,out] cptr Client that sent the command; must be local.
+ * @param[in] authcid The address.
+ * @param[in] authzid Which of its accounts, or "" for the default.
+ * @param[in] secret The password.
+ * @param[out] how What happened, from #SaslLogin.
+ * @return Zero, or CPTR_KILLED.
+ */
+int sasl_login_request(struct Client* cptr, const char* authcid,
+                       const char* authzid, const char* secret,
+                       enum SaslLogin* how)
+{
+  struct SaslState* st;
+  struct AccountRequest req;
+  int asked = 0;
+  int res;
+
+  assert(0 != cptr);
+  assert(0 != how);
+  assert(MyConnect(cptr));
+
+  *how = SASL_LOGIN_UNAVAILABLE;
+
+  if (!account_have_provider())
+    return 0;
+
+  /* The password crossed the link as the client typed it. */
+  if (!IsTLS(cptr) && feature_bool(FEAT_ACCOUNT_REQUIRE_TLS)) {
+    *how = SASL_LOGIN_NOTLS;
+    return 0;
+  }
+
+  st = sasl_state(cptr);
+
+  /* An exchange under way, or an answer on its way: either one is a
+   * second credential about one connection. */
+  if (st->ss_query || st->ss_session.ss_mech) {
+    *how = SASL_LOGIN_BUSY;
+    return 0;
+  }
+
+  /* Before registration the grant is already deferred and the nickname
+   * already claimed; a second login would have nothing left to apply.
+   * After it, a login is how an account is switched, so it is allowed. */
+  if (st->ss_done && !IsRegistered(cptr)) {
+    *how = SASL_LOGIN_ALREADY;
+    return 0;
+  }
+
+  if (st->ss_attempts >= SASL_MAX_ATTEMPTS) {
+    *how = SASL_LOGIN_TOOMANY;
+    return 0;
+  }
+
+  ++st->ss_attempts;
+  st->ss_done = 0;
+  st->ss_from_account = 1;
+
+  memset(&req, 0, sizeof(req));
+  req.ar_mech = "ACCOUNT";
+  req.ar_authcid = authcid;
+  req.ar_authzid = authzid ? authzid : "";
+  req.ar_secret = secret;
+  req.ar_secretlen = strlen(secret);
+  req.ar_fingerprint = cli_tls_fingerprint(cptr);
+  req.ar_ip = ircd_ntoa(&cli_ip(cptr));
+  req.ar_tls = IsTLS(cptr) ? 1 : 0;
+
+  /* The hold goes on before the question, not after: a provider that
+   * answers from inside sasl_submit() releases it in that same call, and
+   * a release that arrives before its hold leaves registration waiting
+   * for an answer that has already come.
+   */
+  if (!IsRegistered(cptr) && cli_auth(cptr))
+    auth_sasl_start(cli_auth(cptr));
+
+  if ((res = sasl_submit(cptr, st, &req, &asked))) {
+    *how = SASL_LOGIN_ASKED;
+    return res;
+  }
+
+  if (!asked) {
+    *how = SASL_LOGIN_UNAVAILABLE;
+    st->ss_from_account = 0;
+    return sasl_fail(cptr, 0);
+  }
+
+  *how = SASL_LOGIN_ASKED;
 
   return 0;
 }

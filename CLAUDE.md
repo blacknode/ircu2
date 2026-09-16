@@ -160,6 +160,29 @@ otherwise cost its length in chunks times two seconds before the client had
 finished connecting. Starting an exchange *is* charged in full, and
 `SASL_MAX_ATTEMPTS` caps how many times, so the exemption cannot be had free.
 
+**ACCOUNT** (`ircd/m_account.c`, proposal 007 §4.2). `ACCOUNT LOGIN <address>
+<password> [<account>]`, `ACCOUNT LOGOUT`, `ACCOUNT LIST` — SASL for every
+client that does not speak IRCv3, and the same question underneath: the
+credential goes to `sasl_login_request()` in `m_authenticate.c`, which is
+where AUTHENTICATE's go, so there is **one** path from a credential to `+r`.
+What the command decides on its own is only which numerics the client is
+answered in — a client that never negotiated `sasl` is never told about SASL
+(no 903, and failures come back as `ERR_ACCOUNTFAIL` 983 with the reason).
+`LOGIN` works before registration too, behaving like `PASS`. **`LIST` needs
+`cli_user()->email`**, which exists only because this client authenticated
+with it; there is no form that lists somebody else's accounts, because that
+is an enumerator whether or not the answer is filtered. `ACCOUNT` has these
+three subcommands and does not grow: registering an account or changing a
+password is policy, and policy is nickserv's. **Like AUTHENTICATE it has no
+P10 token**, for the same reason plus one more — `AC` is the historical ircu
+account burst, and reusing it would land an old peer's burst on a client
+command. The provider answers a listing through `ap_list()`, which is
+**required**, not optional: a provider that could verify but not list would
+make `LIST` say "not available" on a server where identity works, which is
+the one answer a user cannot tell from an outage. The attempt cap is three
+*consecutive failures*, reset by a success, because switching account is a
+login.
+
 **Identity, in progress** (proposal 007). Two pieces of core state are in
 place ahead of the protocol that will drive them. `cli_user()->email` is the
 address a client authenticated with: **local and only local** — it never

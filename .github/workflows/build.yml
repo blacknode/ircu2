@@ -38,10 +38,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build bison pkg-config
-          # libpq and jansson are not the ircd's dependencies; they belong to
-          # modules/workers/postgres, which declares them in its own CMake
-          # fragment and is skipped when they are missing.  Installed here so
-          # that CI compiles it rather than silently skipping it.
+          # libpq and jansson are not the ircd's dependencies; they belong
+          # to modules/workers/postgres and modules/services/identity, which
+          # declare them in their own CMake fragments and are skipped when
+          # they are missing.  Installed here so that CI compiles them
+          # rather than silently skipping them.
           sudo apt-get install -y libpq-dev libjansson-dev
           if [ "${{ matrix.tls }}" = "openssl" ]; then
             sudo apt-get install -y libssl-dev
@@ -74,9 +75,11 @@ jobs:
           # or <type>/<name>/<name>.so for one built from a directory.
           test -n "$(find build/modules -mindepth 2 -name '*.so')"
 
-          # The postgres module needs libpq and jansson, which were installed
-          # above; a skipped module here means its dependencies went missing.
+          # The postgres module needs libpq and jansson and the identity
+          # module needs jansson, both installed above; a skipped module
+          # here means its dependencies went missing.
           test -f build/modules/workers/postgres/postgres.so
+          test -f build/modules/services/identity/identity.so
 
           missing=0
           for so in $(find build/modules -mindepth 2 -name '*.so' | sort); do

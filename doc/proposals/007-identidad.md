@@ -455,7 +455,7 @@ más fácil de leer que un campo que no existe.
 
 ## 9. Los módulos
 
-### 9.1 `identity` — el mecanismo
+### 9.1 `identity` — el mecanismo *(hecho)*
 
 `modules/services/identity/`, de tipo directorio porque lleva migraciones. No
 tiene bot, no registra comandos y no manda un solo mensaje a un usuario.
@@ -463,13 +463,14 @@ Registra el proveedor de §3.2 y contesta.
 
 ```sql
 CREATE TABLE identity (              -- el email
-  id            BIGSERIAL PRIMARY KEY,
-  email         TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,       -- $argon2id$..., los costes dentro
-  mfa_secret    BYTEA,               -- AES-256-GCM
-  sso_subject   TEXT UNIQUE,
-  verified_at   TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id               BIGSERIAL PRIMARY KEY,
+  email            TEXT NOT NULL UNIQUE,
+  password_hash    TEXT NOT NULL,    -- $argon2id$..., los costes dentro
+  cert_fingerprint TEXT UNIQUE,      -- lo que casa SASL EXTERNAL
+  mfa_secret       BYTEA,            -- AES-256-GCM
+  sso_subject      TEXT UNIQUE,
+  verified_at      TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE account (               -- el nick
@@ -482,6 +483,25 @@ CREATE TABLE account (               -- el nick
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+`cert_fingerprint` no estaba en la revisión 2 y hace falta: el core anuncia
+`EXTERNAL` entre sus mecanismos, y un mecanismo anunciado que siempre falla
+es peor que uno que no se anuncia. Es una huella por dirección —el
+certificado dice quién eres, el authzid dice con cuál de tus cuentas—, y
+cuando es la que casa no hay Argon2 que hacer: el certificado ya es la
+prueba.
+
+**El email se guarda en minúsculas**, y en minúsculas ASCII, no con la tabla
+de IRC: una dirección no es un nick, y `[`, `]` y `\\` no son mayúsculas de
+nada ahí. Lo hace el módulo antes de escribir y antes de comparar, igual que
+con `nick_canon`, así que el `UNIQUE` sirve de índice para la consulta y no
+hace falta uno funcional.
+
+**La pimienta se lee del entorno** (`IRCU_PASSWORD_PEPPER`), no del fichero
+de configuración: es el único secreto cuyo sentido entero es no estar donde
+están los hashes, y un fichero de configuración se copia, se diferencia y se
+pega en un informe de fallo. Tiene que ser la misma en toda la red, como la
+clave de host virtual.
 
 **`nick_canon` se normaliza como lo hace el ircd**, no como lo haría
 PostgreSQL: en IRC `[`, `]` y `\` son las mayúsculas de `{`, `}` y `|`
@@ -514,7 +534,21 @@ es puro justamente para esto— y el resultado se entrega con
 cadena que la fase 0 dejó montada, usada por fin de punta a punta.
 `ircd_pwhash_outdated()` decide si rehacer el hash con los costes actuales; se
 rehace en el mismo `worker`, **después** de contestar, para no sumar latencia a
-la conexión.
+la conexión. El `UPDATE` va guardado por el hash que sustituye
+(`WHERE id = $2 AND password_hash = $3`): una contraseña cambiada entre el
+login y el re-hash no se pisa con el hash de la anterior.
+
+**Con el pool de workers apagado no se comprueba ninguna contraseña.**
+`FEAT_WORKER_THREADS` viene a cero, y hacer el Argon2 aquí pararía el
+servidor un cuarto de segundo por cada login. Se contesta
+`ACCOUNT_ERR_UNAVAILABLE` y se dice en el log: el servidor no está
+configurado para comprobar contraseñas, y decirlo es mejor que demostrarlo.
+
+**La fila y la cuenta se traen en una sola consulta, antes de comprobar la
+contraseña, y no se dice nada de ninguna hasta después.** Qué cuentas tiene
+una dirección no es algo que una contraseña equivocada pueda averiguar; por
+lo mismo «no existe esa dirección» y «la contraseña no es esa» son la misma
+respuesta.
 
 ### 9.2 `nickserv` — la política y la voz
 
@@ -620,8 +654,12 @@ Cada punto compila, pasa pruebas y se sube por separado.
    `AUTHENTICATE` y el mismo camino de la respuesta a `+r`.
 6. **`cache.c` + `cache.h` + `modules/workers/redis/`** — el tercer registro y
    su driver, con el bloque `Redis{}`. *(hecho; ver `doc/readme.cache`)*
-7. **`modules/services/identity/`** — el almacén, las migraciones con sus
-   cerrojos, Redis delante, el Argon2 en un `worker`.
+7. **`modules/services/identity/`** *(hecho, salvo la escritura)* — el
+   almacén, sus migraciones, Redis delante de PostgreSQL y el Argon2 en un
+   `worker`, con el re-hash cuando los costes suben. La escritura —dar de
+   alta una cuenta, suspenderla, cambiar una contraseña— va con `nickserv`,
+   que es su único llamante, y lleva los cerrojos de §9.1 consigo: una API
+   de escritura sin nadie que la use sería API inventada a ciegas.
 8. **`modules/services/nickserv/`** — el bot, el plazo de gracia, y sus
    opciones dentro del `Service{}` que ya lo declara.
 9. **Documentación y pruebas** — `doc/readme.accounting` reescrito entero,

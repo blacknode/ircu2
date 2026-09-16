@@ -183,6 +183,32 @@ the one answer a user cannot tell from an outage. The attempt cap is three
 *consecutive failures*, reset by a success, because switching account is a
 login.
 
+**The identity module** (`modules/services/identity/`, proposal 007 §9.1).
+The provider behind `+r`, and only that: no bot, no commands, not one line
+sent to a user. It owns the schema — `identity` (an address) and `account`
+(a nickname), in `migrations/`, applied with `/MODULE MIGRATION APPLY
+identity` — and answers the three questions `AccountProvider` asks. A
+verification is **one query then one worker**: the row and the candidate
+account come back together, the Argon2 goes to `worker_submit()` (never the
+main thread — with `FEAT_WORKER_THREADS` at 0 it answers
+`ACCOUNT_ERR_UNAVAILABLE` and says so, because hashing here would stop the
+server for a quarter of a second per login), and nothing is revealed about
+the address until the password has been checked — "no such address" and
+"wrong password" are one answer. `ircd_pwhash_outdated()` re-hashes *after*
+the client has been answered, guarded by the hash it replaces so a password
+changed in between is not overwritten. The nickname lookup is
+**cache-then-database**: `nick:<canon>` in Redis, the row in PostgreSQL,
+misses cached too, and a cache that is down, empty or unparseable costs a
+query and nothing else — while a *database* that is down gives
+`ACCOUNT_NICK_UNKNOWN`, never `FREE`. `nick_canon` is `ToLower()`, not
+`lower()`, because `[`/`]`/`\` are IRC capitals; the email is ASCII
+lower-cased, because an address is not a nickname. The pepper comes from
+`$IRCU_PASSWORD_PEPPER`, not the config file. `cert_fingerprint` is what
+SASL EXTERNAL matches on, and matching it *is* the proof, so there is no
+hash to check. Writing — registering an account, suspending one, changing a
+password — is not here: it arrives with `nickserv`, its only caller, and
+brings §9.1's advisory locks with it.
+
 **Identity, in progress** (proposal 007). Two pieces of core state are in
 place ahead of the protocol that will drive them. `cli_user()->email` is the
 address a client authenticated with: **local and only local** — it never

@@ -44,6 +44,20 @@ struct Client;
 #define MSG_HISTORY "HISTORY"
 #define TOK_HISTORY "HISTORY"
 
+/** Taking a message back.
+ *
+ * This one does have a P10 token: a redaction has to reach every server,
+ * because every server's clients were shown the message.  RD was free.
+ */
+#define MSG_REDACT "REDACT"
+#define TOK_REDACT "RD"
+
+/** The capability that says a client understands REDACT. */
+#define HIST_REDACT_CAP "draft/message-redaction"
+
+/** Its position, handed out by the server; -1 when not registered. */
+extern int hist_redact_cap;
+
 /** The capability that advertises it, and its limit as the value. */
 #define HIST_CAP_NAME "draft/chathistory"
 
@@ -104,5 +118,20 @@ extern int hist_m_history(struct Client* cptr, struct Client* sptr,
 
 /** Abandon an export in progress, because the module is going away. */
 extern void hist_admin_shutdown(void);
+
+/*
+ * Redaction (hist_redact.c).
+ */
+
+/** REDACT, from a client. */
+extern int hist_m_redact(struct Client* cptr, struct Client* sptr,
+                         int parc, char* parv[]);
+
+/** REDACT, from another server. */
+extern int hist_ms_redact(struct Client* cptr, struct Client* sptr,
+                          int parc, char* parv[]);
+
+/** An ISO 8601 timestamp \a seconds in the past, into \a buf. */
+extern void hist_time_ago(char* buf, size_t buflen, int seconds);
 
 #endif /* INCLUDED_history_h */

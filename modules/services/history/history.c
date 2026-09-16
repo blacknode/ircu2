@@ -82,6 +82,9 @@ struct I18nDomain* hist_i18n;
  */
 static int hist_cap = -1;
 
+/** The position draft/message-redaction got, or -1. */
+int hist_redact_cap = -1;
+
 /** How many months ahead partitions are created. */
 #define HIST_MONTHS_AHEAD 1
 
@@ -221,6 +224,15 @@ static MessageHandler admin_handlers[] = {
   0                 /* service */
 };
 
+/** And /REDACT, which is the one of these that crosses a link. */
+static MessageHandler redact_handlers[] = {
+  0,                 /* unregistered */
+  hist_m_redact,     /* client */
+  hist_ms_redact,    /* server */
+  hist_m_redact,     /* oper */
+  hist_ms_redact     /* service */
+};
+
 /** Attach to the hook and start maintaining the schema.
  * @param[in] mod Handle for this module.
  * @return Zero on success.
@@ -249,12 +261,23 @@ static int history_init(struct ModuleHandle* mod)
     return -1;
   }
 
+  if (!module_add_command(mod, MSG_REDACT, TOK_REDACT, MAXPARA,
+                          0, redact_handlers)) {
+    hist_mod = NULL;
+    return -1;
+  }
+
   /* The capability last, and only if the command is really there: its
    * value is a promise about an answer, and advertising one the server
    * cannot give is worse than not advertising at all.
    */
   if (module_add_cap(mod, HIST_CAP_NAME, 0, &hist_cap))
     hist_advertise();
+
+  /* REDACT reaches only a client that asked for it: to anybody else it is
+   * a command they have never heard of, and a line they cannot parse is
+   * not an improvement on a message they still have. */
+  module_add_cap(mod, HIST_REDACT_CAP, 0, &hist_redact_cap);
 
   /* Everything that depends on the configuration waits for
    * HOOK_CONFIG_LOADED.  mi_init runs in the middle of the parse: a
@@ -286,6 +309,7 @@ static void history_fini(struct ModuleHandle* mod)
   (void) mod;
 
   hist_cap = -1;
+  hist_redact_cap = -1;
   hist_i18n = NULL;
 
   /* An export writes to a file this module holds open, and the pages it

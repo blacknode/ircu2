@@ -238,6 +238,49 @@ typedef void (*HistCountFn)(long long rows, long long total, void* user);
  */
 extern int hist_store_count(const char* account, HistCountFn cb, void* user);
 
+/** What a stored message is, for the purpose of deciding about it.
+ *
+ * Enough to answer "may this person redact this?" and nothing else: who
+ * wrote it, where, and when.
+ */
+struct HistFound {
+  char hf_time[40];                /**< When, ISO 8601, or "" if not found. */
+  char hf_target[CHANNELLEN + 1];  /**< Channel or nickname, as addressed. */
+  char hf_canon[CHANNELLEN + 1];   /**< Its canonical form. */
+  char hf_account[NICKLEN + 1];    /**< Who wrote it, or "". */
+  int  hf_channel;                 /**< Whether the target is a channel. */
+};
+
+/** Receives the answer to hist_store_find().  Runs in the main thread.
+ * @param[in] found The row, or NULL when there is no such message.
+ * @param[in] user What was handed to hist_store_find().
+ */
+typedef void (*HistFindFn)(const struct HistFound* found, void* user);
+
+/** Find one message by the name the network knows it by.
+ * @param[in] msgid The identifier.
+ * @param[in] cb Called in the main thread with the answer.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted.
+ */
+extern int hist_store_find(const char* msgid, HistFindFn cb, void* user);
+
+/** Delete one message and everything that reacted to it.
+ *
+ * A reaction to a message that is gone is a reference to nothing, so the
+ * reactions go with it -- but a *reply* does not: a reply is a message of
+ * its own, somebody else said it, and redacting one message is not
+ * permission to redact the conversation that followed.
+ *
+ * @param[in] msgid The identifier.
+ * @param[in] cb Called with how many rows went, or -1; may be NULL.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted.
+ */
+extern int hist_store_redact(const char* msgid,
+                             void (*cb)(long long rows, void* user),
+                             void* user);
+
 /** Store one message.
  *
  * Fire and forget: there is nobody to tell if it fails, and a message

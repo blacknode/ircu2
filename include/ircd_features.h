@@ -126,6 +126,7 @@ enum Feature {
   FEAT_HISTORY_PRIVATE,
   FEAT_HISTORY_MAX_LIMIT,
   FEAT_HISTORY_EXPORT_DIR,
+  FEAT_HISTORY_REDACT_WINDOW,
 
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,

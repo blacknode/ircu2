@@ -429,6 +429,12 @@ static struct FeatureDesc {
    * directory.  Writing files is a thing a server should be told to do
    * rather than something it is able to do by default. */
   F_S(HISTORY_EXPORT_DIR, FEAT_OPER | FEAT_NULL, 0, 0),
+  /* How long somebody may take their own message back.  Long enough to
+   * fix a mistake, short enough that a conversation stays a record of
+   * what was said: an hour by default.  0 is for ever, which is a
+   * network saying a message belongs to whoever sent it.  Channel
+   * operators are not bounded by it -- moderating is not undoing. */
+  F_I(HISTORY_REDACT_WINDOW, FEAT_OPER, 3600, 0),
 
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),

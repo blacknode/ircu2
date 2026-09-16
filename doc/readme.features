@@ -596,6 +596,19 @@ rather than be able to by default.  Each export is a file of its own,
 named for the account and the moment, created with mode 0600 and never
 over an existing file.  See doc/readme.history.
 
+HISTORY_REDACT_WINDOW
+ * Type: integer
+ * Default: 3600
+
+How long, in seconds, somebody may take their own message back with
+REDACT.  Long enough to fix a mistake, short enough that a conversation
+stays a record of what was said; 0 means for ever, which is a network
+saying a message belongs to whoever sent it.
+
+Channel operators are not bounded by it, because moderating is not
+undoing and a moderator who had to be quick about it would not be one.
+Neither are operators with history_admin.  See doc/readme.history.
+
 DEFAULT_LANGUAGE
  * Type: string
  * Default: (none)

@@ -353,6 +353,25 @@ and replayed through `msg_tag_line_replay()`'s fourth argument, a
 pre-rendered client-tag string the core relays without knowing what any of
 it means.
 
+**REDACT** (`modules/services/history/hist_redact.c`, IRCv3
+`draft/message-redaction`, proposal 006 §7.2). It lives in the history
+module and not in the core because **you cannot redact what nobody
+stored** — a server with no history has nothing to delete and no way to
+know who wrote the message. That is also what makes the policy checkable:
+whether somebody may take a message back depends on who wrote it, which is
+a database round trip away, so **nothing is relayed until the deletion has
+happened** (a client that dropped the message from its view while the
+store kept it is the one outcome worse than not supporting this). Who may:
+the author within `FEAT_HISTORY_REDACT_WINDOW`, a channel op with no
+window (moderating is not undoing), or `history_admin`. The target named
+must be the one the message was sent to, or naming any channel you have
+ops on would reach any other. It takes the **reactions** with it and
+leaves the **replies**: a reply is somebody else's message. It reaches only
+clients with the capability, and it is the one thing here that crosses a
+link (token `RD`), because every server's clients saw the message; what
+arrives from a peer is an announcement, since every server reads the same
+store.
+
 **Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
 (`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`
 (`channel_chan_modes()` and friends) so modules can add their own; test them with

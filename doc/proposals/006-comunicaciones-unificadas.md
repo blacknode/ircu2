@@ -893,7 +893,31 @@ Todo esto son tags sobre `msgid`, y cabe en módulos una vez existe la fase 0:
   guarda — un tag que la red se niega a transportar no es uno que haya que
   anotar.
 - **Edición y borrado:** `draft/message-redaction` (`REDACT`), con política de
-  quién y durante cuánto tiempo.
+  quién y durante cuánto tiempo. **`REDACT` implementado** (la edición no:
+  un mensaje editado es un mensaje distinto y eso es otra conversación).
+
+  Vive en el módulo `history` y no en el core por una razón: **no se puede
+  retractar lo que nadie ha guardado**. Un servidor sin historial no tiene
+  nada que borrar ni forma de saber quién escribió el mensaje al que se
+  apunta, así que el comando sería anunciar que algo se ha retirado sin
+  haber retirado nada.
+
+  Eso es también lo que hace comprobable la política. Si alguien puede
+  retractar un mensaje depende de quién lo escribió, y lo único que lo sabe
+  es la fila — así que la respuesta está a un viaje de base de datos y el
+  comando la espera. **No se transmite nada hasta que el borrado ha
+  ocurrido**: un cliente que quitara el mensaje de su vista mientras el
+  almacén lo conserva sería el único resultado peor que no tener esto.
+
+  Quién: el autor dentro de `HISTORY_REDACT_WINDOW`; quien tenga op en el
+  canal, sin ventana, porque moderar no es deshacer; y un operador con
+  `history_admin`. Un mensaje directo es sólo el primer caso: no hay nadie
+  con op sobre una conversación.
+
+  Se lleva por delante las **reacciones** —una reacción a un mensaje que ya
+  no está es una referencia a nada— pero **no las respuestas**: una
+  respuesta es un mensaje propio, lo dijo otra persona, y retractar un
+  mensaje no da permiso para retractar la conversación que vino después.
 - **Typing:** `+typing`, efímero, sin persistir. **Implementado**: sólo
   hacía falta dejarlo pasar, y no guardarlo.
 - **Marcas de leído y no-leídos:** `draft/read-marker` (`MARKREAD`), por cuenta

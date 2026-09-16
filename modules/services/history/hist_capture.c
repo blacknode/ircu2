@@ -34,7 +34,10 @@
 #include "ircd_string.h"
 #include "msg_tag.h"
 #include "parse.h"
+#include "ircd.h"
 #include "struct.h"
+
+#include <time.h>
 
 #include <string.h>
 
@@ -72,6 +75,17 @@ static const char* hist_account_of(struct Client* cptr)
     return 0;
 
   return cli_user(cptr)->account;
+}
+
+void hist_time_ago(char* buf, size_t buflen, int seconds)
+{
+  time_t when = CurrentTime - (time_t) seconds;
+  struct tm tm;
+
+  gmtime_r(&when, &tm);
+  ircd_snprintf(0, buf, buflen, "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
+                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
+                tm.tm_min, tm.tm_sec);
 }
 
 /** One client-only tag of the line being handled, or NULL.

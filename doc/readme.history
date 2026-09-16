@@ -243,6 +243,62 @@ That is the honest shape of an asynchronous answer; the batch names its
 target and identifies itself well enough to be matched without one.
 
 
+TAKING A MESSAGE BACK: REDACT
+=============================
+
+  REDACT <target> <msgid> [:<reason>]
+
+IRCv3 draft/message-redaction, and it lives in this module rather than in
+the core for one reason: **you cannot redact what nobody stored**.  A
+server with no history has nothing to delete and no way to know who wrote
+the message being pointed at, so the command would be an announcement that
+something was withdrawn with nothing withdrawn.
+
+That is also what makes the policy checkable.  Whether somebody may take a
+message back depends on who wrote it, and the only thing that knows is the
+row -- so the answer is a database round trip away, and the command waits
+for it.  **Nothing is relayed until the deletion has happened**: a client
+that removed the message from its view while the store kept it would be
+the one outcome worse than not supporting this at all.
+
+Who may:
+
+  - the person who wrote it, within HISTORY_REDACT_WINDOW seconds (0
+    means for ever);
+  - anybody with ops on the channel it was said in, with no window,
+    because moderating is not undoing and a moderator who had to be quick
+    about it would not be one;
+  - an operator with history_admin, for the same reason they can delete an
+    account's whole record.
+
+A direct message is the first case only.  There is nobody with ops on a
+conversation.
+
+The target named has to be the one the message was actually sent to.
+Otherwise naming any channel you have ops on would let you delete a
+message from any other.
+
+Redacting a message takes the reactions to it with it -- a reaction to a
+message that is gone is a reference to nothing.  It does **not** take the
+replies: a reply is a message of its own, somebody else said it, and
+redacting one message is not permission to redact the conversation that
+followed.  Their reply_to is left pointing at a message that is no longer
+there, which is exactly what happened.
+
+It reaches only clients that asked for draft/message-redaction.  To
+anybody else REDACT is a command they have never heard of, and a line they
+cannot parse is not an improvement on a message they still have; what they
+keep is what they were shown, which is the honest outcome for a client
+that does not implement this.  The refusals are FAIL REDACT with the
+specification's codes: UNKNOWN_TARGET, UNKNOWN_MSGID, REDACT_FORBIDDEN and
+REDACT_FAILED.
+
+It is the one thing here that crosses a link -- P10 token RD -- because
+every server's clients were shown the message.  What arrives from another
+server is an announcement: the deletion has happened already, every server
+reads the same store, and there is nothing left to check.
+
+
 RETENTION, PURGING, EXPORT AND DELETION
 =======================================
 
@@ -306,6 +362,7 @@ FEATURES
   HISTORY_PRIVATE     store direct messages            (default TRUE)
   HISTORY_MAX_LIMIT   cap on one CHATHISTORY request   (default 100)
   HISTORY_EXPORT_DIR  where HISTORY EXPORT writes      (default none)
+  HISTORY_REDACT_WINDOW  seconds to take back your own (default 3600)
 
 See doc/readme.features.
 
@@ -321,6 +378,8 @@ HOW IT IS PUT TOGETHER
                    and which of its tags are part of the message
   hist_read.c      what a client asked for, whether it may see it, and
                    how the answer goes on the wire
+  hist_redact.c    REDACT: who may take a message back, and what goes
+                   with it
   hist_store.c     every statement this module sends, and nothing else
   hist_store.h     the store as the rest of the module sees it
   migrations/      the schema

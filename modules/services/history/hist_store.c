@@ -1036,3 +1036,148 @@ int hist_store_count(const char* account, HistCountFn cb, void* user)
 
   return 1;
 }
+
+/* ------------------------------------------------------------------- *
+ * Finding and redacting one message                                   *
+ * ------------------------------------------------------------------- */
+
+/** What a caller of hist_store_find() is waiting on. */
+struct HistFind {
+  HistFindFn hf_cb;
+  void*      hf_user;
+};
+
+/** The lookup came back. */
+static void hist_find_done(const struct DbResult* res, void* user)
+{
+  struct HistFind* hf = (struct HistFind*) user;
+  struct HistFound found;
+
+  memset(&found, 0, sizeof(found));
+
+  if (res->err.dberr_code != DB_OK) {
+    hist_complain("find", res, DB_OK);
+    /* Not found and could-not-ask are told apart by the caller through
+     * the NULL, because refusing a redaction because the database was
+     * down is a different answer from refusing it because the message is
+     * not there. */
+    if (hf->hf_cb)
+      (hf->hf_cb)(0, hf->hf_user);
+    MyFree(hf);
+    return;
+  }
+
+  if (!db_rows(res->data)) {
+    if (hf->hf_cb)
+      (hf->hf_cb)(0, hf->hf_user);
+    MyFree(hf);
+    return;
+  }
+
+  ircd_strncpy(found.hf_time, db_row_str(res->data, 0, "sent_at"),
+               sizeof(found.hf_time) - 1);
+  ircd_strncpy(found.hf_target, db_row_str(res->data, 0, "target"),
+               sizeof(found.hf_target) - 1);
+  ircd_strncpy(found.hf_canon, db_row_str(res->data, 0, "target_canon"),
+               sizeof(found.hf_canon) - 1);
+  ircd_strncpy(found.hf_account, db_row_str(res->data, 0, "account"),
+               sizeof(found.hf_account) - 1);
+  found.hf_channel =
+    !ircd_strcmp(db_row_str(res->data, 0, "is_channel"), "true");
+
+  if (hf->hf_cb)
+    (hf->hf_cb)(&found, hf->hf_user);
+
+  MyFree(hf);
+}
+
+int hist_store_find(const char* msgid, HistFindFn cb, void* user)
+{
+  struct DbParam p_msgid = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[2];
+  struct DbQuery query;
+  struct HistFind* hf;
+  enum DbError err;
+
+  assert(0 != msgid);
+
+  query.sql = "SELECT to_char(sent_at AT TIME ZONE 'UTC', "
+              "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, "
+              "target, target_canon, is_channel, "
+              "coalesce(sender_account, '') AS account "
+              "FROM message WHERE msgid = $1 LIMIT 1";
+
+  p_msgid.value = msgid;
+  params[0] = &p_msgid;
+  params[1] = NULL;
+  query.params = params;
+
+  hf = (struct HistFind*) MyCalloc(1, sizeof(*hf));
+  hf->hf_cb = cb;
+  hf->hf_user = user;
+
+  err = db_query(hist_mod, &query, hist_find_done, hf);
+
+  if (err != DB_OK) {
+    hist_complain("find", 0, err);
+    MyFree(hf);
+    return 0;
+  }
+
+  return 1;
+}
+
+/** What a redaction came back with. */
+static void hist_redact_done(const struct DbResult* res, void* user)
+{
+  struct HistForget* hf = (struct HistForget*) user;
+  long long rows = -1;
+
+  if (res->err.dberr_code != DB_OK)
+    hist_complain("redact", res, DB_OK);
+  else if (db_rows(res->data))
+    rows = db_row_int(res->data, 0, "history_redact");
+  else
+    rows = 0;
+
+  if (hf->hf_cb)
+    (hf->hf_cb)(rows, hf->hf_user);
+
+  MyFree(hf);
+}
+
+int hist_store_redact(const char* msgid,
+                      void (*cb)(long long rows, void* user), void* user)
+{
+  struct DbParam p_msgid = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[2];
+  struct DbQuery query;
+  struct HistForget* hf;
+  enum DbError err;
+
+  assert(0 != msgid);
+
+  /* The message and the reactions to it.  A reply is left alone: it is a
+   * message of its own, somebody else said it, and redacting one message
+   * is not permission to redact the conversation that followed. */
+  query.sql = "SELECT history_redact($1)";
+
+  p_msgid.value = msgid;
+  params[0] = &p_msgid;
+  params[1] = NULL;
+  query.params = params;
+
+  hf = (struct HistForget*) MyCalloc(1, sizeof(*hf));
+  hf->hf_cb = cb;
+  hf->hf_user = user;
+
+  err = db_exec(hist_mod, &query, hist_redact_done, hf);
+
+  if (err != DB_OK) {
+    hist_complain("redact", 0, err);
+    MyFree(hf);
+    return 0;
+  }
+
+  return 1;
+}

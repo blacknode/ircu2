@@ -248,6 +248,68 @@ services:
     depends_on:
       - ircd-nf-b
 
+  # Identity topology: one ircd with the identity module, and the
+  # PostgreSQL it stores accounts in.  Redis is deliberately absent: the
+  # cache is never the truth (doc/readme.cache), so a server without one
+  # answers exactly the same and one container less has to come up for a
+  # test run.
+  identity-db:
+    image: postgres:17-alpine
+    container_name: ircu-identity-db
+    environment:
+      POSTGRES_USER: ircu
+      POSTGRES_PASSWORD: ircu
+      POSTGRES_DB: ircu
+      # The store is rebuilt for every run, so durability buys nothing and
+      # fsync costs a second per migration.
+      POSTGRES_INITDB_ARGS: "--nosync"
+    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ircu -d ircu"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "15432:5432"
+    networks:
+      ircu-test-net:
+        ipv4_address: 10.55.0.50
+
+  ircd-identity:
+    build:
+      context: .
+      args:
+        IRCD_CONF: tests/docker/ircd-identity.conf
+        TLS_BACKEND: ${TLS_BACKEND:-openssl}
+        SANITIZE: ${IRCD_SANITIZE:-}
+    container_name: ircu-identity
+    environment:
+      IRCD_DEBUG: ${IRCD_DEBUG:-}
+      ASAN_OPTIONS: ${ASAN_OPTIONS:-abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=/opt/ircu/debug/asan}
+      # The same value on every server of a network, and never in the
+      # configuration file; see doc/readme.sasl.
+      IRCU_PASSWORD_PEPPER: "test-network-pepper"
+    volumes:
+      - ${IRCD_DEBUG_DIR:-./tests/debug-output}:/opt/ircu/debug
+    security_opt:
+      - seccomp:unconfined
+    ulimits:
+      core:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 4096
+        hard: 4096
+    ports:
+      - "6673:6673"
+      - "4430:4430"
+    networks:
+      ircu-test-net:
+        ipv4_address: 10.55.0.51
+    depends_on:
+      identity-db:
+        condition: service_healthy
+
 networks:
   ircu-test-net:
     driver: bridge

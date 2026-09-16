@@ -54,6 +54,13 @@ RUN if [ -n "$SANITIZE" ]; then \
   -DIRCU_DOMAIN=example.com \
   && cmake --build build -j"$(nproc)"
 
+# Installed rather than copied out of the build tree, so the modules land
+# in the shape the loader searches for (<type>/<name>.so and
+# <type>/<name>/<name>.so) under IRCU_MPATH, which is $DPATH/modules and
+# therefore /opt/ircu/lib/modules.  Only that directory is carried into
+# the runtime image; the rest of what this installs stays here.
+RUN cmake --install build >/dev/null
+
 # ---------------------------------------------------------------------------
 # Stage: build the current Undernet production release from GitHub
 # https://github.com/UndernetIRC/ircu2/releases
@@ -151,3 +158,9 @@ RUN chown ircu:ircu /opt/ircu/bin/ircd
 # $DPATH/po); tests/i18n exercises LANGUAGE against them.
 COPY --from=builder-tree /build/ircu2/po/*.po /opt/ircu/lib/po/
 RUN chown -R ircu:ircu /opt/ircu/lib/po
+# Every module the build produced, where the loader looks for them.  A
+# module is inert until a Module{} block or /MODULE LOAD names it, so
+# carrying them into every image costs nothing and means any test can ask
+# for one; tests/identity_db is the first that does.
+COPY --from=builder-tree /opt/ircu/lib/modules /opt/ircu/lib/modules
+RUN chown -R ircu:ircu /opt/ircu/lib/modules

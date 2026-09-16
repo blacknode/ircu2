@@ -343,13 +343,16 @@ TESTS
                                 the guest rename; ACCOUNT's refusals;
                                 the sasl capability with no provider;
                                 that no address arrives from a burst
+  tests/identity_db/            the same with a provider and a real
+                                PostgreSQL behind it: registering,
+                                identifying, the grace period, the
+                                account limit, the password change
   tests/trust_username/         visible vs. real identity in WHOIS,
                                 USERHOST, NAMES, WHO, bans, SILENCE,
                                 G-lines
   tests/vhost.py                predicts a client's hidden host
 
-What is not covered by an integration test is everything that needs a
-real identity provider -- a login end to end, the address in 691, the
-account listing -- because that needs a PostgreSQL container the test
-topologies do not have yet.  It is covered by hand, against a real
-PostgreSQL and a real Redis, and by ircd/test/*_t.c below the protocol.
+The two suites split along whether there is somebody to answer: the
+first covers what a network does whether or not it has accounts, the
+second needs the "identity" topology (one ircd and one PostgreSQL; see
+doc/readme.sasl).

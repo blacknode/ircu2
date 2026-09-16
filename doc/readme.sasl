@@ -238,6 +238,14 @@ Argon2 on a worker, so FEAT_WORKER_THREADS must not be zero -- with no
 worker pool it refuses every verification and says so in the log, which
 is better than stopping the server for a quarter of a second per login.
 
+APPLY THE MIGRATIONS BEFORE LETTING ANYBODY IN.  Until they are applied
+there is no "account" table, so every nickname lookup fails, and a lookup
+that fails is UNKNOWN, and UNKNOWN is not FREE -- so every user that
+registers is renamed to guest-*.  That is the rule working exactly as
+written (the source of truth is not answering), not a bug, and it is the
+one moment a new deployment meets it: bring the server up, apply the
+migrations, then open the port.
+
 The password pepper comes from the IRCU_PASSWORD_PEPPER environment
 variable, the same value on every server, and deliberately not from the
 configuration file: it is the one secret whose whole purpose is to not
@@ -292,7 +300,15 @@ TESTS
   tests/identity/           +f and what it blocks, the guest rename,
                             ACCOUNT's refusals, the capability with no
                             provider
+  tests/identity_db/        the same thing with a provider: registering,
+                            the account limit, identifying by all three
+                            doors, the listing, the password change, the
+                            drop, and the grace period against a real
+                            store
 
-A login end to end needs a real provider, and therefore a PostgreSQL
-container the test topologies do not have yet.  That half is covered by
-hand for now.
+tests/identity_db/ runs against the "identity" topology -- one ircd with
+this module and one PostgreSQL, in docker-compose.yml.  There is no Redis
+there on purpose: the cache is never the truth, so a server without one
+answers exactly the same.  The schema is created by the tests themselves
+running /MODULE MIGRATION APPLY identity, which is how a deployment does
+it and therefore worth doing the same way.

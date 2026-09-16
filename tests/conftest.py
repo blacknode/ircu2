@@ -102,6 +102,16 @@ LIMITS = {
     "name": "limits.test.net",
 }
 
+# One server with the identity module and the PostgreSQL behind it; no
+# leaves, because what is tested there is one server answering for itself.
+IDENTITY = {
+    "host": "127.0.0.1",
+    "port": 6673,
+    "server_port": 4430,
+    "name": "identity.test.net",
+    "db_port": 15432,
+}
+
 # A (prod release) — B (new, NETWORK_FEATURES=FALSE) — C (new, NETWORK_FEATURES=TRUE)
 NF_A = {
     "host": "127.0.0.1",
@@ -251,6 +261,14 @@ def _start_topology_limits():
     time.sleep(2)
 
 
+def _start_topology_identity():
+    # depends_on waits for the database's healthcheck, so the ircd starts
+    # with something to connect to; its own pool still takes a moment.
+    _start_services("ircd-identity")
+    wait_for_port(IDENTITY["host"], IDENTITY["port"], timeout=120.0)
+    time.sleep(2)
+
+
 def _start_topology_dns():
     from pr81_dns_tcp.helpers import reset_stats, set_scenario, wait_for_dns_control
 
@@ -291,6 +309,7 @@ _TOPOLOGIES = {
     "tls_network": _start_topology_tls_network,
     "tls_hub": _start_topology_tls_hub,
     "limits": _start_topology_limits,
+    "identity": _start_topology_identity,
     "dns": _start_topology_dns,
     "nf_compat": _start_topology_nf_compat,
 }
@@ -306,6 +325,7 @@ _SATISFIED_BY = {
     "tls_network": {"tls_network"},
     "tls_hub": {"tls_hub"},
     "limits": {"limits"},
+    "identity": {"identity"},
     "dns": {"dns"},
     "nf_compat": {"nf_compat"},
 }
@@ -316,6 +336,7 @@ _FIXTURE_TOPOLOGY = {
     "ircd_tls_network": "tls_network",
     "ircd_tls_hub": "tls_hub",
     "ircd_limits": "limits",
+    "ircd_identity": "identity",
     "ircd_dns_hub": "dns",
     "ircd_nf_compat": "nf_compat",
 }
@@ -323,7 +344,8 @@ _FIXTURE_TOPOLOGY = {
 # Collection order: tests with no docker dependency first, then one
 # contiguous block per topology. "network" runs before "hub" so hub-only
 # tests reuse the already-running network (see _SATISFIED_BY).
-_TOPOLOGY_ORDER = ["network", "hub", "limits", "dns", "nf_compat", "tls_network", "tls_hub"]
+_TOPOLOGY_ORDER = ["network", "hub", "limits", "identity", "dns", "nf_compat",
+                   "tls_network", "tls_hub"]
 
 _active_topology = None
 
@@ -440,6 +462,12 @@ def ircd_hub():
 def ircd_network():
     """Connection info for all three ircd containers (hub + 2 leaves)."""
     return {"hub": HUB, "leaf1": LEAF1, "leaf2": LEAF2}
+
+
+@pytest.fixture(scope="session")
+def ircd_identity():
+    """Connection info for the identity server and its database."""
+    return IDENTITY
 
 
 @pytest.fixture(scope="session")

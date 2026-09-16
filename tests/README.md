@@ -99,6 +99,10 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
     test_identity.py         # umode +f and what it blocks, +r clearing it, the
                              # guest-* rename, what ACCOUNT refuses, the sasl
                              # capability with no provider to answer for it
+  identity_db/
+    test_identity_db.py      # the same with a provider: REGISTER / IDENTIFY /
+                             # PASSWORD / DROP over a real PostgreSQL, the
+                             # account limit, and the grace period end to end
   i18n/
     test_language.py         # LANGUAGE, draft/languages, translated numerics from
                              # po/es.po (the image installs it), the LG token
@@ -155,6 +159,34 @@ The hub also has Connect blocks for two external test servers used by the P10 te
 | uworldonly.test.net | 6       | Yes (no oper) | U:lined without CONF_UWORLD_OPER   |
 
 Configs are baked into the Docker images (in `docker/`), not volume-mounted.
+
+### Identity topology (`identity_db/`)
+
+One ircd with the identity module and the PostgreSQL it stores accounts
+in.  Not part of the hub/leaf network: what is tested is one server
+answering for itself, and the store is per-topology so a run cannot
+inherit accounts from another one.
+
+| Service       | Server Name        | Client | S2S  | Numeric | IP         |
+|---------------|--------------------|--------|------|---------|------------|
+| ircd-identity | identity.test.net  | 6673   | 4430 | 7       | 10.55.0.51 |
+| identity-db   | postgres:17-alpine | 15432  | —    | —       | 10.55.0.50 |
+
+There is no Redis: the cache is never the truth (see `doc/readme.cache`),
+so a server without one answers exactly the same and one container fewer
+has to come up.  The database runs with `fsync=off` — it is rebuilt every
+run, so durability buys nothing and costs a second per migration.
+
+The schema is not seeded by the image.  The tests create it themselves
+with `/MODULE MIGRATION APPLY identity`, which is how a deployment does
+it.  Until it exists every nickname lookup fails, and a failed lookup is
+never read as "free", so every client is renamed to `guest-*`: bring the
+server up, migrate, then let users in.
+
+The image carries every module the build produced under
+`/opt/ircu/lib/modules`, which is where the loader looks.  A module is
+inert until a `Module{}` block or `/MODULE LOAD` names it, so this costs
+the other topologies nothing.
 
 ### NETWORK_FEATURES compat topology (`pr_network_features_compat/`)
 

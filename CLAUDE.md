@@ -62,11 +62,16 @@ uv run pytest test_irc_client.py    # unit tests, no Docker
 uv run pytest -m single_server      # by topology marker
 ```
 
-Docker topologies (hub-only, full network, TLS, limits, DNS, standalone TLS hub,
-NETWORK_FEATURES compat) share one compose project and are mutually exclusive;
-`tests/conftest.py` groups tests by topology at collection time, so any selection
-is safe. Markers are declared in `tests/pyproject.toml`. Regenerate the test PKI
-with `tests/docker/generate-certs.sh`.
+Docker topologies (hub-only, full network, TLS, limits, **identity**, DNS,
+standalone TLS hub, NETWORK_FEATURES compat) share one compose project and are
+mutually exclusive; `tests/conftest.py` groups tests by topology at collection
+time, so any selection is safe. Markers are declared in `tests/pyproject.toml`.
+Regenerate the test PKI with `tests/docker/generate-certs.sh`. The `identity`
+topology is one ircd plus a PostgreSQL (`tests/identity_db/`); the image ships
+every module under `/opt/ircu/lib/modules`, and the tests create the schema
+themselves with `/MODULE MIGRATION APPLY identity` — **until they do, every
+client is renamed to `guest-*`**, because a lookup against a table that does
+not exist fails and a failed lookup is never "free".
 
 ## Architecture
 

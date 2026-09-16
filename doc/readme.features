@@ -585,6 +585,16 @@ CAP LS 302 lists the languages this server can answer in.  The
 LANGUAGE command works whether or not the capability is advertised or
 requested; this only controls the advertisement.
 
+CAP_STANDARDREPLIES
+ * Type: boolean
+ * Default: TRUE
+
+Advertise the IRCv3 "standard-replies" capability: FAIL, WARN and NOTE,
+an answer a client can switch on rather than a numeric it has to know.
+A client that did not ask for it is sent a NOTICE with the same words
+instead, so nothing is ever refused in silence; turning this off means
+every client gets the notice.
+
 CONFIG_OPERCMDS
  * Type: boolean
  * Default: FALSE

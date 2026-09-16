@@ -28,6 +28,7 @@
 
 #include "ircd_reply.h"
 #include "client.h"
+#include "capab.h"
 #include "ircd.h"
 #include "ircd_i18n.h"
 #include "ircd_log.h"
@@ -125,3 +126,43 @@ int send_reply(struct Client *to, int reply, ...)
 
 
 
+
+/** Send an IRCv3 standard reply, or the notice that stands in for one.
+ * @param[in] to Client to answer.
+ * @param[in] kind MSG_FAIL, MSG_WARN or MSG_NOTE.
+ * @param[in] command The command being answered.
+ * @param[in] code Machine-readable code.
+ * @param[in] context One extra word of context, or NULL.
+ * @param[in] text Human-readable description, already translated.
+ * @return Non-zero if the standard reply went out.
+ */
+int send_std_reply(struct Client* to, const char* kind, const char* command,
+                   const char* code, const char* context, const char* text)
+{
+  assert(0 != to);
+  assert(0 != kind);
+  assert(0 != command);
+  assert(0 != code);
+
+  if (!text)
+    text = "";
+
+  /* A client that never asked for standard-replies has never heard of
+   * FAIL, and sending it one would be a line it cannot parse.  It gets the
+   * words, which is the half of this a person needed anyway.
+   */
+  if (!MyConnect(to) || !CapActive(to, CAP_STANDARDREPLIES)) {
+    sendcmdto_one(&me, CMD_NOTICE, to, "%C :%s", to, text);
+    return 0;
+  }
+
+  /* The name is the token too: no server sends one of these, so there is
+   * nothing to agree on and nothing to claim in the P10 table. */
+  if (context && *context)
+    sendcmdto_one(&me, kind, kind, to, "%s %s %s :%s", command, code,
+                  context, text);
+  else
+    sendcmdto_one(&me, kind, kind, to, "%s %s :%s", command, code, text);
+
+  return 1;
+}

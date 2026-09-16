@@ -218,6 +218,30 @@ struct Client;
 #define TOK_TAGMSG              "TM"
 #define CMD_TAGMSG		MSG_TAGMSG, TOK_TAGMSG
 
+/*
+ * The IRCv3 standard replies: FAIL, WARN and NOTE.
+ *
+ * Server to client and nothing else, which is why they are here as names
+ * to send with rather than as entries in msgtab[]: no client sends one, so
+ * there is nothing to parse, and no server sends one to another, so there
+ * is no P10 token to claim.  The token is the name for the same reason
+ * AUTHENTICATE's is.
+ *
+ * A client that did not ask for standard-replies is sent a NOTICE with the
+ * same words instead; see send_fail() in ircd_reply.c.
+ */
+#define MSG_FAIL                "FAIL"
+#define TOK_FAIL                "FAIL"
+#define CMD_FAIL                MSG_FAIL, TOK_FAIL
+
+#define MSG_WARN                "WARN"
+#define TOK_WARN                "WARN"
+#define CMD_WARN                MSG_WARN, TOK_WARN
+
+#define MSG_NOTE                "NOTE"
+#define TOK_NOTE                "NOTE"
+#define CMD_NOTE                MSG_NOTE, TOK_NOTE
+
 #define MSG_WALLCHOPS           "WALLCHOPS"     /* WC */
 #define TOK_WALLCHOPS           "WC"
 #define CMD_WALLCHOPS		MSG_WALLCHOPS, TOK_WALLCHOPS

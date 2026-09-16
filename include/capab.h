@@ -75,6 +75,7 @@ struct ModuleHandle;
 	_CAP(LABELEDRESPONSE, FEAT_CAP_LABELEDRESPONSE, 0, "labeled-response"), \
 	_CAP(MULTILINE, FEAT_CAP_MULTILINE, 0, "draft/multiline"), \
 	_CAP(SASL, FEAT_CAP_SASL, 0, "sasl"), \
+	_CAP(STANDARDREPLIES, FEAT_CAP_STANDARDREPLIES, 0, "standard-replies"), \
 	_CAP(CAPNOTIFY, 0, CAPFL_HIDDEN_302 | CAPFL_STICKY_302, "cap-notify")
 
 /** The core's capabilities, as bit positions. */

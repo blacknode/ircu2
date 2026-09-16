@@ -104,6 +104,45 @@ extern const char* batch_current(const struct Client* to);
  */
 extern const char* batch_label_tag(const struct Client* to);
 
+/** Open a batch of \a type to one client, and return its identifier.
+ *
+ * The third kind of batch: not a labeled response and not a fan-out, but a
+ * server telling one client that the next several messages are one answer.
+ * What #CHATHISTORY needs, and what anything else that replies with a
+ * series will need.
+ *
+ * Refused for a client that did not negotiate @c batch, because the
+ * messages inside would arrive loose and indistinguishable from live
+ * traffic -- which for history is worse than no answer at all.  The caller
+ * checks the capability itself and says so properly; NULL here is the
+ * belt to that brace.
+ *
+ * One is open at a time.  A command is dispatched, handled and finished
+ * before the next line is read, and a database answer arrives in one
+ * callback that sends everything it has, so a second cannot begin while
+ * the first is open.
+ *
+ * The line that opens a batch is not inside it: while it is going out,
+ * batch_current() answers with whatever batch was already in force, so a
+ * batch opened during a labeled response nests inside it the way the
+ * specification says.
+ *
+ * @param[in] to Client to answer.  Must be one of this server's.
+ * @param[in] type Batch type, e.g. "chathistory".
+ * @param[in] param One parameter for the @c BATCH line, or NULL.
+ * @return The identifier, valid until batch_out_close(), or NULL.
+ */
+extern const char* batch_out_open(struct Client* to, const char* type,
+                                  const char* param);
+
+/** Close the batch batch_out_open() opened.
+ *
+ * Safe to call when none is open, and when the one open belongs to another
+ * client.
+ * @param[in] to Client it was opened for.
+ */
+extern void batch_out_close(struct Client* to);
+
 /** Reset every batch and label.  Called when a client goes away, so a
  * connection that dies mid-response leaves nothing behind. */
 extern void batch_client_exiting(const struct Client* cptr);

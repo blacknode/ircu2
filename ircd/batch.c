@@ -58,6 +58,19 @@ static struct {
                                             specification asks for. */
 } label_ctx;
 
+/** The batch a command is answering one client with, if any.
+ *
+ * The same shape as #label_ctx and for the same reason: one is open at a
+ * time, because a command is handled to the end before the next line is
+ * read and a database answer arrives in one callback.
+ */
+static struct {
+  struct Client* client;         /**< Who it is going to. */
+  char           id[BATCHIDLEN + 1]; /**< Its identifier. */
+  int            open;           /**< Non-zero while it is open. */
+  int            emitting;       /**< Sending its own BATCH line. */
+} out_ctx;
+
 /** Source of batch identifiers.  They only have to be distinct among the
  * batches one client has open at once; counting up is more than enough and
  * keeps them short.  Shared with multiline.c so that a labeled response
@@ -164,6 +177,12 @@ void label_end(void)
  */
 const char* batch_current(const struct Client* to)
 {
+  /* First: a batch a command opened is inside whatever was already in
+   * force, so once its own BATCH line has gone out it is the innermost
+   * one and everything sent belongs to it. */
+  if (out_ctx.open && !out_ctx.emitting && to == out_ctx.client)
+    return out_ctx.id;
+
   if (label_ctx.open && !label_ctx.emitting && to == label_ctx.client)
     return label_ctx.batch;
 
@@ -185,11 +204,70 @@ const char* batch_label_tag(const struct Client* to)
   return label_ctx.label;
 }
 
+/** Open a batch of \a type to one client.
+ * @param[in] to Client to answer.
+ * @param[in] type Batch type.
+ * @param[in] param One parameter for the BATCH line, or NULL.
+ * @return Its identifier, or NULL if none was opened.
+ */
+const char* batch_out_open(struct Client* to, const char* type,
+                           const char* param)
+{
+  if (!to || !MyConnect(to) || IsServer(to))
+    return 0;
+
+  if (!CapActive(to, CAP_BATCH))
+    return 0;
+
+  /* One at a time.  Refusing rather than nesting a second one is the
+   * conservative answer: nothing in the server opens two, so a second
+   * here would be a bug worth seeing rather than a case to support.
+   */
+  if (out_ctx.open)
+    return 0;
+
+  batch_next_id(out_ctx.id, sizeof(out_ctx.id));
+  out_ctx.client = to;
+  out_ctx.open = 1;
+
+  /* The line that opens a batch is not in it; while it goes out,
+   * batch_current() answers with whatever was already in force, which is
+   * how this nests inside a labeled response.
+   */
+  out_ctx.emitting = 1;
+  if (param && *param)
+    sendcmdto_one(&me, CMD_IRCBATCH, to, "+%s %s %s", out_ctx.id, type,
+                  param);
+  else
+    sendcmdto_one(&me, CMD_IRCBATCH, to, "+%s %s", out_ctx.id, type);
+  out_ctx.emitting = 0;
+
+  return out_ctx.id;
+}
+
+/** Close the batch batch_out_open() opened.
+ * @param[in] to Client it was opened for.
+ */
+void batch_out_close(struct Client* to)
+{
+  if (!out_ctx.open || out_ctx.client != to)
+    return;
+
+  out_ctx.emitting = 1;
+  sendcmdto_one(&me, CMD_IRCBATCH, to, "-%s", out_ctx.id);
+  out_ctx.emitting = 0;
+
+  memset(&out_ctx, 0, sizeof(out_ctx));
+}
+
 /** Forget any batch or label belonging to a client that is going away.
  * @param[in] cptr Client leaving.
  */
 void batch_client_exiting(const struct Client* cptr)
 {
+  if (out_ctx.client == cptr)
+    memset(&out_ctx, 0, sizeof(out_ctx));
+
   if (label_ctx.client == cptr)
     memset(&label_ctx, 0, sizeof(label_ctx));
 

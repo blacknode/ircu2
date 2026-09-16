@@ -142,6 +142,7 @@ enum Feature {
   FEAT_CAP_LABELEDRESPONSE,
   FEAT_CAP_MULTILINE,
   FEAT_CAP_SASL,
+  FEAT_CAP_STANDARDREPLIES,
 
   /* Translations (see doc/readme.translations) */
   FEAT_DEFAULT_LANGUAGE,

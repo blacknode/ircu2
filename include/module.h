@@ -73,7 +73,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 16
+#define IRCU_MODULE_ABI 17
 
 /** Description of a module, exported by the shared object.
  *

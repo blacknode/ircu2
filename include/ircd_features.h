@@ -130,6 +130,9 @@ enum Feature {
 
   /* HTTP (see include/http.h, doc/readme.http) */
   FEAT_HTTP_TIMEOUT,
+  FEAT_HTTP_PORT,
+  FEAT_HTTP_BIND,
+  FEAT_HTTP_MAX_CLIENTS,
 
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,

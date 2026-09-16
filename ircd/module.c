@@ -996,6 +996,56 @@ cache_id_t module_cache_del(struct ModuleHandle *mod, const char *key,
   return cache_del(mod, key, fn, user);
 }
 
+/** Register this module as the HTTP provider.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] provider Static description; must outlive the module.
+ * @return Non-zero on success.
+ */
+int module_add_http_provider(struct ModuleHandle *mod,
+                             const struct HttpProvider *provider) {
+  assert(0 != mod);
+  return http_register_provider(mod, provider);
+}
+
+/** Withdraw this module's HTTP provider.
+ * @param[in] mod Handle passed to mi_init.
+ */
+void module_del_http_provider(struct ModuleHandle *mod) {
+  assert(0 != mod);
+  http_unregister_provider(mod);
+}
+
+/** Non-zero when some module is serving HTTP. */
+int module_http_available(void) {
+  return http_available();
+}
+
+/** Claim a route on the HTTP provider.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] method "GET", "POST"; matched case-insensitively.
+ * @param[in] path Where, starting with '/'.
+ * @param[in] fn What to call, in the main thread.
+ * @param[in] user Opaque pointer for \a fn.
+ * @return Non-zero on success.
+ */
+int module_add_route(struct ModuleHandle *mod, const char *method,
+                     const char *path, HttpHandlerFn fn, void *user) {
+  assert(0 != mod);
+  return http_add_route(mod, method, path, fn, user);
+}
+
+/** Give up one route.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] method The method it was claimed for.
+ * @param[in] path The path it was claimed for.
+ * @return Non-zero if it was found.
+ */
+int module_del_route(struct ModuleHandle *mod, const char *method,
+                     const char *path) {
+  assert(0 != mod);
+  return http_del_route(mod, method, path);
+}
+
 /** Turn a module name into the path of its shared object.
  *
  * The name is a bare name: it may not contain a directory separator and

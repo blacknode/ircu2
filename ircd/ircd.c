@@ -154,6 +154,20 @@ void server_die(const char *message)
 {
   /* log_write will send out message to both log file and as server notice */
   log_write(LS_SYSTEM, L_CRIT, 0, "Server terminating: %s", message);
+
+  /* Every thread the server started holds descriptors of its own -- a stop
+   * pipe, a result pipe, a listening socket -- and close_connections()
+   * closes every descriptor there is, by number, without knowing whose it
+   * is.  Doing that while another thread is in poll() on one of them is a
+   * race in the worst shape there is: the number is freed, the next open
+   * is handed it back, and the thread goes on reading something else
+   * entirely.  So the threads are stopped first, and everything after
+   * this point is single-threaded again.  The modules themselves are
+   * unloaded where they always were, after the event loop, with their
+   * workers already gone -- which the worker API allows for.
+   */
+  worker_shutdown();
+
   flush_connections(0);
   close_connections(1);
   running = 0;

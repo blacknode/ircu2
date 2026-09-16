@@ -1020,8 +1020,35 @@ con tres cosas que el diseño no decía y hubo que decidir:
   megabytes almacenados aquí son cien megabytes que el resto de los
   clientes esperan.
 
-Falta el proveedor (`modules/workers/http/`) y, encima de él, los
-ficheros.
+**El proveedor está implementado** (`modules/workers/http/`, `httpd_t`).
+Es el oyente y nada más: no sirve ninguna ruta y no sabe para qué es
+ninguna. Tres decisiones que el diseño no traía:
+
+- **`HTTP_PORT` vale 0 y a 0 no escucha nada.** Un servidor no abre un
+  segundo puerto porque se haya cargado un módulo; lo dice el operador.
+  El hilo arranca en `HOOK_CONFIG_LOADED` y no en `mi_init`, porque
+  `mi_init` corre en medio del parseo y las *features* todavía no son
+  definitivas, y un *rehash* que cambie puerto, dirección o límite lo
+  reinicia —uno que no cambie nada, no, porque reiniciar un oyente tira
+  todas las conexiones que tiene.
+- **El socket es del worker y las rutas son del hilo principal.** La
+  petición sube por `worker_post()` y la respuesta baja por una cola
+  propia del módulo —un mutex, una lista y una tubería, porque el worker
+  está dormido en `poll()` y una variable de condición no le serviría de
+  nada. En los dos sentidos viaja un `struct HttpXfer` de **bytes**, y la
+  conexión se nombra con un `http_req_t`, nunca con su dirección: la
+  misma regla que `worker_task_set_client()` sigue con los clientes.
+- **El parser rechaza, no adivina:** *chunked* (501), cabecera plegada
+  (400), versión que no implementa (505), `..`, `%2F` o `%00` en el
+  camino (400). Un separador codificado convertiría en separador lo que
+  el cliente escribió como dato, y con eso alcanzaría una ruta de prefijo
+  bajo la que no está. Lo que venga **encadenado** detrás de una petición
+  se queda en el buffer y se parsea cuando la anterior se ha contestado:
+  prometer *keep-alive* y luego tirar la siguiente petición es peor que
+  no mantener la conexión.
+
+No lleva TLS todavía: detrás de un proxy inverso, o atado al *loopback*.
+Falta, encima de él, los ficheros.
 
 Por §4, un módulo no puede llamar a otro. La forma correcta es la misma que la
 de la base de datos, y va en el core como interfaz delgada:

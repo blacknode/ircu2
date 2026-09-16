@@ -56,6 +56,9 @@
 #ifndef INCLUDED_cache_h
 #include "cache.h"      /* struct CacheDriver, cache_id_t */
 #endif
+#ifndef INCLUDED_http_h
+#include "http.h"       /* struct HttpProvider, HttpHandlerFn */
+#endif
 #ifndef INCLUDED_worker_h
 #include "worker.h"     /* struct WorkTask, WorkerMainFn */
 #endif
@@ -73,7 +76,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 20
+#define IRCU_MODULE_ABI 21
 
 /** Description of a module, exported by the shared object.
  *
@@ -584,6 +587,50 @@ extern cache_id_t module_cache_set(struct ModuleHandle* mod, const char* key,
 /** Delete a key.  What every writer calls after writing to the database. */
 extern cache_id_t module_cache_del(struct ModuleHandle* mod, const char* key,
                                    CacheResultFn fn, void* user);
+
+/*
+ * HTTP: the provider, and the routes modules claim on it.
+ *
+ * One module implements the listener (modules/workers/http/); any module
+ * may claim a route on it.  The core holds both ends for the reasons in
+ * include/http.h -- modules cannot resolve each other's symbols, and
+ * holding the requests here is what lets either side be unloaded with
+ * some outstanding.
+ *
+ * A consumer degrades, it does not guess: check module_http_available()
+ * when the module loads, say so if there is no provider, and switch off
+ * the part that needed it.  "The HTTP module is not loaded" must not be
+ * an outage.
+ */
+
+/** Register this module as the HTTP provider.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] provider Static description; must outlive the module.
+ * @return Non-zero on success; zero if one is already registered.
+ */
+extern int module_add_http_provider(struct ModuleHandle* mod,
+                                    const struct HttpProvider* provider);
+
+/** Withdraw this module's HTTP provider, failing its requests in flight. */
+extern void module_del_http_provider(struct ModuleHandle* mod);
+
+/** Non-zero when some module is serving HTTP. */
+extern int module_http_available(void);
+
+/** Claim a route.  A path ending in '/' matches everything under it.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] method "GET", "POST"; matched case-insensitively.
+ * @param[in] path Where, starting with '/'.
+ * @param[in] fn What to call, in the main thread.
+ * @param[in] user Passed back to \a fn.
+ * @return Non-zero on success.
+ */
+extern int module_add_route(struct ModuleHandle* mod, const char* method,
+                            const char* path, HttpHandlerFn fn, void* user);
+
+/** Give up one route.  Unloading the module does this for every route. */
+extern int module_del_route(struct ModuleHandle* mod, const char* method,
+                            const char* path);
 
 /*
  * Server-side interface.  Not for use by modules.

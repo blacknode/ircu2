@@ -118,6 +118,88 @@ megabytes buffered here would be a hundred megabytes every other client
 waits behind.
 
 
+THE PROVIDER
+============
+
+modules/workers/http/ is it: a listener on a thread of its own, a parser,
+and nothing else.  It serves no route -- it has none to serve -- and it
+knows nothing about what any of them are for.
+
+  F:HTTP_PORT:8080
+  F:HTTP_BIND:127.0.0.1
+  F:HTTP_MAX_CLIENTS:64
+
+  Module { name = "http"; };
+
+and WORKER_THREADS at one or more, because the listener is a thread.
+
+HTTP_PORT is 0 by default and at 0 nothing listens.  A server does not
+open a second port because a module was loaded; an operator says where.
+The listener is started from HOOK_CONFIG_LOADED rather than from mi_init,
+because mi_init runs in the middle of the parse and the features are not
+final yet, and a rehash that changes the port, the address or the limit
+restarts it.  One that changes none of them does not: restarting a
+listener drops every connection on it.
+
+  HTTP_PORT           0       where to listen; 0 is off
+  HTTP_BIND           ""      what to bind to; empty is every address
+  HTTP_MAX_CLIENTS    64      connections at once, past which new ones
+                              are closed rather than queued
+
+Which thread is which:
+
+  the socket           the worker's, always
+  the routes           the main thread's, always
+  a request going up   worker_post(), which runs the dispatch in the main
+                       thread
+  an answer coming     the module's own queue -- a mutex, a list and a
+  back                 self-pipe, because the worker is asleep in poll()
+                       and a condition variable would be no use to it
+
+Both directions carry one struct of bytes.  No pointer into anything
+either side might free crosses, and a connection is named by an
+http_req_t rather than by its address -- the rule worker_task_set_client()
+follows for clients, for the same reason.
+
+What it will not read:
+
+  chunked request body    501, not silence.  A server that reads a chunked
+                          body as if it were not one has been handed the
+                          next request as this one's content.
+  a folded header         400.  Two readers that disagree about whether
+                          that is one header or two is how a request is
+                          smuggled past the one in front.
+  HTTP/2, HTTP/0.9        505.  Guessing at a framing is how one request
+                          becomes two.
+  ".." in a path          400.  Nothing here opens a file, but a path is
+                          handed to modules and one of them will.
+  "%2F" or "%00"          400.  Routing happens on the decoded path, so an
+                          encoded separator would turn what the client
+                          wrote as data into a separator and reach a prefix
+                          route it is not under; an encoded NUL would
+                          shorten the path for whoever reads it next.
+  a head over 8 KiB       431.
+  a body over 64 KiB      413 -- HTTP_BODY_MAX, above.
+
+What comes after a request stays in the connection's buffer and is parsed
+once that request has been answered, so a client that pipelined is not
+promised keep-alive and then ignored.  Nothing is unbounded about holding
+it: the buffer is one head and one body, and the connection is not read
+again until the request in hand is answered.
+
+A header a module wrote is dropped if its name or value holds a newline,
+and the response is still sent.  A newline there is how one response
+becomes two, and the second one is whatever the module was handed.
+
+There is no TLS in it yet.  Put it behind a reverse proxy that has some,
+or bind it to the loopback.
+
+httpd_t covers the parser and the renderer, which are pure -- bytes in,
+bytes out -- and are the whole of what a stranger on a socket can reach
+before anything has been authenticated.  The poll() loop and the module
+lifecycle are not unit-tested, for the same reason migration_run.c is not.
+
+
 WHAT THIS IS FOR
 ================
 
@@ -127,5 +209,6 @@ include/ircd_sha256.h and include/ircd_aes.h -- bound to the account and
 the channel, which the provider validates.  Incoming webhooks and a REST
 API for integrations are routes on the same provider.
 
-None of that is in the tree yet.  What is here is the register, which is
-the part that has to exist before any of it can be written as a module.
+None of that is in the tree yet.  What is here is the register and the
+provider: the two parts that have to exist before any of it can be written
+as a module of its own.

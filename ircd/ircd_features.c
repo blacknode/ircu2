@@ -440,6 +440,11 @@ static struct FeatureDesc {
    * seconds: long enough for a database and a worker, short enough that a
    * client is not holding a socket open for a module that forgot. */
   F_I(HTTP_TIMEOUT, FEAT_OPER, 5000, 0),
+  /* Where the provider listens.  0 is off, which is the default: a
+   * server does not open a second port because a module was loaded. */
+  F_I(HTTP_PORT, FEAT_OPER, 0, 0),
+  F_S(HTTP_BIND, FEAT_OPER | FEAT_NULL, 0, 0),
+  F_I(HTTP_MAX_CLIENTS, FEAT_OPER, 64, 0),
 
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),

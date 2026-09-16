@@ -522,6 +522,43 @@ hands its in-flight requests back with `hp_cancel()`; unloading the
 provider drops them silently, and the routes wait for another. `http_t`
 covers all of it without a socket.
 
+**The HTTP provider** (`modules/workers/http/`, proposal 006 §7.4). The
+listener, on a thread of its own, and nothing else: it serves no route and
+knows nothing about what any of them are for. `FEAT_HTTP_PORT` is **0 by
+default and at 0 nothing listens** — a server does not open a second port
+because a module was loaded — and the thread is started from
+`HOOK_CONFIG_LOADED`, not `mi_init`, because `mi_init` runs mid-parse with
+the features not final; a rehash that changes the port, the address or
+`FEAT_HTTP_MAX_CLIENTS` restarts it and one that changes none of them does
+not, since restarting a listener drops every connection on it. The socket
+is the worker's and the routes are the main thread's: a request goes up
+through `worker_post()` and an answer comes back down the module's own
+queue — a mutex, a list and a self-pipe, because the worker is asleep in
+`poll()` and a condition variable would be no use to it. Both directions
+carry one `struct HttpXfer` of **bytes**, with the connection named by an
+`http_req_t` rather than by its address. The parser refuses rather than
+guesses: chunked (501), a folded header (400), a version it does not
+implement (505), `..`, `%2F` or `%00` in a path (400) — an encoded
+separator would turn what the client wrote as data into a separator and
+reach a prefix route it is not under. **What a client pipelined stays in
+the buffer** and is parsed once the request in hand has been answered,
+because promising keep-alive and then dropping the next request is worse
+than not keeping the connection; nothing is unbounded about it, the buffer
+being one head and one body. A response header whose name or value holds
+a newline is dropped and the response still sent, a newline there being
+how one response becomes two. There is **no TLS in it yet**. `httpd_t`
+covers the parser and the renderer — pure, and the whole of what a
+stranger on a socket reaches before anything is authenticated; the
+`poll()` loop is not unit-tested, for the reason `migration_run.c` is not.
+
+**`server_die()` stops the threads before it closes the descriptors.**
+`close_connections()` closes every descriptor there is, by number, without
+knowing whose it is; a worker in `poll()` on its own stop pipe would have
+that number freed under it and handed back to the next open. Everything
+after `worker_shutdown()` there is single-threaded again, and the modules
+are still unloaded where they always were, after the event loop, with
+their workers already gone — which the worker API allows for.
+
 **Cache** (`include/cache.h`, `ircd/cache.c`, `doc/readme.cache`, proposal 007
 §3.3). A key-value store in front of the database, with the `Database{}`
 arrangement exactly: the core holds the `Redis{}` block and the calls in

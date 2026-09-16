@@ -872,11 +872,30 @@ dentro de un año:
 
 Todo esto son tags sobre `msgid`, y cabe en módulos una vez existe la fase 0:
 
-- **Hilos:** tag `+draft/reply=<msgid>`.
+- **Hilos:** tag `+draft/reply=<msgid>`. **Implementado.** `history` guarda
+  la columna `reply_to` y la devuelve en el `CHATHISTORY`. Es la afirmación
+  del cliente y se guarda tal cual: «esto contesta a aquello» es justo lo
+  que sólo puede decir quien lo escribe, y el servidor no tiene forma de
+  acertar más. Sin clave ajena, por lo mismo por lo que un mensaje puede
+  contestar a otro que la retención ya tiró.
 - **Reacciones:** `TAGMSG` con `+draft/react`, persistidas por `history`.
+  **Implementado**, y **se guardan como mensajes**: tienen identificador
+  propio, hora propia y dicen algo de un mensaje que sigue ahí, así que van
+  con `kind=2`, la reacción en `body` y `reply_to` apuntando a lo que
+  reaccionan. Eso hace que quitar una y leerlas en orden sean las mismas
+  operaciones que para todo lo demás, y evita que un mensaje con
+  cuatrocientas reacciones sea un array de cuatrocientos elementos que
+  nadie puede indexar. El resto de los `TAGMSG` se siguen tirando.
+
+  Los tres tags van en el valor por defecto de `CLIENTTAGDENY`
+  (`*,-draft/reply,-draft/react,-typing`): se niega todo menos lo que la
+  red ha definido. Y lo que `CLIENTTAGDENY` no deja pasar tampoco se
+  guarda — un tag que la red se niega a transportar no es uno que haya que
+  anotar.
 - **Edición y borrado:** `draft/message-redaction` (`REDACT`), con política de
   quién y durante cuánto tiempo.
-- **Typing:** `+typing`, efímero, sin persistir.
+- **Typing:** `+typing`, efímero, sin persistir. **Implementado**: sólo
+  hacía falta dejarlo pasar, y no guardarlo.
 - **Marcas de leído y no-leídos:** `draft/read-marker` (`MARKREAD`), por cuenta
   y por objetivo. Es lo que convierte esto en una bandeja de entrada.
 - **Menciones:** derivadas de la cuenta, no del nick.

@@ -107,12 +107,20 @@ void msg_tag_line_force_msgid(const char *tok);
  *   stored message that has none.  NULL means none is sent: minting one
  *   here would give the same message two names.
  * @param[in] when Its timestamp, ISO 8601, used verbatim.
+ * @param[in] tags Client-only tags the stored message carried, rendered
+ *   as @c +key=value;+key=value, or NULL for none.  The core never
+ *   learned what any of them mean, so whatever stored the message says
+ *   what to put back; they still reach only a client that asked for
+ *   @c message-tags, and still only if @c CLIENTTAGDENY allows them now.
  */
 void msg_tag_line_replay(const char *tok, const char *msgid,
-                         const char *when);
+                         const char *when, const char *tags);
 
 /** End a replay begun with msg_tag_line_replay(). */
 void msg_tag_line_replay_end(void);
+
+/** The client tags of the replay in force, or NULL. */
+const char *msg_tag_line_replay_tags(void);
 
 /** The line's network-stable timestamp, in ISO 8601 with milliseconds.
  *

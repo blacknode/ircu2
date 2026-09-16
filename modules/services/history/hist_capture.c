@@ -32,6 +32,8 @@
 #include "ircd_features.h"
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
+#include "msg_tag.h"
+#include "parse.h"
 #include "struct.h"
 
 #include <string.h>
@@ -72,6 +74,24 @@ static const char* hist_account_of(struct Client* cptr)
   return cli_user(cptr)->account;
 }
 
+/** One client-only tag of the line being handled, or NULL.
+ *
+ * The line is still the one the hook fired for -- the hook runs inside
+ * the handler -- so the tags it arrived with are still the parser's.
+ * CLIENTTAGDENY decides whether it may be relayed at all; a tag the
+ * network refuses to carry is not one this module should write down
+ * either, so the same test gates both.
+ */
+static const char* hist_client_tag(const char* key)
+{
+  struct MsgTag* tag = msg_tag_find(parse_tags(), key);
+
+  if (!tag || !msg_tag_client_allowed(key))
+    return 0;
+
+  return tag->value;
+}
+
 /** The prefix a client is wearing, nick!user@host.
  *
  * The visible host, which for every user is the cipher of their address
@@ -108,6 +128,8 @@ enum HookResult hist_capture(struct HookContext* ctx, void* user)
 {
   const struct HookMessage* hm;
   struct HistMessage msg;
+  const char* reply;
+  const char* react = 0;
   char prefix[NICKLEN + USERLEN + HOSTLEN + 3];
   char canon[CHANNELLEN + 1];
   char from_canon[NICKLEN + 1];
@@ -122,13 +144,28 @@ enum HookResult hist_capture(struct HookContext* ctx, void* user)
   if (!hm)
     return HOOK_CONTINUE;
 
-  /* A TAGMSG carries tags and no text, and this module does not store
-   * tags yet.  A row with an empty body and nothing else would be a
-   * record of the fact that something happened, which is not history.
-   * Phase 3 is what gives those tags a meaning worth keeping.
+  reply = hist_client_tag(HIST_TAG_REPLY);
+
+  /* A TAGMSG carries tags and no text of its own, so most of them are
+   * nothing to keep: a typing indicator is true for four seconds and then
+   * is not, and a row saying somebody was typing in March is not history.
+   *
+   * A reaction is the exception, and it is not really an exception: it has
+   * its own identifier, its own time, and it says something about a
+   * message that is still there.  It is a message, so it is stored like
+   * one -- the reaction in the body and what it is about in reply_to --
+   * which is what makes removing one and reading them back in order the
+   * same operations as for anything else.
    */
-  if (hm->hmm_kind == HOOK_MSG_TAGMSG)
-    return HOOK_CONTINUE;
+  if (hm->hmm_kind == HOOK_MSG_TAGMSG) {
+    react = hist_client_tag(HIST_TAG_REACT);
+
+    if (!react || !*react || !reply || !*reply)
+      return HOOK_CONTINUE;
+
+    if (strlen(react) > HIST_REACT_MAX)
+      return HOOK_CONTINUE;
+  }
 
   if (hist_is_ctcp_noise(ctx->hc_arg))
     return HOOK_CONTINUE;
@@ -146,8 +183,17 @@ enum HookResult hist_capture(struct HookContext* ctx, void* user)
 
   msg.hm_msgid = hm->hmm_msgid;
   msg.hm_time = hm->hmm_time;
-  msg.hm_kind = (hm->hmm_kind == HOOK_MSG_NOTICE) ? HIST_NOTICE : HIST_PRIVMSG;
-  msg.hm_body = ctx->hc_arg;
+
+  switch (hm->hmm_kind) {
+  case HOOK_MSG_NOTICE: msg.hm_kind = HIST_NOTICE; break;
+  case HOOK_MSG_TAGMSG: msg.hm_kind = HIST_TAGMSG; break;
+  default:              msg.hm_kind = HIST_PRIVMSG; break;
+  }
+
+  /* A reaction's body is the reaction: a TAGMSG has no text of its own,
+   * and what it came to say is in the tag. */
+  msg.hm_body = react ? react : ctx->hc_arg;
+  msg.hm_reply = (reply && *reply) ? reply : 0;
 
   sender_account = hist_account_of(ctx->hc_source);
 

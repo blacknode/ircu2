@@ -563,6 +563,28 @@ client asking for more is given this many rather than an error: the
 limit is the server's, and a client that has to discover it by being
 refused would just ask again with a smaller number.
 
+CLIENTTAGDENY
+ * Type: string
+ * Default: *,-draft/reply,-draft/react,-typing
+
+Which client-only tags -- the ones beginning with "+" -- this server
+relays between clients.  A comma-separated list where "*" denies
+everything and a "-" entry takes one name back out of the denial, so the
+default is "deny everything except these three".  Empty allows every
+tag.
+
+The three are what the conversation model is built out of: +draft/reply
+says which message this one answers, +draft/react carries the reaction a
+TAGMSG came to deliver, and +typing says somebody is typing.  They are
+named rather than allowed by default because a tag nobody has defined is
+a tag nobody should be relaying, and because the server itself now knows
+what two of them mean -- the history module stores a reply and a
+reaction, and stores neither if this denies it.  A network that adds a
+tag of its own adds it here.
+
+The value is advertised in ISUPPORT as CLIENTTAGDENY, so a client can
+tell what will be carried before it tries.
+
 HISTORY_EXPORT_DIR
  * Type: string
  * Default: (none)

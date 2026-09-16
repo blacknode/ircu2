@@ -75,7 +75,8 @@ struct HistMessage {
   const char*   hm_recipient;  /**< What the recipient had proved, for a
                                     direct message; NULL for a channel. */
   const char*   hm_prefix;     /**< nick!user@host as they were. */
-  const char*   hm_body;       /**< The text; "" for a TAGMSG. */
+  const char*   hm_body;       /**< The text, or a reaction for a TAGMSG. */
+  const char*   hm_reply;      /**< Message replied to or reacted to. */
 };
 
 /** Which way a request looks at the store.
@@ -135,7 +136,8 @@ struct HistRow {
   enum HistKind hr_kind;     /**< PRIVMSG or NOTICE. */
   const char*   hr_target;   /**< Channel or nickname, as addressed. */
   const char*   hr_prefix;   /**< nick!user@host, or the bare nickname. */
-  const char*   hr_body;     /**< The text. */
+  const char*   hr_body;     /**< The text, or a reaction for a TAGMSG. */
+  const char*   hr_reply;    /**< Message replied to or reacted to, or "". */
 };
 
 /** Receives the answer to hist_store_read().  Runs in the main thread.
@@ -182,6 +184,7 @@ struct HistExportRow {
   const char* he_from;       /**< Sender's account, or "". */
   const char* he_to;         /**< Recipient's account, or "". */
   const char* he_body;       /**< The text. */
+  const char* he_reply;      /**< Message replied to or reacted to, or "". */
 };
 
 /** Receives one page of an export.  Runs in the main thread.

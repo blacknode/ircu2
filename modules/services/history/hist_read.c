@@ -193,6 +193,27 @@ static unsigned int hist_limit_parse(const char* word)
  * Sending the answer                                                  *
  * ------------------------------------------------------------------- */
 
+/** Render the client tags a stored message goes back out with.
+ *
+ * A reply carries what it replies to; a reaction carries that and the
+ * reaction itself, which is where a TAGMSG keeps what it came to say.
+ * Everything else carries nothing: the tags a message had that were not
+ * part of it -- a typing indicator, a label -- were not stored and are
+ * not invented here.
+ */
+static void hist_replay_tags(char* buf, size_t buflen,
+                             const struct HistRow* row)
+{
+  buf[0] = '\0';
+
+  if (row->hr_kind == HIST_TAGMSG && row->hr_body && row->hr_body[0])
+    ircd_snprintf(0, buf, buflen, "%s=%s;%s=%s", HIST_TAG_REACT,
+                  row->hr_body, HIST_TAG_REPLY,
+                  (row->hr_reply && row->hr_reply[0]) ? row->hr_reply : "");
+  else if (row->hr_reply && row->hr_reply[0])
+    ircd_snprintf(0, buf, buflen, "%s=%s", HIST_TAG_REPLY, row->hr_reply);
+}
+
 /** Send the messages a read came back with.
  * @param[in] cptr Who asked.
  * @param[in] ask What they asked.
@@ -208,22 +229,33 @@ static void hist_send_messages(struct Client* cptr, const struct HistAsk* ask,
     return;
 
   for (i = 0; i < count; i++) {
-    const char* cmd = (rows[i].hr_kind == HIST_NOTICE) ? MSG_NOTICE
-                                                       : MSG_PRIVATE;
-    const char* tok = (rows[i].hr_kind == HIST_NOTICE) ? TOK_NOTICE
-                                                       : TOK_PRIVATE;
+    const char* cmd;
+    const char* tok;
+    char tags[512];
+
+    switch (rows[i].hr_kind) {
+    case HIST_NOTICE: cmd = MSG_NOTICE;  tok = TOK_NOTICE;  break;
+    case HIST_TAGMSG: cmd = MSG_TAGMSG;  tok = TOK_TAGMSG;  break;
+    default:          cmd = MSG_PRIVATE; tok = TOK_PRIVATE; break;
+    }
+
+    hist_replay_tags(tags, sizeof(tags), &rows[i]);
 
     /* The message goes back out under the name and the time it already
      * had: that is what makes it the same message everybody else saw,
      * and what lets a client put it in order against what it has.
      */
-    msg_tag_line_replay(tok, rows[i].hr_msgid, rows[i].hr_time);
+    msg_tag_line_replay(tok, rows[i].hr_msgid, rows[i].hr_time, tags);
 
     /* The prefix is the one stored with the message, not one built from
      * whoever holds that nickname now, so the tags have to be rendered by
      * a send that takes a prefix rather than a client. */
-    sendrawto_one_tagged(cptr, tok, ":%s %s %s :%s", rows[i].hr_prefix, cmd,
-                         rows[i].hr_target, rows[i].hr_body);
+    if (rows[i].hr_kind == HIST_TAGMSG)
+      sendrawto_one_tagged(cptr, tok, ":%s %s %s", rows[i].hr_prefix, cmd,
+                           rows[i].hr_target);
+    else
+      sendrawto_one_tagged(cptr, tok, ":%s %s %s :%s", rows[i].hr_prefix, cmd,
+                           rows[i].hr_target, rows[i].hr_body);
 
     msg_tag_line_replay_end();
   }

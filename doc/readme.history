@@ -52,6 +52,17 @@ the nickname they proved is theirs: filing a message under a bare
 nickname would show it to whoever is wearing that nickname next week.
 With nobody it can safely be shown to, there is no reason to keep it.
 
+Reactions, as TAGMSGs.  A TAGMSG carries tags and no text of its own, so
+most of them are nothing to keep -- a typing indicator is true for four
+seconds and then is not, and a row saying somebody was typing in March is
+not history.  A reaction is different, and not really an exception: it has
+its own identifier, its own time, and it says something about a message
+that is still there.  So it is stored as a message -- kind 2, the reaction
+in the body, and reply_to naming what it is about -- which is what makes
+removing one and reading them back in order the same operations as for
+anything else, and what keeps a message with four hundred reactions from
+being a four-hundred-element array nobody can index.
+
 Never stored:
 
   - Anything sent to a service (+S or +k).  That is where IDENTIFY,
@@ -108,7 +119,8 @@ servers only agree on the key if they agree on the timestamp.
   sender_nick        the nickname they were wearing
   sender_account     the nickname they proved, canonical, or NULL
   recipient_account  for a direct message; NULL for a channel
-  body               the text
+  body               the text, or the reaction for a kind-2 row
+  reply_to           the message this one answers, or NULL
   body_search        tsvector over body, maintained by the database
 
 Three indexes do the reading: BRIN over sent_at (the rows inside one
@@ -137,6 +149,26 @@ on is gone.  Since v3 of the schema, history_ensure_partition() moves
 those rows out of the default, creates the partition and puts them back,
 all inside the one statement it is called by.
 
+
+THREADS AND REACTIONS
+=====================
+
+Both are the same tag pointing at the same thing.  +draft/reply says
+"this follows that"; a reaction is a TAGMSG carrying +draft/react as well,
+which says "this is about that".  The identifier they point at is the
+msgid the whole network already agrees on, so nothing new had to be
+invented for either.
+
+The tag is the client's claim and is kept verbatim.  "This is a reply to
+that" is exactly the sort of thing only the person writing it can say, and
+the server has no way to be more right about it.  There is no foreign key
+on reply_to for the same reason: a message may reply to one the retention
+already dropped, or to one from a server this one never heard from.
+
+They are stored only if CLIENTTAGDENY allows them -- a tag the network
+refuses to carry is not one to write down either -- and they go back out
+the same way, under whatever the policy is at the time of the read rather
+than at the time of the write.
 
 READING IT BACK: CHATHISTORY
 ============================
@@ -285,7 +317,8 @@ HOW IT IS PUT TOGETHER
                    maintenance timer, and the warnings an operator needs
                    before the first user does
   hist_admin.c     /HISTORY: what an operator does about what is stored
-  hist_capture.c   which of what the server delivers is a conversation
+  hist_capture.c   which of what the server delivers is a conversation,
+                   and which of its tags are part of the message
   hist_read.c      what a client asked for, whether it may see it, and
                    how the answer goes on the wire
   hist_store.c     every statement this module sends, and nothing else

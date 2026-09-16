@@ -272,6 +272,15 @@ static char msgid_line_value[MSGIDLEN + 1];
  */
 static int  replay_open;
 static char replay_time[32];
+/** Client-only tags to put back on the line, rendered, or empty.
+ *
+ * A stored message may have carried client tags -- which message it
+ * replies to, which message it is a reaction to -- and those are part of
+ * the message rather than decoration on it.  The core does not know what
+ * any of them mean: whatever stored them says what to put back, already
+ * spelled the way it goes on the wire.
+ */
+static char replay_tags[512];
 
 int
 msg_tag_needs_msgid(const char *tok)
@@ -352,7 +361,8 @@ msg_tag_line_force_msgid(const char *tok)
 }
 
 void
-msg_tag_line_replay(const char *tok, const char *msgid, const char *when)
+msg_tag_line_replay(const char *tok, const char *msgid, const char *when,
+                    const char *tags)
 {
   msgid_line_open = 1;
   msgid_line_wanted = 0;
@@ -360,6 +370,7 @@ msg_tag_line_replay(const char *tok, const char *msgid, const char *when)
   msgid_line_tok[0] = '\0';
   replay_open = 0;
   replay_time[0] = '\0';
+  replay_tags[0] = '\0';
 
   if (!tok)
     return;
@@ -383,6 +394,12 @@ msg_tag_line_replay(const char *tok, const char *msgid, const char *when)
     ircd_strncpy(replay_time, when, sizeof(replay_time) - 1);
     replay_time[sizeof(replay_time) - 1] = '\0';
   }
+
+  if (tags && *tags) {
+    replay_open = 1;
+    ircd_strncpy(replay_tags, tags, sizeof(replay_tags) - 1);
+    replay_tags[sizeof(replay_tags) - 1] = '\0';
+  }
 }
 
 void
@@ -390,7 +407,14 @@ msg_tag_line_replay_end(void)
 {
   replay_open = 0;
   replay_time[0] = '\0';
+  replay_tags[0] = '\0';
   msg_tag_line_end();
+}
+
+const char *
+msg_tag_line_replay_tags(void)
+{
+  return replay_tags[0] ? replay_tags : 0;
 }
 
 void
@@ -809,6 +833,36 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
 
   /* client-only tags */
   if (CapHas(cli_active(to), CAP_MESSAGE_TAGS)) {
+    /* A stored message being sent again carries the client tags it had,
+     * already rendered by whatever stored them: the core never learned
+     * what any of them mean and is not going to start here.  They still
+     * go only to a client that asked for message-tags, and they still go
+     * out under CLIENTTAGDENY -- the replay is subject to the same policy
+     * the live message was, because the policy may have changed since. */
+    if (replay_open && replay_tags[0]) {
+      char copy[sizeof(replay_tags)];
+      char *p;
+      char *entry;
+
+      ircd_strncpy(copy, replay_tags, sizeof(copy) - 1);
+      copy[sizeof(copy) - 1] = '\0';
+
+      for (p = copy; (entry = strtok(p, ";")) != NULL; p = NULL) {
+        char *value = strchr(entry, '=');
+
+        if (value)
+          *value++ = '\0';
+
+        if (!msg_tag_key_client_only(entry)
+            || !msg_tag_client_allowed(entry))
+          continue;
+
+        pos = msg_tag_append(pos, end, &wrote, entry, value);
+        if (!pos)
+          return 0;
+      }
+    }
+
     for (tag = tags; tag; tag = tag->next) {
       if (!msg_tag_key_client_only(tag->key))
         continue;

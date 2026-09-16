@@ -334,8 +334,24 @@ offset, so a long export never re-reads what it has written. A **direct
 message is stored only when both ends have identified**: the only durable handle on a person is
 the nickname they proved, and filing one under a bare nickname would show it
 to whoever wears that nickname next week. Messages to a service are never
-even reported to the module, non-ACTION CTCP and TAGMSG are dropped by
+even reported to the module, and non-ACTION CTCP is dropped by
 `hist_capture.c`.
+
+**Threads and reactions** (proposal 006 §7.2) are the same tag pointing at
+the same thing: `+draft/reply` says "this follows that", and a reaction is
+a TAGMSG that also carries `+draft/react`. Both ride on the `msgid` the
+network already agrees on, so nothing new was invented. A reaction **is
+stored as a message** — kind 2, the reaction in `body`, `reply_to` naming
+what it is about — which makes removing one and reading them back in order
+the same operations as for anything else; every other TAGMSG (`+typing`)
+is still dropped, because a row saying somebody was typing in March is not
+history. The tag is the **client's claim, kept verbatim** and with no
+foreign key: a message may reply to one the retention dropped. Both are
+stored only if `CLIENTTAGDENY` allows them — whose default is now
+`*,-draft/reply,-draft/react,-typing`, deny-all with those three named —
+and replayed through `msg_tag_line_replay()`'s fourth argument, a
+pre-rendered client-tag string the core relays without knowing what any of
+it means.
 
 **Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
 (`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`

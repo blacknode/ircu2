@@ -453,11 +453,19 @@ static struct FeatureDesc {
   F_S(DEFAULT_LANGUAGE, FEAT_NULL, 0, feature_notify_default_language),
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags.
-   * Default "*" denies all; empty (FEAT_NULL) allows all. Rebuilds via notify. */
+   * Default "*" denies all; empty (FEAT_NULL) allows all. Rebuilds via notify.
+   *
+   * The three exceptions are the ones the conversation model is built out
+   * of (proposal 006 section 7.2): which message this one answers, the
+   * reaction a TAGMSG carries, and whether somebody is typing.  Deny-all
+   * stays the base, because a tag nobody has defined is a tag nobody
+   * should be relaying; these are named because the server itself now
+   * knows what they mean -- history stores the first two. */
   F_I(MULTILINE_MAX_BYTES, 0, 4096, 0),
   F_I(MULTILINE_MAX_LINES, 0, 24, 0),
 
-  F_S(CLIENTTAGDENY, FEAT_NULL, "*", feature_notify_clienttagdeny),
+  F_S(CLIENTTAGDENY, FEAT_NULL, "*,-draft/reply,-draft/react,-typing",
+      feature_notify_clienttagdeny),
 
   /* HEAD_IN_SAND Features */
   F_B(HIS_SNOTICES, 0, 1, 0),

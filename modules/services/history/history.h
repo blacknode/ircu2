@@ -47,6 +47,20 @@ struct Client;
 /** The capability that advertises it, and its limit as the value. */
 #define HIST_CAP_NAME "draft/chathistory"
 
+/** The client tag that says which message this one answers.
+ *
+ * Threads and reactions are the same tag pointing at the same thing: a
+ * reply says "this follows that", a reaction says "this is about that".
+ */
+#define HIST_TAG_REPLY "+draft/reply"
+
+/** The client tag that makes a TAGMSG a reaction, and carries it. */
+#define HIST_TAG_REACT "+draft/react"
+
+/** Longest reaction kept.  It is an emoji or a short word, and anything
+ * longer is somebody using the field for something else. */
+#define HIST_REACT_MAX 32
+
 /** The domain this module's own text is translated in. */
 #define I18N_DOMAIN hist_i18n
 

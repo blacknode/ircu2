@@ -115,8 +115,8 @@ static void hist_write_done(const struct DbResult* res, void* user)
 static const char* hist_sql_insert =
   "INSERT INTO message (sent_at, msgid, kind, is_channel, target, "
   "target_canon, sender_nick, sender_account, recipient_account, body, "
-  "sender_prefix) "
-  "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) "
+  "sender_prefix, reply_to) "
+  "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) "
   "ON CONFLICT (sent_at, msgid) DO NOTHING";
 
 int hist_store_write(const struct HistMessage* msg)
@@ -133,7 +133,8 @@ int hist_store_write(const struct HistMessage* msg)
   struct DbParam p_recip = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
   struct DbParam p_body = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
   struct DbParam p_prefix = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
-  struct DbParam* params[12];
+  struct DbParam p_reply = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[13];
   struct DbQuery query;
   enum DbError err;
 
@@ -159,6 +160,7 @@ int hist_store_write(const struct HistMessage* msg)
   p_recip.value = msg->hm_recipient;
   p_body.value = msg->hm_body ? msg->hm_body : "";
   p_prefix.value = msg->hm_prefix;
+  p_reply.value = msg->hm_reply;   /* NULL is SQL NULL */
 
   params[0] = &p_time;
   params[1] = &p_msgid;
@@ -171,7 +173,8 @@ int hist_store_write(const struct HistMessage* msg)
   params[8] = &p_recip;
   params[9] = &p_body;
   params[10] = &p_prefix;
-  params[11] = NULL;
+  params[11] = &p_reply;
+  params[12] = NULL;
 
   query.sql = hist_sql_insert;
   query.params = params;
@@ -379,7 +382,8 @@ int hist_store_forget(const char* account,
   "to_char(sent_at AT TIME ZONE 'UTC', " \
   "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, " \
   "msgid, kind, target, body, " \
-  "coalesce(sender_prefix, sender_nick) AS prefix"
+  "coalesce(sender_prefix, sender_nick) AS prefix, " \
+  "coalesce(reply_to, '') AS reply_to"
 
 /** One read, from the moment it is accepted until its rows are handed on.
  *
@@ -414,6 +418,7 @@ struct HistCell {
   char hc_body[BUFSIZE];
   char hc_from[NICKLEN + 1];
   char hc_to[NICKLEN + 1];
+  char hc_reply[MSGIDLEN + 1];
 };
 
 /** What came back from a read. */
@@ -462,6 +467,8 @@ static void hist_read_done(const struct DbResult* res, void* user)
                  sizeof(cells[i].hc_prefix) - 1);
     ircd_strncpy(cells[i].hc_body, db_row_str(res->data, from, "body"),
                  sizeof(cells[i].hc_body) - 1);
+    ircd_strncpy(cells[i].hc_reply, db_row_str(res->data, from, "reply_to"),
+                 sizeof(cells[i].hc_reply) - 1);
 
     rows[i].hr_time = cells[i].hc_time;
     rows[i].hr_msgid = cells[i].hc_msgid;
@@ -469,6 +476,7 @@ static void hist_read_done(const struct DbResult* res, void* user)
     rows[i].hr_target = cells[i].hc_target;
     rows[i].hr_prefix = cells[i].hc_prefix;
     rows[i].hr_body = cells[i].hc_body;
+    rows[i].hr_reply = cells[i].hc_reply;
   }
 
   if (rd->hr_cb)
@@ -637,7 +645,8 @@ static void hist_read_run(struct HistRead* rd)
                   "SELECT peer AS target, "
                   "to_char(max(sent_at) AT TIME ZONE 'UTC', "
                   "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, "
-                  "'' AS msgid, 0 AS kind, '' AS body, '' AS prefix "
+                  "'' AS msgid, 0 AS kind, '' AS body, '' AS prefix, "
+                  "'' AS reply_to "
                   "FROM (SELECT CASE WHEN sender_account = $1 "
                   "THEN recipient_account ELSE sender_account END AS peer, "
                   "sent_at FROM message WHERE NOT is_channel "
@@ -805,7 +814,8 @@ static const char* hist_sql_export =
   "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, msgid, kind, is_channel, "
   "target, coalesce(sender_prefix, sender_nick) AS prefix, "
   "coalesce(sender_account, '') AS from_account, "
-  "coalesce(recipient_account, '') AS to_account, body "
+  "coalesce(recipient_account, '') AS to_account, body, "
+  "coalesce(reply_to, '') AS reply_to "
   "FROM message "
   "WHERE (sender_account = $1 OR recipient_account = $1) "
   "AND (sent_at, msgid) > ($2, $3) "
@@ -869,6 +879,8 @@ static void hist_export_done(const struct DbResult* res, void* user)
     to[sizeof(to) - 1] = '\0';
     ircd_strncpy(cells[i].hc_from, from, sizeof(cells[i].hc_from) - 1);
     ircd_strncpy(cells[i].hc_to, to, sizeof(cells[i].hc_to) - 1);
+    ircd_strncpy(cells[i].hc_reply, db_row_str(res->data, i, "reply_to"),
+                 sizeof(cells[i].hc_reply) - 1);
 
     rows[i].he_time = cells[i].hc_time;
     rows[i].he_msgid = cells[i].hc_msgid;
@@ -880,6 +892,7 @@ static void hist_export_done(const struct DbResult* res, void* user)
     rows[i].he_from = cells[i].hc_from;
     rows[i].he_to = cells[i].hc_to;
     rows[i].he_body = cells[i].hc_body;
+    rows[i].he_reply = cells[i].hc_reply;
   }
 
   /* A short page is the last one: there was nothing else to fill it. */

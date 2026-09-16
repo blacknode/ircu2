@@ -74,6 +74,9 @@ enum HookType {
   HOOK_MESSAGE_PRE_PRIVATE,   /**< Veto or rewrite a message to a user. */
   HOOK_MESSAGE_RECEIVED,      /**< A service bot (+S) of this server was sent
                                    a message; see include/bot.h. */
+  HOOK_MESSAGE_DELIVERED,     /**< A message was delivered on this server,
+                                   whatever server it came from.  See
+                                   #HookMessage below. */
 
   /* --- network --- */
   HOOK_SERVER_LINKED,         /**< A server finished linking. */
@@ -109,6 +112,52 @@ enum HookResult {
 
 /** What hook_resume() is called with.  Zero is never a valid token. */
 typedef unsigned long hook_token_t;
+
+/** Which command a delivered message arrived as. */
+enum HookMsgKind {
+  HOOK_MSG_PRIVMSG,  /**< PRIVMSG: what a user says. */
+  HOOK_MSG_NOTICE,   /**< NOTICE: what a user or a service says without
+                          inviting a reply. */
+  HOOK_MSG_TAGMSG    /**< TAGMSG: tags with no text of their own. */
+};
+
+/** What #HOOK_MESSAGE_DELIVERED is told about the message.
+ *
+ * Reached through HookContext::hc_message, which is NULL at every other
+ * hook point.  The rest of the context says who and where:
+ * HookContext::hc_source is who sent it, HookContext::hc_client is the
+ * user it was addressed to (NULL for a channel), HookContext::hc_channel
+ * is the channel (NULL for a private message) and HookContext::hc_arg is
+ * the text, which is the empty string for a TAGMSG.
+ *
+ * The point fires **wherever this server relays the message**, from a
+ * local client or from a link, which is what separates it from
+ * #HOOK_MESSAGE_PRE_CHANNEL and #HOOK_MESSAGE_PRE_PRIVATE: those two see
+ * only what started here (see doc/proposals/006 §3.5).  A channel message
+ * therefore fires once on every server carrying the channel, and a
+ * private message once on each end when the two users are apart.  A
+ * module that stores messages deduplicates on #hmm_msgid rather than
+ * assuming it is told once -- and for that to work across a network,
+ * `NETWORK_FEATURES` has to be on, because that is what carries the
+ * identifier over P10.
+ *
+ * It is a notification: the return value is ignored, and by the time it
+ * runs the message has already gone out.
+ */
+struct HookMessage {
+  enum HookMsgKind hmm_kind;    /**< PRIVMSG, NOTICE or TAGMSG. */
+  const char*      hmm_msgid;   /**< The message's network-wide name, or
+                                     NULL if it has none. */
+  const char*      hmm_time;    /**< When it was sent, ISO 8601 with
+                                     milliseconds: the `time` tag it
+                                     arrived with, so every server records
+                                     the same instant, or this server's
+                                     clock when it started here. */
+  const char*      hmm_target;  /**< Channel or nickname as the sender
+                                     addressed it. */
+  int              hmm_remote;  /**< Non-zero if the sender is not a user
+                                     of this server. */
+};
 
 /** What a command hook is told about the command being dispatched.
  *
@@ -157,6 +206,11 @@ struct HookContext {
    * #HOOK_COMMAND_POST; NULL at every other hook point.
    */
   const struct HookCommand* hc_command;
+
+  /** The message delivered, for #HOOK_MESSAGE_DELIVERED; NULL at every
+   * other hook point.
+   */
+  const struct HookMessage* hc_message;
 
   /** Token for hook_resume(), or 0 if this point cannot be suspended.
    *

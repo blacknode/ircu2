@@ -487,6 +487,9 @@ The hook points, and what each one gets:
   MESSAGE_RECEIVED        the service    the sender  the channel message text
                           bot                        (NULL if
                                                      private)
+  MESSAGE_DELIVERED       the recipient  the sender  the channel message text
+                          (NULL for a                (NULL for a ("" for a
+                          channel)                   user)       TAGMSG)
   SERVER_LINKED           the server     -           -           server name
   CONFIG_LOADED           -              -           -           -
 
@@ -499,6 +502,46 @@ bot on a channel, for each message to that channel.  The sender may be
 on any server.  hc_notice says which of the two it was.  The message is
 not delivered anywhere else: a bot has no connection to deliver to, so
 the hook is how its module hears it.
+
+MESSAGE_DELIVERED fires wherever this server relays a PRIVMSG, NOTICE or
+TAGMSG, whether it came from one of its own clients or over a link.  That
+is what separates it from MESSAGE_PRE_CHANNEL and MESSAGE_PRE_PRIVATE,
+which only ever see what started here: a module that wants to know what
+was *said*, rather than what this server's users typed, wants this one.
+
+It carries a fourth pointer the other hooks do not, ctx->hc_message, a
+struct HookMessage (include/hooks.h):
+
+  hmm_kind     PRIVMSG, NOTICE or TAGMSG.
+  hmm_msgid    the name the whole network knows this message by, or NULL.
+  hmm_time     when it was said, ISO 8601 with milliseconds.
+  hmm_target   the channel or nickname the sender addressed.
+  hmm_remote   non-zero if the sender is not a user of this server.
+
+Every server that relays the message fires it, so a channel message is
+reported once per server carrying the channel and a private message once
+at each end when the two users are apart.  That is deliberate -- no
+server has to be the one that knows -- and it means a module that stores
+messages deduplicates on hmm_msgid rather than assuming it is told once.
+For that to work across a network, NETWORK_FEATURES has to be on: it is
+what carries msgid over P10, and without it each server invents its own
+name for the same message.
+
+hmm_time is the message's @time tag when it arrived with one, so every
+server records the same instant, and this server's clock when the message
+started here.
+
+Two things are never reported.  A message **to a service** (+S or +k) is
+not: that is where a password goes -- IDENTIFY, REGISTER, DROP -- and
+handing it to whatever happens to be listening would put credentials
+wherever that module writes.  The module that owns the service already
+gets it through MESSAGE_RECEIVED and decides for itself.  A **masked**
+message ($#mask, $host) is not either: an operator addressing everyone on
+a server is an announcement, not a conversation, and there is no target to
+file it under.
+
+It is a notification, and it runs after the message has gone out: the
+return value is ignored and nothing it does can change what was sent.
 
 CONFIG_LOADED fires once at start-up, after the configuration has been
 read and the server is ready to introduce clients, and again at the end

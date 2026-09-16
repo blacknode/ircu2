@@ -22,6 +22,7 @@
 #include "ircd_string.h"
 #include "msg.h"
 #include "msgid.h"
+#include "parse.h"
 
 #include <string.h>
 #include <time.h>
@@ -345,6 +346,29 @@ msg_tag_line_end(void)
   msgid_line_wanted = 0;
   msgid_line_value[0] = '\0';
   msgid_line_tok[0] = '\0';
+}
+
+void
+msg_tag_line_time(char *buf, size_t buflen)
+{
+  const struct MsgTag *tag;
+
+  if (!buf || buflen < 2)
+    return;
+
+  /* What upstream called it, if anything did.  A message that crossed a
+   * link was stamped where it started, and a store that restamped it on
+   * arrival would order the same conversation differently on every
+   * server.
+   */
+  tag = msg_tag_find(parse_tags(), "time");
+  if (tag && tag->value && tag->value[0]) {
+    ircd_strncpy(buf, tag->value, buflen - 1);
+    buf[buflen - 1] = '\0';
+    return;
+  }
+
+  msg_tag_format_time(buf, buflen, CurrentTime);
 }
 
 const char *

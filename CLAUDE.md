@@ -632,6 +632,22 @@ another server already applied would desync this one); `POST` is skipped after
 `CPTR_KILLED` and after a veto; `hcc_parv` is read-only; recursion is capped.
 `modules/hooks/cmdaudit.c` is the reference module.
 
+**`HOOK_MESSAGE_DELIVERED`** is the one message hook that sees the whole
+network. `HOOK_MESSAGE_PRE_{CHANNEL,PRIVATE}` fire only where a message
+started, so a module built on them would store what this server's own users
+typed and nothing else; this one fires from *every* relay path in
+`ircd/ircd_relay.c`, local origin and link alike. It carries a fourth
+pointer, `hc_message` (`struct HookMessage`): kind, the network-wide
+`msgid`, the ISO 8601 time (the `time` tag it arrived with, so every server
+records the same instant), the target as written, and whether the source is
+remote. Every server that relays the message fires it, so **a store
+deduplicates on `msgid`** rather than assuming it is told once — and that
+needs `FEAT_NETWORK_FEATURES`, which is what carries `msgid` over P10. A
+message **to a service** (`+S`/`+k`) is never reported, because that is
+where passwords go and the owning module already gets it through
+`HOOK_MESSAGE_RECEIVED`; a **masked** message is not either, having no
+target to file it under.
+
 **Suspending a hook** (`HOOK_PENDING`, `hook_run_suspendable()`,
 `hook_resume()`). A hook that has to ask something slow — a database, an
 Argon2 verification on a worker — holds the operation instead of answering.

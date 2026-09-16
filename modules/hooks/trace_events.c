@@ -47,13 +47,30 @@ static enum HookResult trace_event(struct HookContext* ctx, void* user)
 {
   enum HookType type = (enum HookType) (long) user;
 
-  log_write(LS_SYSTEM, L_INFO, 0,
-            "hook %s: client=%s source=%s channel=%s arg=%s",
-            hook_type_name(type),
-            ctx->hc_client ? cli_name(ctx->hc_client) : "-",
-            ctx->hc_source ? cli_name(ctx->hc_source) : "-",
-            ctx->hc_channel ? ctx->hc_channel->chname : "-",
-            ctx->hc_arg ? ctx->hc_arg : "-");
+  /* A delivered message carries more than the generic context holds: the
+   * name the whole network knows it by, and when it was said.  Both are
+   * what a module storing messages is really after, so trace them.
+   */
+  if (ctx->hc_message)
+    log_write(LS_SYSTEM, L_INFO, 0,
+              "hook %s: kind=%d target=%s source=%s remote=%d msgid=%s "
+              "time=%s arg=%s",
+              hook_type_name(type),
+              (int) ctx->hc_message->hmm_kind,
+              ctx->hc_message->hmm_target ? ctx->hc_message->hmm_target : "-",
+              ctx->hc_source ? cli_name(ctx->hc_source) : "-",
+              ctx->hc_message->hmm_remote,
+              ctx->hc_message->hmm_msgid ? ctx->hc_message->hmm_msgid : "-",
+              ctx->hc_message->hmm_time ? ctx->hc_message->hmm_time : "-",
+              ctx->hc_arg ? ctx->hc_arg : "-");
+  else
+    log_write(LS_SYSTEM, L_INFO, 0,
+              "hook %s: client=%s source=%s channel=%s arg=%s",
+              hook_type_name(type),
+              ctx->hc_client ? cli_name(ctx->hc_client) : "-",
+              ctx->hc_source ? cli_name(ctx->hc_source) : "-",
+              ctx->hc_channel ? ctx->hc_channel->chname : "-",
+              ctx->hc_arg ? ctx->hc_arg : "-");
 
   return HOOK_CONTINUE;
 }
@@ -66,6 +83,7 @@ static const enum HookType traced[] = {
   HOOK_CHANNEL_JOINED,
   HOOK_CHANNEL_PARTED,
   HOOK_MESSAGE_RECEIVED,
+  HOOK_MESSAGE_DELIVERED,
   HOOK_SERVER_LINKED,
   HOOK_CONFIG_LOADED
 };

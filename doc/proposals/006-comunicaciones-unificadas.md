@@ -441,8 +441,27 @@ con el servidor parado.
 - `module_add_config_block()` — bloques de configuración propios, en vez de
   ampliar `ircd_parser.y` por cada módulo.
 - `module_add_numeric()` — numerics propios, con su contexto de traducción.
-- Hooks nuevos: `HOOK_MESSAGE_DELIVERED` (incluido el origen remoto, §3.5),
-  `HOOK_CHANNEL_TOPIC_CHANGED`, `HOOK_CLIENT_AWAY`, `HOOK_PRESENCE_CHANGED`.
+- Hooks nuevos: `HOOK_CHANNEL_TOPIC_CHANGED`, `HOOK_CLIENT_AWAY`,
+  `HOOK_PRESENCE_CHANGED`.
+- `HOOK_MESSAGE_DELIVERED` — **implementado**. Se dispara en todas las rutas
+  de `ircd/ircd_relay.c`, las que salen de un cliente local y las que llegan
+  de un enlace, que es lo que le faltaba a §3.5. Lleva un cuarto puntero,
+  `hc_message` (`struct HookMessage`): el tipo (PRIVMSG, NOTICE o TAGMSG), el
+  `msgid` con que toda la red llama a ese mensaje, la hora en ISO 8601 —la
+  etiqueta `time` con la que llegó, para que todos los servidores anoten el
+  mismo instante—, el destino tal y como lo escribió quien lo envió, y si el
+  origen es local o remoto. Lo dispara **cada** servidor que reparte el
+  mensaje, así que quien lo almacene deduplica por `msgid` en vez de suponer
+  que se lo cuentan una sola vez; para eso `NETWORK_FEATURES` tiene que estar
+  activo, que es lo que hace viajar el `msgid` por P10.
+
+  Dos cosas no se notifican nunca. Un mensaje **a un servicio** (`+S` o `+k`)
+  no: ahí es donde va una contraseña —IDENTIFY, REGISTER, DROP— y entregarla
+  a lo que esté escuchando la dejaría escrita en un registro o en una base de
+  datos sin nada que lo impida; el módulo dueño del servicio ya lo recibe por
+  `HOOK_MESSAGE_RECEIVED` y decide él. Un mensaje **con máscara** (`$#mask`,
+  `$host`) tampoco: un operador dirigiéndose a todo un servidor es un aviso,
+  no una conversación, y no tiene destinatario bajo el que archivarlo.
 
 ### 5.7 Hooks genéricos de comando — **implementado**
 

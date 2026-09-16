@@ -17,6 +17,10 @@
 #ifndef INCLUDED_time_h
 #include <time.h>
 #endif
+#ifndef INCLUDED_stddef_h
+#include <stddef.h>
+#define INCLUDED_stddef_h
+#endif
 
 struct Client;
 
@@ -85,6 +89,17 @@ const char *msg_tag_line_msgid(const char *tok);
  * has belongs to the line that opens that batch, not to any of the pieces.
  */
 void msg_tag_line_force_msgid(const char *tok);
+
+/** The line's network-stable timestamp, in ISO 8601 with milliseconds.
+ *
+ * The @c time tag the line arrived with, when it had one -- every server
+ * on the network then records the same instant for the same message --
+ * and this server's clock when the message started here.
+ *
+ * @param[out] buf Where to write it; 32 bytes is always enough.
+ * @param[in] buflen Size of \a buf.
+ */
+void msg_tag_line_time(char *buf, size_t buflen);
 
 /** Return non-zero if a command should carry an identifier.
  *

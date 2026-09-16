@@ -322,7 +322,15 @@ service bot on the channel). `Service{}` blocks (`struct ServiceConf`,
 creates them on `HOOK_CONFIG_LOADED` (fires after start-up and after each
 rehash — `mi_init`/`mi_rehash` run mid-parse and must not read config
 lists), reconciles them on rehash, and brings one back after a KILL or
-collision. `modules/commands/m_bot/` is only the `/BOT` front end.
+collision. `modules/commands/m_bot/` is only the `/BOT` front end. Past the
+six fields the grammar knows, a `Service{}` block takes **free-form options**
+— `"max_accounts" = 3;`, a quoted name and a string or number — kept verbatim
+by the core and read by the module implementing the type
+(`conf_find_service_type()`, `conf_service_option()`,
+`conf_service_option_int()`, which returns its default for an absent *or*
+unreadable value). That is where a service's own settings live: there is no
+`NickServ{}` block and no keyword per option, because a block per service
+would mean a lexer keyword for everything any service ever grows.
 
 **Translations** (`include/ircd_i18n.h`, `ircd/ircd_i18n.c`, `ircd/ircd_po.c`,
 `ircd/m_language.c`, `doc/readme.translations`, proposal 005). Plain GNU PO

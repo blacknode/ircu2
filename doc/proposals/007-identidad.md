@@ -8,9 +8,9 @@ las convierte en un diseño con el que se puede escribir código.
 `migration.h` para los módulos.
 **Introduce:** `include/sasl.h` + `ircd/sasl.c`, `include/account.h` +
 `ircd/account.c`, `include/cache.h` + `ircd/cache.c`, `ircd/m_authenticate.c`,
-`ircd/m_account.c`, el modo `+f`, `User::email`,
-`modules/services/identity/`, `modules/services/nickserv/` y
-`modules/workers/redis/`.
+`ircd/m_account.c`, el modo `+f`, `User::email`, opciones libres en el
+bloque `Service{}`, `modules/services/identity/`,
+`modules/services/nickserv/` y `modules/workers/redis/`.
 **Revierte:** la retirada de SASL y de las cuentas documentada en
 `doc/readme.accounting`, que se reescribe entera.
 
@@ -58,7 +58,7 @@ son tres, y la línea entre las dos últimas es la que hay que tener clara:
                       ▼
   nickserv        la política y la voz
                   el bot, los avisos, el plazo de gracia, /msg NickServ
-                  el bloque NickServ{} y el límite de cuentas por email
+                  sus opciones en el Service{} que ya lo declara
 ```
 
 **`identity` es el mecanismo que `nickserv` usa.** Es el motivo por el que
@@ -493,24 +493,37 @@ escucha `HOOK_CLIENT_REGISTERED` y `HOOK_CLIENT_NICK_CHANGED`, pregunta a
 temporizador, y al vencer renombra a `guest-*`. Atiende `/msg NickServ` para
 registrar, identificarse, verificar el correo y cambiar la contraseña.
 
-Su bloque de configuración:
+**Su configuración va en el bloque `Service{}` que ya lo declara**, no en uno
+propio. Un `NickServ{}` aparte sería un segundo sitio donde se escribe lo mismo
+—el nick del bot está ya en `Service{}`— y una palabra reservada nueva en el
+léxico por cada servicio que aparezca:
 
 ```
-NickServ {
-  max_accounts = 3;        # cuántas cuentas agrupa un email
-  grace_period = 60;       # segundos antes de renombrar a guest-*
-  nick = "NickServ";
+Service {
+  name = "NickServ";
+  type = "nickserv";
+  channel = "#servicios";
+
+  "max_accounts" = 3;          # cuántas cuentas agrupa un email
+  "grace_period" = 1 minutes;  # antes de renombrar a guest-*
 };
 ```
 
-**El límite de cuentas por email vive aquí y no en el core**, porque quien lo
+Una opción es un nombre entrecomillado y un valor; el core los guarda
+literales y no lee ninguno, y el módulo que implementa el tipo lee los que
+conoce con `conf_service_option()` / `conf_service_option_int()`. El lado
+izquierdo es una cadena, así que ninguna opción puede chocar con `name`,
+`type` o `channel`, y se acepta un número o un `timespec` igual que una
+cadena porque la mayoría son números. Un módulo de servicio encuentra su
+bloque con `conf_find_service_type()`: conoce el tipo que implementa, no el
+nick que un operador le puso.
+
+**El límite de cuentas por email vive ahí y no en el core**, porque quien lo
 administra es el servicio: subirlo es una decisión de producto, y el core no
 tiene por qué enterarse. Tres es el valor de partida, no una constante.
 
-**Esto necesita `module_add_config_block()`**, que la 006 §5.6 lista como
-pendiente. Es la primera vez que hace falta de verdad, así que entra como
-requisito de `nickserv` y no como una mejora que ya se hará. Hasta que exista,
-`identity` usa el valor por omisión y `nickserv` no se puede escribir.
+Con esto **`nickserv` ya no depende de `module_add_config_block()`** (006 §5.6),
+que era el único motivo por el que hacía falta en esta fase.
 
 ### 9.3 `redis` — el driver de caché
 
@@ -576,8 +589,8 @@ Cada punto compila, pasa pruebas y se sube por separado.
    su driver, con el bloque `Redis{}`. *(hecho; ver `doc/readme.cache`)*
 7. **`modules/services/identity/`** — el almacén, las migraciones con sus
    cerrojos, Redis delante, el Argon2 en un `worker`.
-8. **`module_add_config_block()`** (006 §5.6) y **`modules/services/nickserv/`**
-   — el bot, el plazo, el bloque `NickServ{}`.
+8. **`modules/services/nickserv/`** — el bot, el plazo de gracia, y sus
+   opciones dentro del `Service{}` que ya lo declara.
 9. **Documentación y pruebas** — `doc/readme.accounting` reescrito entero,
    `doc/readme.sasl`, y las de integración: que el email no cruza el enlace,
    que un congelado no puede hacer nada, que el `guest-*` ocurre en los cuatro

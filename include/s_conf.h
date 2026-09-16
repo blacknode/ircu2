@@ -187,6 +187,22 @@ struct s_map {
  * knows; see doc/readme.services.  Fields not given are NULL, and the
  * module applies the bot_create() defaults.
  */
+/** One free-form setting inside a Service{} block.
+ *
+ * What a service needs to be told is the service's business, not the
+ * grammar's: NickServ wants a grace period and a limit on accounts per
+ * address, ChanServ will want something else, and a block of its own for
+ * each of them would mean a keyword in the lexer for every option any
+ * service ever grows.  So an option is a quoted name and a value, the
+ * core keeps them verbatim, and the module that implements the type reads
+ * the ones it knows and ignores the rest.
+ */
+struct ServiceOption {
+  struct ServiceOption* next;  /**< Next option, in file order. */
+  char*                 name;  /**< Option name, as written. */
+  char*                 value; /**< Its value, always as a string. */
+};
+
 struct ServiceConf {
   struct ServiceConf* next;    /**< Next block, in file order. */
   char*               name;    /**< Nick.  Required, unique. */
@@ -195,6 +211,7 @@ struct ServiceConf {
   char*               host;    /**< Host, or NULL. */
   char*               description; /**< Real name, or NULL. */
   struct SLink*       channels; /**< Channels to sit on, value.cp each. */
+  struct ServiceOption* options; /**< Free-form settings, in file order. */
 };
 
 /*
@@ -247,6 +264,22 @@ extern void conf_free_service(struct ServiceConf *svc);
 extern const struct ServiceConf *conf_service_list(void);
 /** The Service{} block whose name is \a nick, or NULL. */
 extern const struct ServiceConf *conf_find_service(const char *nick);
+/** The first Service{} block of type \a type, or NULL. */
+extern const struct ServiceConf *conf_find_service_type(const char *type);
+/** Record a free-form setting; the parser only.  Takes both strings. */
+extern void conf_service_set_option(struct ServiceConf *svc, char *name,
+                                    char *value);
+/** A service's setting, or \a def when the block did not give one.
+ * @param[in] svc The block.
+ * @param[in] name Option name, compared case-insensitively.
+ * @param[in] def What to return when it is absent.
+ */
+extern const char *conf_service_option(const struct ServiceConf *svc,
+                                       const char *name, const char *def);
+/** The same, read as a number.  \a def is returned for an absent or
+ * unreadable value, so a typo does not silently become zero. */
+extern int conf_service_option_int(const struct ServiceConf *svc,
+                                   const char *name, int def);
 
 extern void yyerror(const char *msg);
 

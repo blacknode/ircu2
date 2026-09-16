@@ -72,6 +72,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -1125,12 +1126,107 @@ void conf_free_service(struct ServiceConf *svc)
     MyFree(lp->value.cp);
     free_link(lp);
   }
+  {
+    struct ServiceOption *opt, *onext;
+
+    for (opt = svc->options; opt; opt = onext) {
+      onext = opt->next;
+      MyFree(opt->name);
+      MyFree(opt->value);
+      MyFree(opt);
+    }
+  }
+
   MyFree(svc->name);
   MyFree(svc->type);
   MyFree(svc->username);
   MyFree(svc->host);
   MyFree(svc->description);
   MyFree(svc);
+}
+
+/** Record a free-form setting on a Service{} block.
+ *
+ * Takes ownership of both strings.  A name given twice keeps the last
+ * value, which is what every other item in the block does.
+ *
+ * @param[in,out] svc Block being read.
+ * @param[in] name Option name.
+ * @param[in] value Its value.
+ */
+void conf_service_set_option(struct ServiceConf *svc, char *name, char *value)
+{
+  struct ServiceOption *opt;
+  struct ServiceOption **tail;
+
+  assert(0 != svc);
+
+  for (tail = &svc->options; (opt = *tail); tail = &opt->next) {
+    if (0 != ircd_strcmp(opt->name, name))
+      continue;
+
+    MyFree(name);
+    MyFree(opt->value);
+    opt->value = value;
+    return;
+  }
+
+  opt = (struct ServiceOption *) MyCalloc(1, sizeof(*opt));
+  opt->name = name;
+  opt->value = value;
+  *tail = opt;
+}
+
+/** A service's setting, or \a def when the block did not give one.
+ * @param[in] svc The block.
+ * @param[in] name Option name.
+ * @param[in] def What to return when it is absent.
+ */
+const char *conf_service_option(const struct ServiceConf *svc,
+                                const char *name, const char *def)
+{
+  const struct ServiceOption *opt;
+
+  if (!svc || !name)
+    return def;
+
+  for (opt = svc->options; opt; opt = opt->next)
+    if (0 == ircd_strcmp(opt->name, name))
+      return opt->value;
+
+  return def;
+}
+
+/** A service's setting, read as a number.
+ *
+ * An absent option and an unreadable one both give \a def: a typo that
+ * silently became zero would be a grace period of none, or a limit of
+ * none, and neither is something to discover in production.
+ *
+ * @param[in] svc The block.
+ * @param[in] name Option name.
+ * @param[in] def What to return when it is absent or unreadable.
+ */
+int conf_service_option_int(const struct ServiceConf *svc, const char *name,
+                            int def)
+{
+  const char *text = conf_service_option(svc, name, 0);
+  char *end = 0;
+  long value;
+
+  if (EmptyString(text))
+    return def;
+
+  value = strtol(text, &end, 10);
+
+  if (!end || *end || value < INT_MIN || value > INT_MAX) {
+    log_write(LS_CONFIG, L_WARNING, 0,
+              "Service %s: \"%s\" is not a number in \"%s\"; using %d",
+              svc->name, text, name, def);
+    return def;
+  }
+
+  return (int) value;
 }
 
 void conf_add_service(struct ServiceConf *svc)
@@ -1155,6 +1251,26 @@ const struct ServiceConf *conf_find_service(const char *nick)
 
   for (svc = serviceConfList; svc; svc = svc->next)
     if (0 == ircd_strcmp(svc->name, nick))
+      return svc;
+
+  return NULL;
+}
+
+/** The first Service{} block of type \a type, or NULL.
+ *
+ * What a service module calls to find its own block: it knows the type it
+ * implements, not the nickname an operator chose for it.
+ * @param[in] type Type to look for, compared case-insensitively.
+ */
+const struct ServiceConf *conf_find_service_type(const char *type)
+{
+  const struct ServiceConf *svc;
+
+  if (EmptyString(type))
+    return NULL;
+
+  for (svc = serviceConfList; svc; svc = svc->next)
+    if (0 == ircd_strcmp(svc->type, type))
       return svc;
 
   return NULL;

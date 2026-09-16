@@ -1496,7 +1496,7 @@ serviceblock: SERVICE {
 
 serviceitems: serviceitem serviceitems | serviceitem;
 serviceitem: servicename | servicetype | serviceusername | servicehost |
-  servicedescription | servicechannel;
+  servicedescription | servicechannel | serviceoption;
 servicename: NAME '=' QSTRING ';'
 {
   MyFree(svc->name);
@@ -1540,6 +1540,39 @@ servicechannel: CHANNEL '=' QSTRING ';'
       ;
     *tail = link;
   }
+};
+
+/* Anything else the service itself needs to be told, as a quoted name and
+ * a value:
+ *
+ *   Service {
+ *     name = "NickServ";
+ *     type = "nickserv";
+ *     "grace_period" = 60;
+ *     "max_accounts" = 3;
+ *   };
+ *
+ * The core keeps these verbatim and never reads one.  A keyword here for
+ * every option any service might ever grow would put the grammar in the
+ * way of writing a service, and a block of its own for each service would
+ * be the same problem spelled differently; the module that implements the
+ * type reads the names it knows through conf_service_option().
+ *
+ * The left-hand side is a quoted string, so no option can collide with an
+ * item above, and a number is accepted as well as a string because most
+ * of them are numbers -- both are kept as text.
+ */
+serviceoption: QSTRING '=' QSTRING ';'
+{
+  conf_service_set_option(svc, $1, $3);
+}
+| QSTRING '=' timespec ';'
+{
+  char *text;
+
+  text = (char*) MyMalloc(32);
+  ircd_snprintf(NULL, text, 32, "%d", $3);
+  conf_service_set_option(svc, $1, text);
 };
 
 iauthblock: IAUTH {

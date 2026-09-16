@@ -68,6 +68,7 @@ CONFIGURATION
     host = "services.example.net";   # optional; default: <nick>.<BOT_HOSTNAME>
     description = "Nickname Services"; # optional; default: "<NETWORK> bot"
     channel = "#services";           # optional, repeatable: joins with ops
+    "max_accounts" = 3;              # optional: read by the type, not the core
   };
   Service { name = "ChanServ"; type = "chanserv"; channel = "#services"; };
 
@@ -76,6 +77,25 @@ type, no two blocks with the same name -- and records it.  What a type
 means is the module's business: irc_services knows "nickserv" and
 "chanserv" and refuses, in the log and to operators, a block whose type
 it does not.  The list is cleared and rebuilt on every rehash.
+
+Anything beyond those six fields is a free-form option: a quoted name, a
+value that is a quoted string or a number (with the usual time suffixes,
+so "grace_period" = 1 minutes; is 60), and no keyword in the grammar.
+What a service needs to be told is the service's business, and a block of
+its own for each service would mean a lexer keyword for every option any
+service ever grows.  The core keeps them verbatim, in file order, and the
+module that implements the type reads the ones it knows:
+
+  const struct ServiceConf *svc = conf_find_service_type("nickserv");
+  int max = conf_service_option_int(svc, "max_accounts", 3);
+  const char *pfx = conf_service_option(svc, "guest_prefix", "guest-");
+
+Names are compared case-insensitively and the last value of a repeated
+name wins.  conf_service_option_int() returns its default both when the
+option is absent and when its value is not a number, with a warning in
+the log, so a typo does not silently become zero.  An option no module
+reads is not an error -- a setting for a service this server does not run
+costs nothing.
 
 A Pseudo{} block gives users a short command for a service:
 

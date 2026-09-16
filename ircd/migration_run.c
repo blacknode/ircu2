@@ -601,7 +601,8 @@ static void migration_applied_known(const struct DbResult* res, void* user)
  * @return Non-zero when the question was accepted.
  */
 static int migration_ask_applied(struct Client* sptr, const char* module,
-                                 enum MigrationWant want, unsigned int bound)
+                                 enum MigrationWant want, unsigned int bound,
+                                 int quiet)
 {
   struct MigrationQuery* query;
   struct DbParam name = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
@@ -641,7 +642,7 @@ static int migration_ask_applied(struct Client* sptr, const char* module,
       sendcmdto_one(&me, CMD_NOTICE, sptr,
                     _(sptr, "%C :Cannot reach the database: %s"), sptr,
                     db_strerror(err));
-    else
+    else if (!quiet)
       log_write(LS_SYSTEM, L_ERROR, 0,
                 "migration: cannot reach the database: %s", db_strerror(err));
     MyFree(query);
@@ -655,7 +656,7 @@ static int migration_ask_applied(struct Client* sptr, const char* module,
  * The core's own schema.
  * ------------------------------------------------------------------------ */
 
-void migration_core_start(void)
+void migration_core_start(int settled)
 {
   const char* err = 0;
   struct MigrationSet* set;
@@ -676,12 +677,20 @@ void migration_core_start(void)
   }
   migration_free(set);
 
+  /* Done only once the question has actually been accepted.  A driver
+   * named in ircd.conf registers in the middle of the parse, before the
+   * worker threads exist, so this is refused there -- and setting the flag
+   * first would mean main()'s call, the one that can succeed, returns
+   * without doing anything and the server runs with no migrations table.
+   */
+  if (!migration_ask_applied(0, MIGRATION_CORE, MIGRATION_WANT_APPLY, 0,
+                             !settled))
+    return;
+
   migration_core_done = 1;
 
   log_write(LS_SYSTEM, L_INFO, 0,
             "migration: bringing the core schema up to date");
-
-  migration_ask_applied(0, MIGRATION_CORE, MIGRATION_WANT_APPLY, 0);
 
   Debug((DEBUG_NOTICE, "Migrations core is ready."));
 }
@@ -772,7 +781,7 @@ void migration_cmd_status(struct Client* sptr, struct ModuleHandle* mod)
     return;
   }
 
-  migration_ask_applied(sptr, module_name(mod), MIGRATION_WANT_STATUS, 0);
+  migration_ask_applied(sptr, module_name(mod), MIGRATION_WANT_STATUS, 0, 0);
 }
 
 /** Shared front half of APPLY and REVERT.
@@ -809,7 +818,7 @@ static void migration_cmd_run(struct Client* sptr, struct ModuleHandle* mod,
 
   migration_ask_applied(sptr, module_name(mod),
                         revert ? MIGRATION_WANT_REVERT : MIGRATION_WANT_APPLY,
-                        bound);
+                        bound, 0);
 }
 
 void migration_cmd_apply(struct Client* sptr, struct ModuleHandle* mod,

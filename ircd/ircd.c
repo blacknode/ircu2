@@ -845,7 +845,7 @@ int main(int argc, char **argv) {
    * Does nothing when no database driver is loaded, and the driver calls
    * this again itself if one is loaded later with /MODULE LOAD.
    */
-  migration_core_start();
+  migration_core_start(1);
   timer_add(timer_init(&connect_timer), try_connections, 0, TT_RELATIVE, 1);
   timer_add(timer_init(&ping_timer), check_pings, 0, TT_RELATIVE, 1);
   timer_add(timer_init(&destruct_event_timer), exec_expired_destruct_events, 0, TT_PERIODIC, 60);

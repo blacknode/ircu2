@@ -172,10 +172,19 @@ extern int migration_reserved_name(const char* name);
  * Called from main() once the workers are up, and again whenever a database
  * driver registers -- a driver loaded by hand with /MODULE LOAD arrives long
  * after start-up, and the table still has to exist.  Does nothing when there
- * is no driver, when there is no @c Database{} block, or when it is already
- * running.
+ * is no driver, when there is no @c Database{} block, or when it has already
+ * been done.
+ *
+ * @param[in] settled Non-zero when the server is running.  A driver named
+ *   in @c ircd.conf registers in the middle of the configuration parse,
+ *   which is before the worker threads exist and therefore before any query
+ *   can be sent: the attempt made there is expected to be refused, says
+ *   nothing about it, and leaves the work for main() to ask for again.
+ *   Marking it done before the question was accepted is how a server ends
+ *   up with no @c migrations table at all, which is a failure that only
+ *   shows up the first time somebody applies a module's migrations.
  */
-extern void migration_core_start(void);
+extern void migration_core_start(int settled);
 
 /*
  * Operator commands.  m_module.c calls these; they answer the client

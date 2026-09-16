@@ -341,11 +341,12 @@ int db_register_driver(struct ModuleHandle* mod, const struct DbDriver* driver)
             driver->dbdrv_name);
 
   /* A driver loaded by hand arrives long after start-up, and the migrations
-   * table still has to exist.  Harmless at start-up, where the workers are
-   * not up yet and this finds nothing to do; main() asks again once they
-   * are.
+   * table still has to exist.  A driver named in ircd.conf registers here
+   * in the middle of the parse instead, before the worker threads exist,
+   * so the attempt is refused and says nothing; main() asks again once
+   * they are up, which is what the 0 means.
    */
-  migration_core_start();
+  migration_core_start(0);
 
   return 1;
 }

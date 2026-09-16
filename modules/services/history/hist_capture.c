@@ -30,6 +30,7 @@
 #include "history.h"
 #include "ircd_chattr.h"
 #include "ircd_features.h"
+#include "ircd_snprintf.h"
 #include "ircd_string.h"
 #include "struct.h"
 
@@ -71,6 +72,23 @@ static const char* hist_account_of(struct Client* cptr)
   return cli_user(cptr)->account;
 }
 
+/** The prefix a client is wearing, nick!user@host.
+ *
+ * The visible host, which for every user is the cipher of their address
+ * (doc/readme.accounting): a history that recorded the real one would be
+ * a permanent record of what +x exists to hide.
+ */
+static void hist_prefix_of(char* buf, size_t buflen, struct Client* cptr)
+{
+  buf[0] = '\0';
+
+  if (!cptr || !cli_user(cptr))
+    return;
+
+  ircd_snprintf(0, buf, buflen, "%s!%s@%s", cli_name(cptr),
+                cli_user(cptr)->username, cli_user(cptr)->host);
+}
+
 /** Non-zero if \a text is a CTCP that is not an ACTION.
  *
  * An ACTION is somebody speaking and belongs in the history.  A VERSION,
@@ -90,6 +108,7 @@ enum HookResult hist_capture(struct HookContext* ctx, void* user)
 {
   const struct HookMessage* hm;
   struct HistMessage msg;
+  char prefix[NICKLEN + USERLEN + HOSTLEN + 3];
   char canon[CHANNELLEN + 1];
   char from_canon[NICKLEN + 1];
   char to_canon[NICKLEN + 1];
@@ -115,6 +134,15 @@ enum HookResult hist_capture(struct HookContext* ctx, void* user)
     return HOOK_CONTINUE;
 
   memset(&msg, 0, sizeof(msg));
+
+  /* Stored with the message, because a transcript has to be
+   * self-contained: it is shown back weeks later, when the sender may
+   * have changed nickname, changed host or never come back, and building
+   * a prefix then from whoever holds that nickname would put the words in
+   * the wrong mouth.
+   */
+  hist_prefix_of(prefix, sizeof(prefix), ctx->hc_source);
+  msg.hm_prefix = prefix[0] ? prefix : 0;
 
   msg.hm_msgid = hm->hmm_msgid;
   msg.hm_time = hm->hmm_time;

@@ -523,6 +523,41 @@ void sendrawto_one(struct Client *to, const char *pattern, ...)
   msgq_clean(mb);
 }
 
+/** Send a line with a prefix the caller supplies, with tags.
+ *
+ * For a message the server did not originate and cannot name a sender
+ * for: one read back out of a history store, whose sender may have
+ * changed nickname, changed host or never come back.  The prefix is
+ * whatever the caller writes into \a pattern, and the tags -- the batch
+ * it belongs to, the time and the identifier it already had, each only
+ * for a client that asked to be told about them -- are rendered the same
+ * way they are for any other message.
+ *
+ * sendrawto_one() is the same thing without tags; use that when there are
+ * none to render.
+ *
+ * @param[in] to Client to send to.  One of this server's.
+ * @param[in] tok The command's token, for the tag policy: only the relay
+ *   of the same command carries the line's identifier.
+ * @param[in] pattern Format string for the whole line, prefix included.
+ */
+void sendrawto_one_tagged(struct Client *to, const char *tok,
+                          const char *pattern, ...)
+{
+  struct MsgBuf *mb;
+  struct MsgTagCtx mctx;
+  va_list vl;
+
+  va_start(vl, pattern);
+  mb = msgq_vmake(to, pattern, vl);
+  va_end(vl);
+
+  msgtagctx_init(&mctx, tok);
+  send_buffer(to, NULL, mb, 0, &mctx, NULL);
+
+  msgq_clean(mb);
+}
+
 /** Send a (prefixed) command to a single client.
  * @param[in] from Client sending the command.
  * @param[in] cmd Long name of command (used if \a to is a user).

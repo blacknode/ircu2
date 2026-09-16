@@ -90,6 +90,30 @@ const char *msg_tag_line_msgid(const char *tok);
  */
 void msg_tag_line_force_msgid(const char *tok);
 
+/** Send a stored message again under the name and time it already had.
+ *
+ * A message read back out of a history store is not something happening
+ * now: it has a name the whole network knows it by and a time its origin
+ * server stamped on it, and a client shown "now" instead would be given a
+ * transcript it cannot order against what it already has.
+ *
+ * In force until msg_tag_line_replay_end(), which also ends the line.
+ * The caller sets it around each message it sends back.
+ *
+ * @param[in] tok The command the stored message will go out as, so that
+ *   only that command's relay carries the identifier -- the same rule
+ *   msg_tag_line_msgid() follows.
+ * @param[in] msgid The identifier the message already has, or NULL for a
+ *   stored message that has none.  NULL means none is sent: minting one
+ *   here would give the same message two names.
+ * @param[in] when Its timestamp, ISO 8601, used verbatim.
+ */
+void msg_tag_line_replay(const char *tok, const char *msgid,
+                         const char *when);
+
+/** End a replay begun with msg_tag_line_replay(). */
+void msg_tag_line_replay_end(void);
+
 /** The line's network-stable timestamp, in ISO 8601 with milliseconds.
  *
  * The @c time tag the line arrived with, when it had one -- every server

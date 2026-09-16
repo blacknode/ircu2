@@ -810,7 +810,29 @@ dentro de un año:
   lo cuenta al módulo—, ni los mensajes con máscara, ni el CTCP que no sea
   un ACTION, ni los TAGMSG (que son la fase 3).
 - `CHATHISTORY LATEST|BEFORE|AFTER|AROUND|BETWEEN|TARGETS`, dentro de un
-  `BATCH`.
+  `BATCH`. **Implementado** (`hist_read.c`), con la capacidad
+  `draft/chathistory` cuyo valor es el máximo que este servidor devuelve —
+  para que un cliente conozca el techo antes de preguntar y no por que le
+  recorten la petición en silencio. Hicieron falta tres piezas de core que
+  no estaban: las **respuestas estándar** (`FAIL`/`WARN`/`NOTE`, con
+  `NOTICE` para quien no pidió `standard-replies`, porque negarse en
+  silencio no es una opción), un **batch de salida** que un comando pueda
+  abrir (`batch_out_open()`), y una forma de **reenviar un mensaje
+  guardado** con el `msgid` y la hora que ya tenía y con el prefijo
+  almacenado, que no es un cliente que el servidor siga teniendo
+  (`msg_tag_line_replay()` + `sendrawto_one_tagged()`).
+
+  Dos decisiones que merecen quedar escritas. Quien no negoció `batch` no
+  puede ser respondido con uno —los mensajes le llegarían sueltos e
+  indistinguibles de los de ahora, que es peor que no responder—, así que
+  se le niega, y en palabras. Y **quien pregunta por la conversación de
+  otro recibe una respuesta vacía, no una negativa**: una negativa con otra
+  forma ya diría que la conversación existe.
+
+  `BETWEEN` es simétrico **en SQL y no en C**: cuál de los dos puntos es
+  anterior lo decide la base de datos, que es la que los compara, porque un
+  `strcmp` aquí no coincidiría con su *collation* para dos mensajes del
+  mismo segundo.
 - Retención, purga, exportación y **borrado por cuenta**: requisito legal, se
   diseña aquí y no se añade al final. **Retención, purga y borrado por cuenta
   implementados**: `history_purge()` tira particiones mensuales enteras, que
@@ -827,8 +849,9 @@ dentro de un año:
   servidor se inventa su propio nombre y su propia lectura del reloj para el
   mismo mensaje. El módulo lo dice en el registro al cargarse si falta
   alguno.
-- **Falta** la lectura: `CHATHISTORY`, la capacidad que la anuncia y la
-  exportación.
+- **Falta** la exportación (§9.6: historial + adjuntos son datos
+  personales, y exportarlos es tan requisito como borrarlos). Lo demás de
+  la fase 2 está.
 
 ### 7.2 Fase 3 — Semántica de conversación moderna
 

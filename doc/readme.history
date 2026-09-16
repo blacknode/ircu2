@@ -127,6 +127,79 @@ to message_default rather than being refused -- a safety net, not a place
 to keep things.
 
 
+READING IT BACK: CHATHISTORY
+============================
+
+The IRCv3 command, in all six of its shapes:
+
+  CHATHISTORY LATEST  <target> <*|point> <limit>
+  CHATHISTORY BEFORE  <target> <point> <limit>
+  CHATHISTORY AFTER   <target> <point> <limit>
+  CHATHISTORY AROUND  <target> <point> <limit>
+  CHATHISTORY BETWEEN <target> <point> <point> <limit>
+  CHATHISTORY TARGETS <point> <point> <limit>
+
+A point is timestamp=<ISO 8601>, msgid=<id>, or * for "from the end".
+BETWEEN's two points may be given in either order; which is earlier is
+decided by the database, because it is the thing comparing them.
+
+The answer is a batch of type "chathistory" whose parameter is the
+target, holding the messages oldest first -- whichever end they were
+asked for from -- as the PRIVMSGs and NOTICEs they were, with the prefix
+that was stored and the @msgid and @time they already had.  That last
+part is the point: a client is shown the same message everybody else saw,
+and can put it in order against what it already has.  An empty answer is
+an empty batch, not silence: "there is nothing there" is a different
+thing from "the server ignored you".
+
+TARGETS lists conversations, not channels: a client already knows which
+channels it is on, and the ones it is not on it may not read.  Each one
+is a line of the form
+
+  CHATHISTORY TARGETS <nickname> <when it was last spoken to>
+
+inside a batch of type draft/chathistory-targets.
+
+The client needs the batch capability.  Without it the messages would
+arrive loose and indistinguishable from the ones happening now, which is
+worse than no answer, so the request is refused -- and a client with no
+standard-replies is refused in words, as a NOTICE, rather than with a
+FAIL it could not read.
+
+Errors are FAIL CHATHISTORY, with the codes the specification names:
+UNKNOWN_COMMAND for a subcommand that is not one of the six,
+INVALID_PARAMS for a selector that is not one of the three forms or a
+subcommand with nowhere to start from, INVALID_TARGET for a channel the
+client is not on or a conversation it is not in, and MESSAGE_ERROR when
+the store could not answer.
+
+The capability's value is the largest answer this server will give
+(HISTORY_MAX_LIMIT), so a client knows the ceiling before it asks rather
+than by having its limit quietly cut down:
+
+  draft/chathistory=100
+
+WHO MAY READ WHAT
+=================
+
+A channel: whoever is on it.  A channel's history is exactly as private
+as the channel, and somebody who is not in it was not there for the
+conversation either.
+
+A conversation: the two people in it, by account.  The query is on the
+pair of accounts, so a third party asking about somebody else's
+conversation gets an empty answer rather than a refusal -- a refusal with
+a different shape would itself say the conversation exists.  A client
+that has not identified has no account, so it has no conversations, and
+is told so.
+
+An asynchronous note: the answer comes back from a database a round trip
+later, so a client that labelled the command (IRCv3 labeled-response)
+gets its ACK straight away and the batch afterwards, outside the label.
+That is the honest shape of an asynchronous answer; the batch names its
+target and identifies itself well enough to be matched without one.
+
+
 RETENTION, PURGING AND DELETION
 ===============================
 
@@ -160,9 +233,12 @@ See doc/readme.features.
 HOW IT IS PUT TOGETHER
 ======================
 
-  history.c        the module: the hook, the maintenance timer, the
-                   warnings an operator needs before the first user does
+  history.c        the module: the hook, the command, the capability, the
+                   maintenance timer, and the warnings an operator needs
+                   before the first user does
   hist_capture.c   which of what the server delivers is a conversation
+  hist_read.c      what a client asked for, whether it may see it, and
+                   how the answer goes on the wire
   hist_store.c     every statement this module sends, and nothing else
   hist_store.h     the store as the rest of the module sees it
   migrations/      the schema

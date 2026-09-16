@@ -557,7 +557,13 @@ as `@batch=`/`@label=`; the label rides on the opening `BATCH +id` line and on
 the `ACK`, never on the messages inside nor on the closing line. A client needs
 *both* `batch` and `labeled-response` or the label is ignored entirely (the spec
 builds one on the other, and half of it is unreadable). `batch_client_exiting()`
-clears the state for a connection that dies mid-response. Note `MSG_IRCBATCH`
+clears the state for a connection that dies mid-response.
+`batch_out_open()`/`batch_out_close()` are the third kind: a server telling
+one client that the next several messages are one answer (what `CHATHISTORY`
+needs). One is open at a time, for the same reason the label is a single
+context, and while its own `BATCH` line goes out `batch_current()` answers
+with whatever was already in force — so it nests inside a labeled response
+the way the spec says. Note `MSG_IRCBATCH`
 in `msg.h`: glibc's `<bits/socket.h>` already has an `MSG_BATCH`, so the macro
 is spelled differently while the wire command stays `BATCH`. `label` is the one
 non-`+` tag a client may send — `msg_tag_client_may_send()` in `msg_tag.c` — and

@@ -27,6 +27,27 @@
 
 struct ModuleHandle;
 struct HookContext;
+struct Client;
+
+/** The command this module registers.
+ *
+ * Here and not in include/msg.h because a module's command is not the
+ * core's: the name and the token are what module_add_command() is given,
+ * and nothing in the core has to know either.  There is no P10 token
+ * worth the name because no server sends this to another -- a client asks
+ * its own server, which reads its own store.
+ */
+#define MSG_CHATHISTORY "CHATHISTORY"
+#define TOK_CHATHISTORY "CHATHISTORY"
+
+/** The capability that advertises it, and its limit as the value. */
+#define HIST_CAP_NAME "draft/chathistory"
+
+/** The domain this module's own text is translated in. */
+#define I18N_DOMAIN hist_i18n
+
+/** Opened before mi_init and closed after mi_fini; see readme.translations. */
+extern struct I18nDomain* hist_i18n;
 
 /** This module's handle; db_exec() wants it. */
 extern struct ModuleHandle* hist_mod;
@@ -46,5 +67,13 @@ extern enum HookResult hist_capture(struct HookContext* ctx, void* user);
  * together but @c #Foo[1] and @c #foo{1} apart.
  */
 extern void hist_canon(char* buf, size_t buflen, const char* name);
+
+/*
+ * Reading (hist_read.c).
+ */
+
+/** CHATHISTORY, from a client. */
+extern int hist_m_chathistory(struct Client* cptr, struct Client* sptr,
+                              int parc, char* parv[]);
 
 #endif /* INCLUDED_history_h */

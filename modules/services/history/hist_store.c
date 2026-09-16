@@ -98,8 +98,9 @@ static void hist_write_done(const struct DbResult* res, void* user)
  */
 static const char* hist_sql_insert =
   "INSERT INTO message (sent_at, msgid, kind, is_channel, target, "
-  "target_canon, sender_nick, sender_account, recipient_account, body) "
-  "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) "
+  "target_canon, sender_nick, sender_account, recipient_account, body, "
+  "sender_prefix) "
+  "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) "
   "ON CONFLICT (sent_at, msgid) DO NOTHING";
 
 int hist_store_write(const struct HistMessage* msg)
@@ -115,7 +116,8 @@ int hist_store_write(const struct HistMessage* msg)
   struct DbParam p_account = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
   struct DbParam p_recip = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
   struct DbParam p_body = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
-  struct DbParam* params[11];
+  struct DbParam p_prefix = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[12];
   struct DbQuery query;
   enum DbError err;
 
@@ -140,6 +142,7 @@ int hist_store_write(const struct HistMessage* msg)
   p_account.value = msg->hm_account;   /* NULL is SQL NULL */
   p_recip.value = msg->hm_recipient;
   p_body.value = msg->hm_body ? msg->hm_body : "";
+  p_prefix.value = msg->hm_prefix;
 
   params[0] = &p_time;
   params[1] = &p_msgid;
@@ -151,7 +154,8 @@ int hist_store_write(const struct HistMessage* msg)
   params[7] = &p_account;
   params[8] = &p_recip;
   params[9] = &p_body;
-  params[10] = NULL;
+  params[10] = &p_prefix;
+  params[11] = NULL;
 
   query.sql = hist_sql_insert;
   query.params = params;
@@ -340,5 +344,409 @@ int hist_store_forget(const char* account,
     return 0;
   }
 
+  return 1;
+}
+
+/* ------------------------------------------------------------------- *
+ * Reading                                                             *
+ * ------------------------------------------------------------------- */
+
+/** The columns every read returns, in one place so they cannot drift.
+ *
+ * The timestamp comes back as ISO 8601 with milliseconds and an explicit
+ * Z, which is both what the @c time tag has to carry and what a client
+ * sends as a selector: the same text goes out, comes back and is compared,
+ * so nothing in this module ever parses a date, and a plain strcmp()
+ * orders two of them -- which is what tells BETWEEN's two points apart.
+ */
+#define HIST_COLUMNS \
+  "to_char(sent_at AT TIME ZONE 'UTC', " \
+  "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, " \
+  "msgid, kind, target, body, " \
+  "coalesce(sender_prefix, sender_nick) AS prefix"
+
+/** One read, from the moment it is accepted until its rows are handed on.
+ *
+ * Held rather than passed on the stack because a request that names a
+ * point by message takes two round trips: the identifier is resolved to
+ * its (time, message) pair, and only then is the real statement built.
+ */
+struct HistRead {
+  struct HistQuery hr_q;      /**< What was asked, points filled in. */
+  HistReadFn       hr_cb;     /**< Who to tell. */
+  void*            hr_user;   /**< What to tell them with. */
+  int              hr_resolving; /**< Waiting on the identifier lookup. */
+};
+
+/** Tell the caller nothing came back, and let the read go. */
+static void hist_read_fail(struct HistRead* rd)
+{
+  if (rd->hr_cb)
+    (rd->hr_cb)(0, 0, 0, rd->hr_user);
+  MyFree(rd);
+}
+
+/** db_row_str() hands back a buffer good until the next call, so the rows
+ * above cannot all point into it.  This copies each cell into the array's
+ * own storage instead.
+ */
+struct HistCell {
+  char hc_time[40];
+  char hc_msgid[MSGIDLEN + 1];
+  char hc_target[CHANNELLEN + 1];
+  char hc_prefix[NICKLEN + USERLEN + HOSTLEN + 3];
+  char hc_body[BUFSIZE];
+};
+
+/** What came back from a read. */
+static void hist_read_done(const struct DbResult* res, void* user)
+{
+  struct HistRead* rd = (struct HistRead*) user;
+  struct HistRow* rows;
+  struct HistCell* cells;
+  unsigned int count;
+  unsigned int i;
+  int reverse;
+
+  if (res->err.dberr_code != DB_OK) {
+    hist_complain("read", res, DB_OK);
+    hist_read_fail(rd);
+    return;
+  }
+
+  /* LATEST and BEFORE read backwards to find the newest N; everything
+   * else already comes out oldest first. */
+  reverse = (rd->hr_q.hq_shape == HIST_LATEST
+             || rd->hr_q.hq_shape == HIST_BEFORE);
+
+  count = db_rows(res->data);
+
+  if (!count) {
+    if (rd->hr_cb)
+      (rd->hr_cb)(1, 0, 0, rd->hr_user);
+    MyFree(rd);
+    return;
+  }
+
+  rows = (struct HistRow*) MyCalloc(count, sizeof(*rows));
+  cells = (struct HistCell*) MyCalloc(count, sizeof(*cells));
+
+  for (i = 0; i < count; i++) {
+    unsigned int from = reverse ? (count - 1 - i) : i;
+
+    ircd_strncpy(cells[i].hc_time, db_row_str(res->data, from, "sent_at"),
+                 sizeof(cells[i].hc_time) - 1);
+    ircd_strncpy(cells[i].hc_msgid, db_row_str(res->data, from, "msgid"),
+                 sizeof(cells[i].hc_msgid) - 1);
+    ircd_strncpy(cells[i].hc_target, db_row_str(res->data, from, "target"),
+                 sizeof(cells[i].hc_target) - 1);
+    ircd_strncpy(cells[i].hc_prefix, db_row_str(res->data, from, "prefix"),
+                 sizeof(cells[i].hc_prefix) - 1);
+    ircd_strncpy(cells[i].hc_body, db_row_str(res->data, from, "body"),
+                 sizeof(cells[i].hc_body) - 1);
+
+    rows[i].hr_time = cells[i].hc_time;
+    rows[i].hr_msgid = cells[i].hc_msgid;
+    rows[i].hr_kind = (enum HistKind) db_row_int(res->data, from, "kind");
+    rows[i].hr_target = cells[i].hc_target;
+    rows[i].hr_prefix = cells[i].hc_prefix;
+    rows[i].hr_body = cells[i].hc_body;
+  }
+
+  if (rd->hr_cb)
+    (rd->hr_cb)(1, rows, count, rd->hr_user);
+
+  MyFree(cells);
+  MyFree(rows);
+  MyFree(rd);
+}
+
+/** Build the WHERE clause that names the conversation.
+ *
+ * A channel is one column.  A conversation is two, either way round,
+ * which is why there are two indexes for it: the query has to be an OR
+ * and an OR of unindexed columns reads the month.
+ *
+ * @param[in] q What is being asked.
+ * @param[out] buf Where to write it.
+ * @param[in] buflen Size of \a buf.
+ * @param[in] first The number of the first free $n placeholder.
+ * @return How many placeholders were used.
+ */
+static int hist_where_target(const struct HistQuery* q, char* buf,
+                             size_t buflen, int first)
+{
+  if (q->hq_channel) {
+    ircd_snprintf(0, buf, buflen, "is_channel AND target_canon = $%d", first);
+    return 1;
+  }
+
+  ircd_snprintf(0, buf, buflen,
+                "NOT is_channel AND ((sender_account = $%d AND "
+                "recipient_account = $%d) OR (sender_account = $%d AND "
+                "recipient_account = $%d))",
+                first, first + 1, first + 1, first);
+  return 2;
+}
+
+/** Run the statement a request has been resolved into. */
+static void hist_read_run(struct HistRead* rd)
+{
+  const struct HistQuery* q = &rd->hr_q;
+  char target[512];
+  char sql[2048];
+  char limit[16];
+  char half[16];
+  struct DbParam p[8];
+  struct DbParam* params[9];
+  struct DbQuery query;
+  enum DbError err;
+  int n = 0;        /* parameters bound so far */
+  int used;
+  int i;
+
+  used = hist_where_target(q, target, sizeof(target), 1);
+
+  if (q->hq_channel) {
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_canon;
+    p[n].format = DB_FORMAT_TEXT; n++;
+  } else {
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_self;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_peer;
+    p[n].format = DB_FORMAT_TEXT; n++;
+  }
+
+  ircd_snprintf(0, limit, sizeof(limit), "%u", q->hq_limit);
+  ircd_snprintf(0, half, sizeof(half), "%u", (q->hq_limit + 1) / 2);
+
+  switch (q->hq_shape) {
+  case HIST_LATEST:
+    ircd_snprintf(0, sql, sizeof(sql),
+                  "SELECT " HIST_COLUMNS " FROM message WHERE %s "
+                  "ORDER BY sent_at DESC, msgid DESC LIMIT $%d",
+                  target, used + 1);
+    p[n].type = DB_TYPE_INT; p[n].value = limit;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    break;
+
+  case HIST_BEFORE:
+    ircd_snprintf(0, sql, sizeof(sql),
+                  "SELECT " HIST_COLUMNS " FROM message WHERE %s "
+                  "AND (sent_at, msgid) < ($%d, $%d) "
+                  "ORDER BY sent_at DESC, msgid DESC LIMIT $%d",
+                  target, used + 1, used + 2, used + 3);
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = q->hq_a.hp_time;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_a.hp_msgid;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_INT; p[n].value = limit;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    break;
+
+  case HIST_AFTER:
+    ircd_snprintf(0, sql, sizeof(sql),
+                  "SELECT " HIST_COLUMNS " FROM message WHERE %s "
+                  "AND (sent_at, msgid) > ($%d, $%d) "
+                  "ORDER BY sent_at ASC, msgid ASC LIMIT $%d",
+                  target, used + 1, used + 2, used + 3);
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = q->hq_a.hp_time;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_a.hp_msgid;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_INT; p[n].value = limit;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    break;
+
+  case HIST_AROUND:
+    /* Half either side, and the point itself counts as being before it:
+     * a client asking for context around a message expects that message
+     * in the answer. */
+    ircd_snprintf(0, sql, sizeof(sql),
+                  "(SELECT " HIST_COLUMNS " FROM message WHERE %s "
+                  "AND (sent_at, msgid) <= ($%d, $%d) "
+                  "ORDER BY sent_at DESC, msgid DESC LIMIT $%d) "
+                  "UNION ALL "
+                  "(SELECT " HIST_COLUMNS " FROM message WHERE %s "
+                  "AND (sent_at, msgid) > ($%d, $%d) "
+                  "ORDER BY sent_at ASC, msgid ASC LIMIT $%d) "
+                  "ORDER BY sent_at ASC, msgid ASC",
+                  target, used + 1, used + 2, used + 3,
+                  target, used + 1, used + 2, used + 3);
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = q->hq_a.hp_time;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_a.hp_msgid;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_INT; p[n].value = half;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    break;
+
+  case HIST_BETWEEN:
+    /* Symmetric on purpose.  The two points may arrive either way round,
+     * and which one is earlier is a question only the database can answer:
+     * it is the one comparing the pairs, under its own collation, and a
+     * decision made here in C would disagree with it for two messages that
+     * share a second and differ only in case.  Exactly one of the two
+     * branches can match anything, and each is a range the index serves.
+     */
+    ircd_snprintf(0, sql, sizeof(sql),
+                  "SELECT " HIST_COLUMNS " FROM message WHERE %s "
+                  "AND (((sent_at, msgid) > ($%d, $%d) "
+                  "AND (sent_at, msgid) < ($%d, $%d)) "
+                  "OR ((sent_at, msgid) > ($%d, $%d) "
+                  "AND (sent_at, msgid) < ($%d, $%d))) "
+                  "ORDER BY sent_at ASC, msgid ASC LIMIT $%d",
+                  target,
+                  used + 1, used + 2, used + 3, used + 4,
+                  used + 3, used + 4, used + 1, used + 2,
+                  used + 5);
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = q->hq_a.hp_time;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_a.hp_msgid;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = q->hq_b.hp_time;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_b.hp_msgid;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_INT; p[n].value = limit;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    break;
+
+  case HIST_TARGETS:
+    /* Conversations, not channels: a client already knows which channels
+     * it is on, and the ones it is not on it may not read. */
+    ircd_snprintf(0, sql, sizeof(sql),
+                  "SELECT peer AS target, "
+                  "to_char(max(sent_at) AT TIME ZONE 'UTC', "
+                  "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, "
+                  "'' AS msgid, 0 AS kind, '' AS body, '' AS prefix "
+                  "FROM (SELECT CASE WHEN sender_account = $1 "
+                  "THEN recipient_account ELSE sender_account END AS peer, "
+                  "sent_at FROM message WHERE NOT is_channel "
+                  "AND (sender_account = $1 OR recipient_account = $1) "
+                  "AND sent_at > $2 AND sent_at < $3) c "
+                  "GROUP BY peer ORDER BY 2 ASC LIMIT $4");
+    n = 0;
+    p[n].type = DB_TYPE_TEXT; p[n].value = q->hq_self;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = q->hq_a.hp_time;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = q->hq_b.hp_time;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    p[n].type = DB_TYPE_INT; p[n].value = limit;
+    p[n].format = DB_FORMAT_TEXT; n++;
+    break;
+
+  default:
+    hist_read_fail(rd);
+    return;
+  }
+
+  for (i = 0; i < n; i++)
+    params[i] = &p[i];
+  params[n] = NULL;
+
+  query.sql = sql;
+  query.params = params;
+
+  err = db_query(hist_mod, &query, hist_read_done, rd);
+
+  if (err != DB_OK) {
+    hist_complain("read", 0, err);
+    hist_read_fail(rd);
+  }
+}
+
+/** Fill in a point's timestamp from the message it named. */
+static void hist_resolve_done(const struct DbResult* res, void* user)
+{
+  struct HistRead* rd = (struct HistRead*) user;
+  unsigned int rows;
+  unsigned int i;
+
+  if (res->err.dberr_code != DB_OK) {
+    hist_complain("resolve", res, DB_OK);
+    hist_read_fail(rd);
+    return;
+  }
+
+  rows = db_rows(res->data);
+
+  for (i = 0; i < rows; i++) {
+    const char* id = db_row_str(res->data, i, "msgid");
+    char when[40];
+
+    ircd_strncpy(when, db_row_str(res->data, i, "sent_at"), sizeof(when) - 1);
+    when[sizeof(when) - 1] = '\0';
+
+    if (rd->hr_q.hq_a.hp_msgid[0] && !strcmp(id, rd->hr_q.hq_a.hp_msgid))
+      ircd_strncpy(rd->hr_q.hq_a.hp_time, when,
+                   sizeof(rd->hr_q.hq_a.hp_time) - 1);
+    if (rd->hr_q.hq_b.hp_msgid[0] && !strcmp(id, rd->hr_q.hq_b.hp_msgid))
+      ircd_strncpy(rd->hr_q.hq_b.hp_time, when,
+                   sizeof(rd->hr_q.hq_b.hp_time) - 1);
+  }
+
+  /* A message the store has never heard of leaves its point with no time.
+   * That is an empty answer and not an error: the client named something
+   * this server does not have, which is what a split, a purge or a typo
+   * all look like from here.
+   */
+  if (!rd->hr_q.hq_a.hp_time[0]
+      || (rd->hr_q.hq_shape == HIST_BETWEEN && !rd->hr_q.hq_b.hp_time[0])) {
+    if (rd->hr_cb)
+      (rd->hr_cb)(1, 0, 0, rd->hr_user);
+    MyFree(rd);
+    return;
+  }
+
+  hist_read_run(rd);
+}
+
+int hist_store_read(const struct HistQuery* q, HistReadFn cb, void* user)
+{
+  struct HistRead* rd;
+  struct DbParam p_a = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam p_b = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[3];
+  struct DbQuery query;
+  enum DbError err;
+
+  assert(0 != q);
+
+  rd = (struct HistRead*) MyCalloc(1, sizeof(*rd));
+  rd->hr_q = *q;
+  rd->hr_cb = cb;
+  rd->hr_user = user;
+
+  /* A point named by message has to become a (time, message) pair before
+   * anything can be compared against it.  Both points go in one lookup:
+   * two round trips is the ceiling, not two per point.
+   */
+  if ((q->hq_a.hp_msgid[0] && !q->hq_a.hp_time[0])
+      || (q->hq_b.hp_msgid[0] && !q->hq_b.hp_time[0])) {
+    p_a.value = q->hq_a.hp_msgid[0] ? q->hq_a.hp_msgid : q->hq_b.hp_msgid;
+    p_b.value = q->hq_b.hp_msgid[0] ? q->hq_b.hp_msgid : q->hq_a.hp_msgid;
+
+    query.sql = "SELECT msgid, to_char(sent_at AT TIME ZONE 'UTC', "
+                "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at "
+                "FROM message WHERE msgid = $1 OR msgid = $2";
+    params[0] = &p_a;
+    params[1] = &p_b;
+    params[2] = NULL;
+    query.params = params;
+
+    err = db_query(hist_mod, &query, hist_resolve_done, rd);
+
+    if (err != DB_OK) {
+      hist_complain("resolve", 0, err);
+      MyFree(rd);
+      return 0;
+    }
+
+    return 1;
+  }
+
+  hist_read_run(rd);
   return 1;
 }

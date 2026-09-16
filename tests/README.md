@@ -103,6 +103,11 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
     test_identity_db.py      # the same with a provider: REGISTER / IDENTIFY /
                              # PASSWORD / DROP over a real PostgreSQL, the
                              # account limit, and the grace period end to end
+  history/
+    test_history.py          # CHATHISTORY over the same PostgreSQL: the six
+                             # shapes, a replayed message keeping its msgid and
+                             # its time, who may read a channel and who may read
+                             # a conversation
   i18n/
     test_language.py         # LANGUAGE, draft/languages, translated numerics from
                              # po/es.po (the image installs it), the LG token
@@ -160,12 +165,20 @@ The hub also has Connect blocks for two external test servers used by the P10 te
 
 Configs are baked into the Docker images (in `docker/`), not volume-mounted.
 
-### Identity topology (`identity_db/`)
+### Identity topology (`identity_db/`, `history/`)
 
 One ircd with the identity module and the PostgreSQL it stores accounts
-in.  Not part of the hub/leaf network: what is tested is one server
+in -- and, since phase 2, the history module and the messages it stores
+there too.  Not part of the hub/leaf network: what is tested is one server
 answering for itself, and the store is per-topology so a run cannot
 inherit accounts from another one.
+
+`history/` shares it because half of what is worth testing about
+CHATHISTORY needs accounts: a direct message is stored only when both
+ends have identified, and a conversation is read back by account.  Those
+tests put a token unique to the run in every nickname and channel name,
+because the store outlives them -- a fixed name would read back the
+previous run's messages and a fixed nickname would already be registered.
 
 | Service       | Server Name        | Client | S2S  | Numeric | IP         |
 |---------------|--------------------|--------|------|---------|------------|
@@ -178,8 +191,8 @@ has to come up.  The database runs with `fsync=off` — it is rebuilt every
 run, so durability buys nothing and costs a second per migration.
 
 The schema is not seeded by the image.  The tests create it themselves
-with `/MODULE MIGRATION APPLY identity`, which is how a deployment does
-it.  Until it exists every nickname lookup fails, and a failed lookup is
+with `/MODULE MIGRATION APPLY identity` (and `... APPLY history`), which
+is how a deployment does it.  Until it exists every nickname lookup fails, and a failed lookup is
 never read as "free", so every client is renamed to `guest-*`: bring the
 server up, migrate, then let users in.
 

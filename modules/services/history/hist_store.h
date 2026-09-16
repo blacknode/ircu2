@@ -35,6 +35,15 @@
 #include <sys/types.h>
 #define INCLUDED_sys_types_h
 #endif
+#ifndef INCLUDED_ircd_defs_h
+#include "ircd_defs.h"
+#endif
+#ifndef INCLUDED_msgid_h
+#include "msgid.h"
+#endif
+#ifndef INCLUDED_channel_h
+#include "channel.h"
+#endif
 
 struct ModuleHandle;
 
@@ -65,8 +74,98 @@ struct HistMessage {
   const char*   hm_account;    /**< What the sender had proved, or NULL. */
   const char*   hm_recipient;  /**< What the recipient had proved, for a
                                     direct message; NULL for a channel. */
+  const char*   hm_prefix;     /**< nick!user@host as they were. */
   const char*   hm_body;       /**< The text; "" for a TAGMSG. */
 };
+
+/** Which way a request looks at the store.
+ *
+ * The six shapes CHATHISTORY has, named here rather than spelled out in
+ * SQL wherever somebody needed one.
+ */
+enum HistShape {
+  HIST_LATEST,   /**< The newest messages there are. */
+  HIST_BEFORE,   /**< The newest messages older than a point. */
+  HIST_AFTER,    /**< The oldest messages newer than a point. */
+  HIST_AROUND,   /**< Half either side of a point. */
+  HIST_BETWEEN,  /**< What lies between two points. */
+  HIST_TARGETS   /**< Who this client has conversations with. */
+};
+
+/** A point in the conversation.
+ *
+ * A client names one by time or by message.  Both are filled in before a
+ * query is built -- a bare timestamp gets an empty identifier, which
+ * sorts before every real one -- so that the comparison is always on the
+ * pair and paging can never repeat or skip a message that shares a second
+ * with another.
+ */
+struct HistPoint {
+  char hp_time[32];             /**< ISO 8601, or "" for no point. */
+  char hp_msgid[MSGIDLEN + 1];  /**< The message, or "". */
+};
+
+/** What a read is asking for.
+ *
+ * Who is asking is already resolved: #hq_self and #hq_peer are accounts,
+ * canonical, and whether the asker may see any of this was decided before
+ * this struct was filled in.  The store does not do permissions -- it
+ * would be the second place they were decided.
+ */
+struct HistQuery {
+  enum HistShape hq_shape;              /**< Which of the six. */
+  int            hq_channel;            /**< Target is a channel. */
+  char           hq_canon[CHANNELLEN + 1]; /**< The channel, canonical. */
+  char           hq_self[NICKLEN + 1];  /**< The asker's account. */
+  char           hq_peer[NICKLEN + 1];  /**< The other end's account. */
+  struct HistPoint hq_a;                /**< The point, or the first. */
+  struct HistPoint hq_b;                /**< The second, for BETWEEN. */
+  unsigned int   hq_limit;              /**< Most rows to return. */
+};
+
+/** One row on its way back out.
+ *
+ * Every string is valid only for the length of the callback.  For
+ * #HIST_TARGETS only #hr_target and #hr_time are filled in: the target,
+ * and when it was last spoken to.
+ */
+struct HistRow {
+  const char*   hr_time;     /**< When, ISO 8601. */
+  const char*   hr_msgid;    /**< Its name, or "" if it has none. */
+  enum HistKind hr_kind;     /**< PRIVMSG or NOTICE. */
+  const char*   hr_target;   /**< Channel or nickname, as addressed. */
+  const char*   hr_prefix;   /**< nick!user@host, or the bare nickname. */
+  const char*   hr_body;     /**< The text. */
+};
+
+/** Receives the answer to hist_store_read().  Runs in the main thread.
+ *
+ * @param[in] ok Non-zero if the store answered at all.
+ * @param[in] rows Oldest first, always: a transcript arrives in the order
+ *   it happened whichever end the client asked from.
+ * @param[in] count How many.
+ * @param[in] user What was handed to hist_store_read().
+ */
+typedef void (*HistReadFn)(int ok, const struct HistRow* rows,
+                           unsigned int count, void* user);
+
+/** Read from the store.
+ *
+ * Two round trips at most: a request that names a point by message has
+ * that resolved to its (time, message) pair first, so everything after it
+ * compares pairs and the six shapes are one statement each.
+ *
+ * The two points of a #HIST_BETWEEN may be given in either order: which
+ * one is earlier is decided by the database, which is the thing that
+ * compares them.
+ *
+ * @param[in] q What to look for.  Copied before this returns.
+ * @param[in] cb Called in the main thread with the rows.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted and \a cb will run.
+ */
+extern int hist_store_read(const struct HistQuery* q, HistReadFn cb,
+                           void* user);
 
 /** Store one message.
  *

@@ -45,6 +45,14 @@ extern void send_queued(struct Client *to);
  */
 extern void sendrawto_one(struct Client *to, const char *pattern, ...);
 
+/* Send a line with a caller-supplied prefix, with the message tags a
+ * command would get.  For a message the server is relaying but did not
+ * originate and cannot name a sender for -- one read back out of a
+ * history store.  See send.c.
+ */
+extern void sendrawto_one_tagged(struct Client *to, const char *tok,
+                                 const char *pattern, ...);
+
 /* Send a command to one client */
 extern void sendcmdto_one(struct Client *from, const char *cmd,
 			  const char *tok, struct Client *to,

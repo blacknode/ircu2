@@ -53,19 +53,34 @@
  */
 #include "config.h"
 
+#include "capab.h"
 #include "db.h"
 #include "history.h"
 #include "hooks.h"
 #include "ircd.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
+#include "ircd_snprintf.h"
+#include "msg.h"
 #include "module.h"
 
 #include <string.h>
 
 /** This module's handle. */
 struct ModuleHandle* hist_mod;
+
+/** This module's translation catalog. */
+struct I18nDomain* hist_i18n;
+
+/** The position the server handed out for draft/chathistory.
+ *
+ * Kept rather than recomputed: a capability's position is assigned, does
+ * not follow from its name, and nothing on a server link has to agree on
+ * it.  -1 means it is not registered.
+ */
+static int hist_cap = -1;
 
 /** How many months ahead partitions are created. */
 #define HIST_MONTHS_AHEAD 1
@@ -83,6 +98,24 @@ static struct Timer hist_timer;
  * inside the callback is a bare timer_add().  See CLAUDE.md.
  */
 static int hist_timer_ready;
+
+/** Put the largest answer this server will give in the capability's value.
+ *
+ * So a client knows the ceiling before it asks rather than by having its
+ * limit quietly cut down.  Re-run on rehash, because HISTORY_MAX_LIMIT is
+ * a feature and a feature can change while the server runs.
+ */
+static void hist_advertise(void)
+{
+  char value[16];
+  int max = feature_int(FEAT_HISTORY_MAX_LIMIT);
+
+  if (hist_cap < 0)
+    return;
+
+  ircd_snprintf(0, value, sizeof(value), "%d", max > 0 ? max : 1);
+  cap_set_value(hist_cap, value);
+}
 
 /** Create partitions and drop what has expired. */
 static void hist_maintenance(void)
@@ -103,7 +136,7 @@ static void hist_timer_expired(struct Event* ev)
             HIST_MAINTENANCE_EVERY);
 }
 
-/** Say once what an operator needs to hear before the first user does. */
+/** Say what an operator needs to hear before the first user does. */
 static void hist_check_config(void)
 {
   if (!db_available()) {
@@ -130,6 +163,37 @@ static void hist_check_config(void)
               "copy of the same message");
 }
 
+/** The configuration has been read in full.
+ *
+ * Fires once at start-up with the server ready, and again after every
+ * rehash, which is the only moment at which what this module needs from
+ * the configuration is all there.
+ */
+static enum HookResult hist_configured(struct HookContext* ctx, void* user)
+{
+  (void) ctx;
+  (void) user;
+
+  hist_advertise();
+  hist_check_config();
+
+  return HOOK_CONTINUE;
+}
+
+/** What the command runs as.
+ *
+ * A client only: a server never asks another for history, because every
+ * server reads the same store, and an unregistered client has no account
+ * and no channels, so there is nothing it could be shown.
+ */
+static MessageHandler handlers[] = {
+  0,                    /* unregistered */
+  hist_m_chathistory,   /* client */
+  0,                    /* server */
+  hist_m_chathistory,   /* oper */
+  0                     /* service */
+};
+
 /** Attach to the hook and start maintaining the schema.
  * @param[in] mod Handle for this module.
  * @return Zero on success.
@@ -138,19 +202,40 @@ static int history_init(struct ModuleHandle* mod)
 {
   hist_mod = mod;
 
+  hist_i18n = module_i18n(mod);
+
   if (!module_add_hook(mod, HOOK_MESSAGE_DELIVERED, hist_capture,
                        HOOK_PRIORITY_DEFAULT, 0)) {
     hist_mod = NULL;
     return -1;
   }
 
-  hist_check_config();
+  if (!module_add_command(mod, MSG_CHATHISTORY, TOK_CHATHISTORY, MAXPARA,
+                          0, handlers)) {
+    hist_mod = NULL;
+    return -1;
+  }
 
-  /* Not from here: mi_init runs in the middle of the configuration parse,
-   * when a Database{} block after this module's own Module{} block has not
-   * been read yet.  The first timer does it, a moment after the server is
-   * up.
+  /* The capability last, and only if the command is really there: its
+   * value is a promise about an answer, and advertising one the server
+   * cannot give is worse than not advertising at all.
    */
+  if (module_add_cap(mod, HIST_CAP_NAME, 0, &hist_cap))
+    hist_advertise();
+
+  /* Everything that depends on the configuration waits for
+   * HOOK_CONFIG_LOADED.  mi_init runs in the middle of the parse: a
+   * Database{} block or a Features{} block written after this module's own
+   * Module{} line has not been read yet, so a check made here would warn
+   * about a database that is configured and advertise a limit that is
+   * about to change.
+   */
+  if (!module_add_hook(mod, HOOK_CONFIG_LOADED, hist_configured,
+                       HOOK_PRIORITY_DEFAULT, 0)) {
+    hist_mod = NULL;
+    return -1;
+  }
+
   if (!hist_timer_ready) {
     timer_init(&hist_timer);
     hist_timer_ready = 1;
@@ -166,6 +251,9 @@ static int history_init(struct ModuleHandle* mod)
 static void history_fini(struct ModuleHandle* mod)
 {
   (void) mod;
+
+  hist_cap = -1;
+  hist_i18n = NULL;
 
   if (hist_timer_ready) {
     timer_del(&hist_timer);

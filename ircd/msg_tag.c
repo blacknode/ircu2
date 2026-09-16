@@ -261,6 +261,18 @@ static char msgid_line_tok[16];
 /** The identifier, empty until something asks for one. */
 static char msgid_line_value[MSGIDLEN + 1];
 
+/** A stored message being sent again, rather than one happening now.
+ *
+ * A message read back out of a history store already has a name and a
+ * time, and both of them are the network's rather than this server's: the
+ * whole point of storing them was that a client would later be shown the
+ * same message everyone else saw.  So they are put here and the rendering
+ * below uses them in place of the line's own -- which, in a database
+ * callback, there is none of anyway.
+ */
+static int  replay_open;
+static char replay_time[32];
+
 int
 msg_tag_needs_msgid(const char *tok)
 {
@@ -337,6 +349,48 @@ msg_tag_line_force_msgid(const char *tok)
   msgid_line_value[0] = '\0';
   ircd_strncpy(msgid_line_tok, tok, sizeof(msgid_line_tok) - 1);
   msgid_line_tok[sizeof(msgid_line_tok) - 1] = '\0';
+}
+
+void
+msg_tag_line_replay(const char *tok, const char *msgid, const char *when)
+{
+  msgid_line_open = 1;
+  msgid_line_wanted = 0;
+  msgid_line_value[0] = '\0';
+  msgid_line_tok[0] = '\0';
+  replay_open = 0;
+  replay_time[0] = '\0';
+
+  if (!tok)
+    return;
+
+  ircd_strncpy(msgid_line_tok, tok, sizeof(msgid_line_tok) - 1);
+  msgid_line_tok[sizeof(msgid_line_tok) - 1] = '\0';
+
+  /* No identifier is a legitimate answer -- an old row, a store that
+   * never had one -- and it must not turn into a freshly minted one,
+   * which would give the same message two names.  So "wanted" is set only
+   * when there is something to hand out.
+   */
+  if (msgid && *msgid) {
+    msgid_line_wanted = 1;
+    ircd_strncpy(msgid_line_value, msgid, sizeof(msgid_line_value) - 1);
+    msgid_line_value[sizeof(msgid_line_value) - 1] = '\0';
+  }
+
+  if (when && *when) {
+    replay_open = 1;
+    ircd_strncpy(replay_time, when, sizeof(replay_time) - 1);
+    replay_time[sizeof(replay_time) - 1] = '\0';
+  }
+}
+
+void
+msg_tag_line_replay_end(void)
+{
+  replay_open = 0;
+  replay_time[0] = '\0';
+  msg_tag_line_end();
 }
 
 void
@@ -699,7 +753,14 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
   if (msg_tag_wants_time(to)) {
     char tbuf[32];
 
-    if (feature_bool(FEAT_NETWORK_TIME) && time_tag && time_tag->value)
+    /* A stored message carries the time it was sent, not the time it is
+     * being read back: a history that stamped every line with "now" would
+     * be a list of when somebody scrolled, unordered against everything
+     * they already have.
+     */
+    if (replay_open)
+      ircd_strncpy(tbuf, replay_time, sizeof(tbuf) - 1);
+    else if (feature_bool(FEAT_NETWORK_TIME) && time_tag && time_tag->value)
       ircd_strncpy(tbuf, time_tag->value, sizeof(tbuf) - 1);
     else
       msg_tag_format_time(tbuf, sizeof(tbuf), local_time);

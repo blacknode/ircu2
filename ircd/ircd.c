@@ -27,6 +27,7 @@
 #include "IPcheck.h"
 #include "capab.h"
 #include "batch.h"
+#include "account.h"
 #include "channel.h"
 #include "class.h"
 #include "client.h"
@@ -897,6 +898,7 @@ int main(int argc, char **argv) {
   module_close();
   cap_close();
   sasl_close();
+  account_close();
   worker_shutdown();
   migration_shutdown();
   db_shutdown();

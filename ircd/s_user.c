@@ -1152,11 +1152,17 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
   char buf[BUFSIZE];
   int prop = 0;
   char* tls_fingerprint = NULL;
-  /* +r may come from a server, from a service bot acting on somebody
-   * else, or in a burst; a user never grants it to itself.  A local bot
-   * acting on itself is a user like any other here.
+  /* +r and +f may come from a server, from a service bot acting on
+   * somebody else, from a burst, or from this server itself; a user never
+   * grants either to itself, and a local bot acting on itself is a user
+   * like any other here.  IsMe() is the last of those: &me is STAT_ME
+   * rather than STAT_SERVER, so IsServer() is false for it, and without
+   * this the core could not grant the mode it is the authority for
+   * (account_login()).  Nothing off a socket reaches it -- the client
+   * path drops the prefix, so sptr is the client itself, and on the
+   * server path IsServer(cptr) is already true.
    */
-  int may_set_r = IsServer(cptr) || IsServer(sptr)
+  int may_set_r = IsServer(cptr) || IsServer(sptr) || IsMe(sptr)
     || (IsServiceBot(sptr) && sptr != acptr);
 
   what = UMODE_ADD;
@@ -1550,7 +1556,12 @@ int set_user_mode_on(struct Client *cptr, struct Client *sptr,
 
   if (!IsUser(acptr) || parc < 3)
     return 0;
-  if (!IsServer(sptr) && !(IsServiceBot(sptr) && !IsAnOper(acptr)))
+  /* A server, this server itself, or a service bot on a non-operator.
+   * IsMe() is the core's own hand -- account_login() grants +r through
+   * here -- and is not reachable by anything that arrives on a socket.
+   */
+  if (!IsServer(sptr) && !IsMe(sptr)
+      && !(IsServiceBot(sptr) && !IsAnOper(acptr)))
     return 0;
   return do_user_mode(cptr, sptr, acptr, parc, parv, ALLOWMODES_ANY);
 }

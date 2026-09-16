@@ -69,11 +69,10 @@ struct Timer *timer_init(struct Timer *timer)
 void timer_add(struct Timer *timer, EventCallBack call, void *data,
                enum TimerType type, time_t value)
 {
-    Debug((DEBUG_LIST, "timer_add(%p, %p, %p, %d, %ld)\n", timer, call, data,
-           (int) type, (long) value));
+    (void) timer; (void) call; (void) data; (void) type; (void) value;
 }
 
 void timer_del(struct Timer *timer)
 {
-    Debug((DEBUG_LIST, "timer_del(%p)\n", timer));
+    (void) timer;
 }

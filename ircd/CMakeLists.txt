@@ -103,6 +103,8 @@ ircu_add_migrations(ircd "${CMAKE_CURRENT_SOURCE_DIR}/migrations"
 # ---------------------------------------------------------------------------
 set(IRCU_SOURCES
   IPcheck.c
+  account.c
+  account_user.c
   batch.c
   bot.c
   capab.c

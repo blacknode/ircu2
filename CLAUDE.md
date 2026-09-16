@@ -111,6 +111,31 @@ with an account that *is* the nick, the first three repeat the prefix. SASL is
 coming back as phase 1 of the roadmap (proposal 007); `doc/readme.accounting`
 still describes the state before it and is rewritten when that phase closes.
 
+**Accounts** (`include/account.h`, `ircd/account.c` + `ircd/account_user.c`,
+proposal 007). An account **is** a nickname, so `+r` keeps its literal meaning
+and there is no mapping to maintain. The core does not know whether a password
+is right: one module registers as the *provider* (`account_register_provider()`,
+the shape of `db_register_driver()` and for the same two reasons) and answers
+`ap_verify()` / `ap_lookup()` later, in the main thread, through
+`account_complete()`. The file is split the way `migration.c` is split from
+`migration_run.c`: `account.c` is the register, the questions in flight and the
+guest-name generator and never dereferences a `struct Client` (unit-tested by
+`account_t`); `account_user.c` applies an answer, which needs the hash tables,
+the nick machinery and the send layer. A question has a deadline
+(`FEAT_ACCOUNT_TIMEOUT`) enforced by a timer of `account.c`'s own, is dropped
+when its client leaves, and is failed when the provider is unloaded still
+owing it. **`ACCOUNT_NICK_UNKNOWN` is not `ACCOUNT_NICK_FREE`** — a lookup that
+could not be answered must never be read as "nobody registered it". Granting
+`+r` and taking the nickname are one act (`account_login()`); `account_logout()`
+undoes both and renames to `guest-<8 base62>` (`FEAT_GUEST_PREFIX`), because a
+client still called `maria` without `+r` is what an onlooker cannot tell from an
+impostor. A guest name that is somehow taken is a KILL, not a retry: eight
+random base-62 characters make it not happen, and a loop around something that
+never runs is code that is never tested. `do_user_mode()`'s `+r`/`+f` gate
+accepts `IsMe(sptr)` so the core can grant what it is the authority for; no
+client is ever `&me` (the client path drops the prefix, and `m_mode.c` gates on
+`IsServer`/`IsServiceBot` first), so nothing off a socket reaches it.
+
 **Identity, in progress** (proposal 007). Two pieces of core state are in
 place ahead of the protocol that will drive them. `cli_user()->email` is the
 address a client authenticated with: **local and only local** — it never

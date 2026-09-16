@@ -620,6 +620,56 @@ Registrations are reverted on unload, like everything else, and a module
 cannot remove the core's mechanisms or another module's.
 
 
+THE IDENTITY PROVIDER
+====================
+
+One module answers two questions for the whole server: is this credential
+good, and whose nickname is this?
+
+  #include "account.h"
+
+  static void my_verify(account_id_t id, const struct AccountRequest *req);
+  static void my_lookup(account_id_t id, const char *nick);
+  static void my_cancel(account_id_t id);
+
+  static const struct AccountProvider provider = {
+    "identity", my_verify, my_lookup, my_cancel
+  };
+
+  module_add_account_provider(mod, &provider);
+
+Neither call may block.  They start the work -- a query through db.h, the
+password hash on a worker (see WORKER THREADS and ircd_pwhash.h) -- and
+return; the answer goes back later, in the main thread, with
+account_complete() or account_complete_owner(), exactly once per question
+accepted.  Answering from inside the call is allowed, for a provider with
+a cache.
+
+Five things to know:
+
+  * One provider at a time.  A second registration is refused rather than
+    replacing the first, so two identity modules in ircd.conf are an error
+    and not a coin flip.
+
+  * A question the core has dropped -- the client left, the deadline
+    passed -- is not an error to answer: account_complete() says the
+    handle is no longer outstanding and does nothing.
+
+  * The request does not outlive the call, and its secret is a password.
+    Copy what is needed and nothing more; the core wipes the secret as
+    soon as the call returns.
+
+  * "Could not be established" is not "free".  A lookup that fails --
+    database unreachable, no answer in time -- comes back as
+    ACCOUNT_NICK_UNKNOWN, and a caller must not read that as a nickname
+    nobody has registered.  The one moment an impostor gets somebody
+    else's nickname is the moment the service protecting it is not
+    answering, and that moment can be arranged.
+
+  * Unloading the module fails every question in flight before the code
+    is unmapped, so nothing waits for an answer that is never coming.
+
+
 COMMAND HOOKS
 =============
 

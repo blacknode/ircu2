@@ -50,6 +50,9 @@
 #ifndef INCLUDED_sasl_h
 #include "sasl.h"       /* SaslStepFn, SASL_MECH_* */
 #endif
+#ifndef INCLUDED_account_h
+#include "account.h"    /* struct AccountProvider, account_id_t */
+#endif
 #ifndef INCLUDED_worker_h
 #include "worker.h"     /* struct WorkTask, WorkerMainFn */
 #endif
@@ -67,7 +70,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 10
+#define IRCU_MODULE_ABI 11
 
 /** Description of a module, exported by the shared object.
  *
@@ -515,6 +518,35 @@ extern int module_add_sasl_mechanism(struct ModuleHandle* mod,
  */
 extern int module_del_sasl_mechanism(struct ModuleHandle* mod,
                                      const char* name);
+
+/*
+ * The identity provider.
+ *
+ * One module answers "is this credential good?" and "whose nickname is
+ * this?".  The core holds the register and the questions in flight, the
+ * same way it holds the database driver and for the same two reasons:
+ * modules cannot resolve each other's symbols, and holding the questions
+ * here is what lets the module be unloaded with some outstanding.
+ *
+ * A provider never blocks.  The query belongs in db.h and the password
+ * hash on a worker; the answer comes back through account_complete() in
+ * the main thread.  See include/account.h.
+ */
+
+/** Register this module as the identity provider.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] provider Static description; must outlive the module.
+ * @return Non-zero on success; zero if one is already registered.
+ */
+extern int module_add_account_provider(struct ModuleHandle* mod,
+                                       const struct AccountProvider* provider);
+
+/** Withdraw this module's identity provider.
+ *
+ * Every question in flight is failed before this returns.
+ * @param[in] mod Handle passed to mi_init.
+ */
+extern void module_del_account_provider(struct ModuleHandle* mod);
 
 /*
  * Server-side interface.  Not for use by modules.

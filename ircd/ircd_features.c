@@ -406,6 +406,15 @@ static struct FeatureDesc {
    */
   F_I(HOOK_TIMEOUT, FEAT_OPER, 10, 0),
 
+  /* Accounts.  The timeout bounds a question asked of a database, so it
+   * is short: what waits on it is somebody trying to log in.  Requiring
+   * TLS is on by default because both PLAIN and ACCOUNT LOGIN put the
+   * password on the wire as it is.
+   */
+  F_I(ACCOUNT_TIMEOUT, FEAT_OPER, 10, 0),
+  F_B(ACCOUNT_REQUIRE_TLS, FEAT_OPER, 1, 0),
+  F_S(GUEST_PREFIX, FEAT_OPER, "guest-", 0),
+
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),
 

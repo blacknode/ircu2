@@ -20,6 +20,7 @@
  */
 #include "config.h"
 
+#include "account.h"
 #include "channel.h"
 #include "bot.h"
 #include "capab.h"
@@ -912,6 +913,25 @@ int module_del_sasl_mechanism(struct ModuleHandle *mod, const char *name) {
   return sasl_unregister(mod, name);
 }
 
+/** Register this module as the identity provider.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] provider Static description of the provider.
+ * @return Non-zero on success.
+ */
+int module_add_account_provider(struct ModuleHandle *mod,
+                                const struct AccountProvider *provider) {
+  assert(0 != mod);
+  return account_register_provider(mod, provider);
+}
+
+/** Withdraw this module's identity provider.
+ * @param[in] mod Handle passed to mi_init.
+ */
+void module_del_account_provider(struct ModuleHandle *mod) {
+  assert(0 != mod);
+  account_unregister_provider(mod);
+}
+
 /** Turn a module name into the path of its shared object.
  *
  * The name is a bare name: it may not contain a directory separator and
@@ -1306,6 +1326,11 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    * no longer exists would be answered by a pointer into nothing.
    */
   sasl_drop_module(mod);
+  /* And the identity provider, which fails every question in flight: a
+   * caller waiting on an answer from code that is about to be unmapped
+   * would wait for ever.
+   */
+  account_unregister_provider(mod);
 
   for (mod_p = &manager->mod_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {

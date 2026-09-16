@@ -28,6 +28,7 @@
 
 #include "s_misc.h"
 #include "IPcheck.h"
+#include "account.h"
 #include "batch.h"
 #include "bot.h"
 #include "channel.h"
@@ -403,6 +404,11 @@ int exit_client(struct Client *cptr,
    * exit_client() for a client already exiting.
    */
   hook_pending_cancel(victim);
+  /* And a question the identity provider has not answered: the same
+   * reasoning, and the same reason not to answer it -- there is nobody
+   * left for the answer to be about.
+   */
+  account_client_exiting(victim);
 
   if (MyConnect(victim))
   {

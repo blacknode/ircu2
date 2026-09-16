@@ -495,6 +495,41 @@ and letting it through because the module never answered would be the
 outcome it was asked to prevent.  Nothing is armed and nothing is
 checked while no module is holding anything.  See doc/readme.modules.
 
+ACCOUNT_TIMEOUT
+ * Type: integer
+ * Default: 10
+
+How long, in seconds, the identity provider may take to answer a
+question -- is this credential good, whose nickname is this -- before
+the server answers for it.  What waits on it is somebody trying to log
+in, so it is short.  A question that times out fails: for a credential
+that means the login is refused, and for a nickname it means ownership
+could not be established, which is not the same as the nickname being
+free.  See doc/proposals/007-identidad.md.
+
+ACCOUNT_REQUIRE_TLS
+ * Type: boolean
+ * Default: TRUE
+
+Refuse authentication mechanisms that put the password on the wire in
+the clear -- SASL PLAIN and ACCOUNT LOGIN -- on a connection with no
+TLS.  On by default: a server that allows them by default is a server
+that collects passwords in plaintext, and the SASL specification says
+as much about PLAIN.  Turn it off only on a network where something
+else provides the transport security.
+
+GUEST_PREFIX
+ * Type: string
+ * Default: guest-
+
+What a guest nickname starts with.  The server appends eight random
+base-62 characters, and refuses to start if prefix and suffix together
+would not fit in a nickname -- a prefix long enough to squeeze out the
+random part would make every guest the same guest.  Guests are what a
+client is renamed to when it could not prove a registered nickname is
+its own: a failed authentication, a logout, a grace period that ran
+out.
+
 DEFAULT_LANGUAGE
  * Type: string
  * Default: (none)

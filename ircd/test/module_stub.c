@@ -164,6 +164,17 @@ const char* feature_str(enum Feature feat)
   return "";
 }
 
+/* account.c is linked in whole, so that module_add_account_provider()
+ * registers into the register the server uses.  What it reaches for is
+ * the server's randomness, for a guest nickname these tests never ask
+ * for; a constant is enough to link, and account_t is where the generator
+ * is actually checked.
+ */
+unsigned int ircrandom(void)
+{
+  return 0;
+}
+
 #include "capab.h"
 
 /* capab.c is linked in for real, so that module_add_cap() registers into

@@ -116,6 +116,11 @@ enum Feature {
   /* Modules (see doc/readme.modules) */
   FEAT_HOOK_TIMEOUT,
 
+  /* Accounts (see doc/proposals/007-identidad.md) */
+  FEAT_ACCOUNT_TIMEOUT,
+  FEAT_ACCOUNT_REQUIRE_TLS,
+  FEAT_GUEST_PREFIX,
+
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,
 

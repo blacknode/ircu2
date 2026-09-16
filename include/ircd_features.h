@@ -121,6 +121,11 @@ enum Feature {
   FEAT_ACCOUNT_REQUIRE_TLS,
   FEAT_GUEST_PREFIX,
 
+  /* History (see doc/proposals/006-comunicaciones-unificadas.md 7.1) */
+  FEAT_HISTORY_RETENTION,
+  FEAT_HISTORY_PRIVATE,
+  FEAT_HISTORY_MAX_LIMIT,
+
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,
 

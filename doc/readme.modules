@@ -80,6 +80,14 @@ space is not a class of failure worth being lenient about, and the
 alternative -- a module quietly reading the wrong field -- is far worse
 than one that will not load.
 
+What counts as a change is anything a module compiles against, not only
+the obvious ones.  A new field in a struct the module sees, a new hook
+point, and a **new entry in enum Feature** all change it: the feature
+enum is an index into a table the server holds, so a value inserted in
+the middle of it makes a module built against the old header read the
+feature next door.  Nothing in a shared address space announces that; the
+ABI number is what does.
+
 Check the ABI a module was built against with /STATS M.
 
 

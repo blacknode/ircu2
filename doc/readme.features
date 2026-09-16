@@ -530,6 +530,39 @@ client is renamed to when it could not prove a registered nickname is
 its own: a failed authentication, a logout, a grace period that ran
 out.
 
+HISTORY_RETENTION
+ * Type: integer
+ * Default: 90
+
+How many days the history module keeps what was said, or 0 to keep it
+forever.  Purging drops whole monthly partitions where it can, so a
+value that is not a round number of months still costs nothing in
+particular.  Keeping everything is a decision an operator makes rather
+than one the server makes for them: what is stored here is what people
+said, and in most places how long that may be kept is not a technical
+question.  The module has to be loaded for any of this to mean
+anything; see doc/readme.history.
+
+HISTORY_PRIVATE
+ * Type: boolean
+ * Default: TRUE
+
+Store direct messages as well as channel messages.  On by default,
+because a direct message a user cannot scroll back to is the first
+thing anybody notices missing.  Turning it off is how a deployment
+that must not keep them says so; channel history is unaffected.
+Messages to a service (+S or +k) are never stored whatever this says,
+because that is where passwords go.
+
+HISTORY_MAX_LIMIT
+ * Type: integer
+ * Default: 100
+
+The largest number of messages one CHATHISTORY request may return.  A
+client asking for more is given this many rather than an error: the
+limit is the server's, and a client that has to discover it by being
+refused would just ask again with a smaller number.
+
 DEFAULT_LANGUAGE
  * Type: string
  * Default: (none)

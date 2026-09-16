@@ -773,25 +773,62 @@ dentro de un año:
   una segunda forma, con el riesgo de dejar la abstracción en el mínimo común
   denominador de dos motores que no se parecen.
 
-**El diseño, entonces:**
+**El diseño, entonces** (lo marcado **implementado** está en el árbol; ver
+`doc/readme.history`):
 
-- Tabla **particionada por mes**, clave primaria `msgid`, índice **BRIN** sobre
-  el tiempo, **GIN** sobre el texto para la búsqueda.
+- Tabla **particionada por mes**, índice **BRIN** sobre el tiempo, **GIN**
+  sobre el texto para la búsqueda. **Implementado.** Una corrección sobre lo
+  que decía este punto: la clave no puede ser `msgid` a secas, porque
+  PostgreSQL no acepta en una tabla particionada una restricción de unicidad
+  que no incluya la clave de partición. Es `(sent_at, msgid)`, y eso no es un
+  rodeo sino el punto de la topología escrito en el esquema: dos servidores
+  sólo coinciden en la clave si coinciden en la hora, y por eso la hora tiene
+  que viajar con el mensaje.
 - El módulo `history` define **su propia interfaz interna de almacén** — la
   forma de la consulta (`latest`, `before`, `after`, `around`, `between`,
   `targets`) se expresa ahí, no en SQL suelto repartido por el código. No es
   por dejar la puerta abierta a otro motor: es que el código de la sala no
   tiene por qué saber SQL, y una interfaz explícita es lo que hace que la
   retención y el borrado tengan un único sitio donde ocurrir.
+  **Implementado**: `hist_store.h` es la interfaz y `hist_store.c` es la
+  única sentencia SQL del módulo.
 - Captura en `HOOK_MESSAGE_DELIVERED` (§5.6), no en el hook de origen local,
-  que no ve lo que llega de otros servidores (§3.5).
+  que no ve lo que llega de otros servidores (§3.5). **Implementado**, hook
+  incluido.
 - Escrituras por el driver asíncrono; **nunca** en el hilo del event loop.
+  **Implementado.** Un fallo se registra como mucho una vez por minuto: una
+  base de datos caída falla un `INSERT` por mensaje de toda la red, así que
+  el registro sería la avería.
+- **Un mensaje directo sólo se guarda si ambos extremos se han
+  identificado.** No es un juicio sobre los invitados: un mensaje directo se
+  le enseña luego a esas dos personas y a nadie más, y el único asidero
+  duradero que este servidor tiene sobre una persona es el nick que demostró
+  ser suyo. Archivarlo bajo un nick sin demostrar sería enseñárselo a quien
+  lleve ese nick la semana que viene, y sin nadie a quien poder enseñárselo
+  no hay razón para guardarlo. Tampoco se guarda nada dirigido a un servicio
+  (`+S` o `+k`) —ahí es donde van las contraseñas, y el core ni siquiera se
+  lo cuenta al módulo—, ni los mensajes con máscara, ni el CTCP que no sea
+  un ACTION, ni los TAGMSG (que son la fase 3).
 - `CHATHISTORY LATEST|BEFORE|AFTER|AROUND|BETWEEN|TARGETS`, dentro de un
   `BATCH`.
 - Retención, purga, exportación y **borrado por cuenta**: requisito legal, se
-  diseña aquí y no se añade al final.
-- **Topología:** cada servidor escribe lo que entrega y la deduplicación por
-  `msgid` la hace la base de datos. Escala mejor que un archivador designado.
+  diseña aquí y no se añade al final. **Retención, purga y borrado por cuenta
+  implementados**: `history_purge()` tira particiones mensuales enteras, que
+  no cuesta nada contengan lo que contengan, y `history_forget()` viene en la
+  v1 del esquema y no después. Un mensaje directo es una fila y no dos, así
+  que olvidar una cuenta se lleva por delante la copia del otro extremo: es
+  lo que se está pidiendo, porque lo que se borra es el mensaje y no hay más
+  que uno. La exportación queda pendiente.
+- **Topología:** cada servidor escribe lo que entrega y la deduplicación la
+  hace la base de datos. Escala mejor que un archivador designado — que es,
+  además, un servidor cuyo *split* se lleva el registro con él.
+  **Implementado.** Requiere `NETWORK_FEATURES` y `NETWORK_TIME` en toda la
+  red: son lo que hace viajar el `msgid` y la hora por P10, y sin ellos cada
+  servidor se inventa su propio nombre y su propia lectura del reloj para el
+  mismo mensaje. El módulo lo dice en el registro al cargarse si falta
+  alguno.
+- **Falta** la lectura: `CHATHISTORY`, la capacidad que la anuncia y la
+  exportación.
 
 ### 7.2 Fase 3 — Semántica de conversación moderna
 

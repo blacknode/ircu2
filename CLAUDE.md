@@ -296,6 +296,32 @@ listed in `parse.c`, so a module's command can declare it too; `PRIVMSG` and
 `NOTICE` carry the flag but are narrowed to a single local `+S` target, since
 what the state must allow is talking to the service that will lift it.
 
+**History** (`modules/services/history/`, `doc/readme.history`, proposal 006
+§7.1). What was said, kept, on PostgreSQL through `db.h` — phase 2. It
+attaches to `HOOK_MESSAGE_DELIVERED` and writes what it hears; nothing here
+blocks, and a database that is down costs the rows it did not store and
+nothing else (failures are logged at most once a minute, because a dead
+database fails one insert per message on the whole network). **Every server
+writes what it delivers** and the database throws away the copies: there is
+no designated archivist, because that is a server whose split takes the
+record with it. That works only because the key of a row — `(sent_at,
+msgid)`, in that order because a partitioned table will not take a unique
+constraint without its partition key — travels *with* the message, which
+needs `FEAT_NETWORK_FEATURES` and `FEAT_NETWORK_TIME` on; the module says so
+at load if either is off. The schema is one table partitioned by month, BRIN
+over the time, GIN over the text, applied with `/MODULE MIGRATION APPLY
+history`. `hist_store.c` holds **every** statement the module sends — not to
+leave a door open for another engine (§7.1 closes that) but because
+retention, purging and deletion by account need one place to happen;
+`history_forget()` ships in v1 rather than being added later, and takes the
+other end's copy of a direct message with it, because a direct message is one
+row and what is being deleted is the message. A **direct message is stored
+only when both ends have identified**: the only durable handle on a person is
+the nickname they proved, and filing one under a bare nickname would show it
+to whoever wears that nickname next week. Messages to a service are never
+even reported to the module, non-ACTION CTCP and TAGMSG are dropped by
+`hist_capture.c`.
+
 **Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
 (`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`
 (`channel_chan_modes()` and friends) so modules can add their own; test them with
@@ -686,7 +712,8 @@ module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
 `doc/readme.sasl` (how a user earns `+r`: AUTHENTICATE, `ACCOUNT`, NickServ
 and the provider behind all three), `doc/readme.modules`,
 `doc/readme.workers`,
-`doc/readme.database`, `doc/readme.migrations`, `doc/readme.translations`,
+`doc/readme.database`, `doc/readme.migrations`, `doc/readme.history`,
+`doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
 generates reference docs).
 

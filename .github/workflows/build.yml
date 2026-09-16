@@ -81,6 +81,10 @@ jobs:
           test -f build/modules/workers/postgres/postgres.so
           test -f build/modules/services/identity/identity.so
 
+          # The history module needs nothing beyond the core, so it is never
+          # skipped; if it is missing, the build is what went wrong.
+          test -f build/modules/services/history/history.so
+
           missing=0
           for so in $(find build/modules -mindepth 2 -name '*.so' | sort); do
             echo "== $so"

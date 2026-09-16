@@ -415,6 +415,17 @@ static struct FeatureDesc {
   F_B(ACCOUNT_REQUIRE_TLS, FEAT_OPER, 1, 0),
   F_S(GUEST_PREFIX, FEAT_OPER, "guest-", 0),
 
+  /* History.  Retention is in days and 0 means "keep everything", which
+   * is a choice an operator has to make rather than one the server makes
+   * for them: what is stored here is what people said.  Private messages
+   * are stored by default because a direct message a user cannot scroll
+   * back to is the first thing anyone notices missing, and turning it off
+   * is how a deployment that may not keep them says so.
+   */
+  F_I(HISTORY_RETENTION, FEAT_OPER, 90, 0),
+  F_B(HISTORY_PRIVATE, FEAT_OPER, 1, 0),
+  F_I(HISTORY_MAX_LIMIT, FEAT_OPER, 100, 0),
+
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),
 

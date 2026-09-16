@@ -51,6 +51,7 @@
 #include "ircd_base64.h"
 #endif
 
+struct Client;
 struct ModuleHandle;
 
 /** Longest mechanism name, per RFC 4422 section 3.1. */
@@ -236,5 +237,41 @@ extern int sasl_session_begin(struct SaslSession* ses, const char* name);
  */
 extern enum SaslResult sasl_session_input(struct SaslSession* ses,
                                           const char* line);
+
+/*
+ * The protocol side, in ircd/m_authenticate.c.  Declared here for the same
+ * reason capab.h declares cap_new(): the register calls back into it.
+ */
+
+/** Recompute what the "sasl" capability advertises, and whether it is
+ * advertised at all.
+ *
+ * The value is the mechanism list, so it changes when a module registers
+ * one; whether the capability is offered at all depends on there being an
+ * identity provider, because a client that negotiates SASL against a
+ * server which cannot authenticate anybody is worse off than one that can
+ * see it is not on offer.  Both of those call this.
+ */
+extern void sasl_advertise(void);
+
+/** Forget a client's exchange.  Called when the connection goes. */
+extern void sasl_client_exiting(struct Client* cptr);
+
+/** Non-zero while \a cptr is in the middle of a SASL exchange.
+ *
+ * Read by parse.c: a continuation of an exchange is charged bytes but not
+ * the flat per-command flood penalty, the same exemption a piece of an
+ * open batch gets and for the same reason.  Starting an exchange is
+ * charged in full, so the exemption has to be paid for first.
+ */
+extern int sasl_in_progress(struct Client* cptr);
+
+/** Apply a login that was held until the client finished registering.
+ *
+ * Called from register_user().  A client that authenticated before it was
+ * a user could not be given +r then, so only its nickname was taken; this
+ * grants the rest.
+ */
+extern void sasl_registered(struct Client* cptr);
 
 #endif /* INCLUDED_sasl_h */

@@ -114,6 +114,31 @@ int account_force_guest(struct Client* cptr, const char* reason)
   return account_rename(cptr, nick);
 }
 
+/** Take the nickname an account owns, without granting +r.
+ * @param[in,out] cptr Client.
+ * @param[in] nick The account.
+ * @return Non-zero if the client now has that nickname.
+ */
+int account_claim_nick(struct Client* cptr, const char* nick)
+{
+  struct Client* acptr;
+
+  assert(0 != cptr);
+  assert(MyConnect(cptr));
+
+  if (EmptyString(nick))
+    return 0;
+
+  if (0 == ircd_strcmp(cli_name(cptr), nick))
+    return 1;
+
+  acptr = FindClient(nick);
+  if (acptr && acptr != cptr)
+    return 0;
+
+  return account_rename(cptr, nick) != CPTR_KILLED;
+}
+
 /** Grant \a cptr the account \a nick, renaming it if it is not called that.
  * @param[in,out] cptr Client that authenticated.
  * @param[in] nick The account.

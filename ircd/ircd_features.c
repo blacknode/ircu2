@@ -430,6 +430,7 @@ static struct FeatureDesc {
   F_B(CAP_BATCH, 0, 1, 0),
   F_B(CAP_LABELEDRESPONSE, 0, 1, 0),
   F_B(CAP_MULTILINE, 0, 1, 0),
+  F_B(CAP_SASL, 0, 1, 0),
 
   /* Translations: the language a client gets when it asked for none.
    * Empty means the original text.  See doc/readme.translations. */

@@ -136,6 +136,7 @@ enum Feature {
   FEAT_CAP_BATCH,
   FEAT_CAP_LABELEDRESPONSE,
   FEAT_CAP_MULTILINE,
+  FEAT_CAP_SASL,
 
   /* Translations (see doc/readme.translations) */
   FEAT_DEFAULT_LANGUAGE,

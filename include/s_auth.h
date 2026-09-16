@@ -42,6 +42,17 @@ extern int auth_set_nick(struct AuthRequest *auth, const char *nickname);
 extern int auth_set_password(struct AuthRequest *auth, const char *password);
 extern int auth_cap_start(struct AuthRequest *auth);
 extern int auth_cap_done(struct AuthRequest *auth);
+
+/** Hold registration while a SASL credential is being checked.
+ *
+ * One more flag beside ident, DNS, CAP and the PING cookie; see
+ * ircd/m_authenticate.c and proposal 007 section 4.1.
+ */
+extern int auth_sasl_start(struct AuthRequest *auth);
+/** Release it, whatever the exchange decided. */
+extern int auth_sasl_done(struct AuthRequest *auth);
+/** Non-zero while a client is still waiting for a SASL answer. */
+extern int auth_sasl_pending(struct Client *cptr);
 extern int auth_spoof_user(struct AuthRequest *auth, const char *username, const char *hostname, const char *ip);
 extern void destroy_auth_request(struct AuthRequest *req);
 

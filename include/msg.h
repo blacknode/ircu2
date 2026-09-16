@@ -387,6 +387,14 @@ struct Client;
 #define TOK_CAP			"CAP"
 #define CMD_CAP			MSG_CAP, TOK_CAP
 
+/* AUTHENTICATE has no P10 token on purpose: it never crosses the link.
+ * Every server runs the identity module against the same store, so there
+ * is nothing to route.  See proposal 007 section 2.
+ */
+#define MSG_AUTHENTICATE	"AUTHENTICATE"
+#define TOK_AUTHENTICATE	"AUTHENTICATE"
+#define CMD_AUTHENTICATE	MSG_AUTHENTICATE, TOK_AUTHENTICATE
+
 #define MSG_XQUERY		"XQUERY"
 #define TOK_XQUERY		"XQ"
 #define CMD_XQUERY		MSG_XQUERY, TOK_XQUERY

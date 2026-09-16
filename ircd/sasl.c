@@ -155,6 +155,8 @@ int sasl_register(struct ModuleHandle* mod, const char* name,
   *m_p = m;
   sasl_num++;
 
+  sasl_advertise();
+
   return 1;
 }
 
@@ -185,6 +187,8 @@ int sasl_unregister(struct ModuleHandle* mod, const char* name)
     sasl_num--;
     MyFree(m);
 
+    sasl_advertise();
+
     return 1;
   }
 
@@ -212,6 +216,8 @@ void sasl_drop_module(struct ModuleHandle* mod)
     sasl_num--;
     MyFree(m);
   }
+
+  sasl_advertise();
 }
 
 /** Number of mechanisms \a mod currently has registered.

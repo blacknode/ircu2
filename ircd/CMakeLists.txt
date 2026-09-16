@@ -155,6 +155,7 @@ set(IRCU_SOURCES
   listener.c
   m_admin.c
   m_asll.c
+  m_authenticate.c
   m_away.c
   m_batch.c
   m_burst.c

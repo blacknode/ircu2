@@ -300,6 +300,20 @@ extern int account_guest_nick(char* buf, size_t len);
 extern int account_login(struct Client* cptr, const char* nick,
                          const char* email);
 
+/** Take the nickname an account owns, without granting +r.
+ *
+ * For a client that authenticated before it was registered: it is not a
+ * user yet, so it cannot carry a user mode, but it can have the right
+ * name -- which is what gets it introduced to the network as itself
+ * instead of being renamed a moment after it arrives.  account_login()
+ * grants the mode once registration is done.
+ *
+ * @param[in,out] cptr Client; must be local.
+ * @param[in] nick The account.
+ * @return Non-zero if the client now has that nickname.
+ */
+extern int account_claim_nick(struct Client* cptr, const char* nick);
+
 /** Log \a cptr out: clear +r and the address, and rename it to a guest.
  *
  * The rename is not a flourish.  Leaving the account nickname on a client

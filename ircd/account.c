@@ -32,6 +32,7 @@
 #include "ircd_log.h"
 #include "ircd_string.h"
 #include "random.h"
+#include "sasl.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <string.h>
@@ -260,6 +261,9 @@ int account_register_provider(struct ModuleHandle* mod,
   log_write(LS_SYSTEM, L_INFO, 0, "Identity provider %s registered",
             provider->ap_name);
 
+  /* SASL is only worth offering once somebody can answer for it. */
+  sasl_advertise();
+
   return 1;
 }
 
@@ -294,6 +298,8 @@ void account_unregister_provider(struct ModuleHandle* mod)
   }
 
   log_write(LS_SYSTEM, L_INFO, 0, "Identity provider %s withdrawn", name);
+
+  sasl_advertise();
 }
 
 /** Non-zero if a provider is registered and can be asked. */

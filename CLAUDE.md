@@ -136,6 +136,30 @@ accepts `IsMe(sptr)` so the core can grant what it is the authority for; no
 client is ever `&me` (the client path drops the prefix, and `m_mode.c` gates on
 `IsServer`/`IsServiceBot` first), so nothing off a socket reaches it.
 
+**SASL on the wire** (`ircd/m_authenticate.c`, proposal 007 §4.1). Where
+`sasl.c` (the exchange), `account.c` (the question) and `account_user.c` (the
+grant) meet, and the only place that holds all three. **AUTHENTICATE has no P10
+token on purpose** — every server runs the identity module against the same
+store, so there is nothing to route and no half-open session on the far side of
+a split; what travels is `+r`, which travelled already. The `sasl` capability's
+value is the mechanism list and it is **withdrawn when no provider is
+registered** (`sasl_advertise()`, called from both registers, `CAP NEW`/`CAP
+DEL` doing the announcing). The two ways in differ: a registered client is
+simply logged in, while one authenticating *during* registration cannot be —
+a client that is not a user yet cannot carry a user mode. So the nickname is
+taken immediately (`account_claim_nick()`, so it is introduced to the network
+as itself rather than renamed a moment later), the **900/903 are sent at once**
+(a client waits for 903 before sending `CAP END`, and `CAP END` is what lets
+registration finish — holding the numeric deadlocks both sides), and only the
+`+r` grant waits for `sasl_registered()` at the end of `register_user()`.
+`AR_SASL_PENDING` holds registration meanwhile, one more flag beside ident,
+DNS, CAP and the PING cookie. **A continuation of an exchange is charged bytes
+but not the flat per-command flood penalty** (`sasl_in_progress()` in
+`parse.c`), the same exemption multiline pieces get: a chunked credential would
+otherwise cost its length in chunks times two seconds before the client had
+finished connecting. Starting an exchange *is* charged in full, and
+`SASL_MAX_ATTEMPTS` caps how many times, so the exemption cannot be had free.
+
 **Identity, in progress** (proposal 007). Two pieces of core state are in
 place ahead of the protocol that will drive them. `cli_user()->email` is the
 address a client authenticated with: **local and only local** — it never

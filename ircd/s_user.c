@@ -54,6 +54,7 @@
 #include "parse.h"
 #include "querycmds.h"
 #include "random.h"
+#include "sasl.h"
 #include "s_auth.h"
 #include "s_bsd.h"
 #include "s_conf.h"
@@ -557,6 +558,14 @@ int register_user(struct Client *cptr, struct Client *sptr)
     if ((cli_snomask(sptr) != SNO_DEFAULT) && SendServNotice(sptr))
       send_reply(sptr, RPL_SNOMASK, cli_snomask(sptr), cli_snomask(sptr));
   }
+
+  /* A client that authenticated during registration could not be given
+   * +r then: it was not a user yet, and a user mode cannot be granted to
+   * something that is not one.  Its nickname was taken at the time, so
+   * this only hands over the mode and the address.
+   */
+  if (MyConnect(sptr))
+    sasl_registered(sptr);
 
   hook_notify(HOOK_CLIENT_REGISTERED, sptr, cptr, NULL, NULL);
 

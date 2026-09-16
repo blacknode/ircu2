@@ -51,6 +51,7 @@
 #include "parse.h"
 #include "querycmds.h"
 #include "res.h"
+#include "sasl.h"
 #include "s_auth.h"
 #include "s_bsd.h"
 #include "s_conf.h"
@@ -409,6 +410,8 @@ int exit_client(struct Client *cptr,
    * left for the answer to be about.
    */
   account_client_exiting(victim);
+  /* And the SASL exchange, which holds a password until it is wiped. */
+  sasl_client_exiting(victim);
 
   if (MyConnect(victim))
   {

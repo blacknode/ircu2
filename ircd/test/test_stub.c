@@ -76,3 +76,12 @@ void timer_del(struct Timer *timer)
 {
     (void) timer;
 }
+
+/* The SASL and account registers call back into the protocol side to
+ * recalculate what the "sasl" capability advertises -- the same shape as
+ * capab.c calling cap_new().  What that recalculation needs is a client
+ * list to announce to, which a unit test does not have.
+ */
+void sasl_advertise(void)
+{
+}

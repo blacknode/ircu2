@@ -50,6 +50,7 @@
 #include "s_debug.h"
 #include "s_misc.h"
 #include "s_numeric.h"
+#include "sasl.h"
 #include "s_user.h"
 #include "msg_tag.h"
 #include "send.h"
@@ -689,6 +690,13 @@ struct Message msgtab[] = {
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_cap, m_cap, m_ignore, m_cap, m_ignore }
   },
+  {
+    MSG_AUTHENTICATE,
+    TOK_AUTHENTICATE,
+    0, MAXPARA, MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_authenticate, m_authenticate, m_ignore, m_authenticate, m_ignore }
+  },
   /* This command is an alias for QUIT during the unregistered part of
    * of the server.  This is because someone jumping via a broken web
    * proxy will send a 'POST' as their first command - which we will
@@ -1318,8 +1326,15 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
      * throttled off the server for sending one message.  The bytes are
      * still charged, which is what actually bounds a client dumping data,
      * and multiline's own max-bytes bounds the total.
+     *
+     * A continuation of a SASL exchange is a piece of one authentication
+     * in exactly the same way: a credential arrives in four-hundred-byte
+     * chunks, and a long one would cost its length in chunks times two
+     * seconds before the client had even finished connecting.  Starting
+     * an exchange is charged in full, and there are only so many of those
+     * (SASL_MAX_ATTEMPTS), so the exemption cannot be had for free.
      */
-    if (multiline_in_progress(cptr))
+    if (multiline_in_progress(cptr) || sasl_in_progress(cptr))
       cli_since(cptr) += (i / 120 + tag_len / 512);
     else
       cli_since(cptr) += (2 + i / 120 + tag_len / 512);

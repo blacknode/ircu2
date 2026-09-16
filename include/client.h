@@ -61,6 +61,7 @@ struct Whowas;
 struct hostent;
 struct Privs;
 struct AuthRequest;
+struct SaslState;
 
 /*
  * Structures
@@ -285,6 +286,8 @@ struct Connection
   capset_t            con_capab;     /**< Client capabilities (from us) */
   capset_t            con_active;    /**< Active capabilities (to us) */
   struct AuthRequest* con_auth;      /**< Auth request for client */
+  struct SaslState*   con_sasl;      /**< SASL exchange in progress, or NULL;
+                                          ircd/m_authenticate.c owns it */
   const struct wline* con_wline;     /**< WebIRC authorization for client */
   char*               con_rexmit;    /**< TLS retransmission data */
   size_t              con_rexmit_len; /**, TLS retransmission length */
@@ -378,6 +381,8 @@ struct Client {
 #define cli_capab(cli)		con_capab(cli_connect(cli))
 /** Get active client capabilities for client */
 #define cli_active(cli)		con_active(cli_connect(cli))
+/** Get the SASL exchange in progress for the client, or NULL. */
+#define cli_sasl(cli)		con_sasl(cli_connect(cli))
 /** Get client name. */
 #define cli_name(cli)		((cli)->cli_name)
 /** Get client username (ident). */
@@ -537,6 +542,8 @@ struct Client {
 #define con_active(con)         (&(con)->con_active)
 /** Get the auth request for the connection. */
 #define con_auth(con)		((con)->con_auth)
+/** Get the SASL exchange in progress on the connection, or NULL. */
+#define con_sasl(con)		((con)->con_sasl)
 /** Get the WebIRC block (if any) used by the connection. */
 #define con_wline(con)          ((con)->con_wline)
 /** Get the WebSocket mode for the connection. */

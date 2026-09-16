@@ -138,3 +138,89 @@ msgstr "Muestra lo que la red sabe de un nick."
 #: modules/services/irc_services/svc_nickserv.c:64
 msgid "Nickname services"
 msgstr "Servicios de nicks"
+
+#: modules/services/irc_services/nick_policy.c:210
+#, no-c-format
+msgid "This nickname is registered.  Identify with /msg %s IDENTIFY <address> <password> within %d seconds, or you will be renamed."
+msgstr "Este nick está registrado.  Identifícate con /msg %s IDENTIFY <dirección> <contraseña> en %d segundos, o se te renombrará."
+
+#: modules/services/irc_services/nick_policy.c:233
+#, no-c-format
+msgid "That nickname is not registered; you are free to use it."
+msgstr "Ese nick no está registrado; puedes usarlo sin más."
+
+#: modules/services/irc_services/nick_policy.c:330
+#, no-c-format
+msgid "Nickname services are not available, so this nickname could not be checked."
+msgstr "Los servicios de nicks no están disponibles, así que no se ha podido comprobar este nick."
+
+#: modules/services/irc_services/nick_policy.c:404
+#, no-c-format
+msgid "You did not identify in time; you are being renamed."
+msgstr "No te has identificado a tiempo; se te está renombrando."
+
+#: modules/services/irc_services/svc_nickserv.c:60
+#, no-c-format
+msgid "Identify with the service on your own server."
+msgstr "Identifícate con el servicio de tu propio servidor."
+
+#: modules/services/irc_services/svc_nickserv.c:67
+#, no-c-format
+msgid "Do not send a password to a channel.  Change it."
+msgstr "No mandes una contraseña a un canal.  Cámbiala."
+
+#: modules/services/irc_services/svc_nickserv.c:92
+#, no-c-format
+msgid "Another login is already under way."
+msgstr "Ya hay otra identificación en curso."
+
+#: modules/services/irc_services/svc_nickserv.c:96
+#, no-c-format
+msgid "You have already authenticated."
+msgstr "Ya te has autenticado."
+
+#: modules/services/irc_services/svc_nickserv.c:100
+#, no-c-format
+msgid "Too many failed attempts on this connection."
+msgstr "Demasiados intentos fallidos en esta conexión."
+
+#: modules/services/irc_services/svc_nickserv.c:104
+#, no-c-format
+msgid "This server will not take a password over an unencrypted connection."
+msgstr "Este servidor no acepta contraseñas por una conexión sin cifrar."
+
+#: modules/services/irc_services/svc_nickserv.c:108
+#, no-c-format
+msgid "Nickname services are not available right now."
+msgstr "Los servicios de nicks no están disponibles ahora mismo."
+
+#: modules/services/irc_services/svc_nickserv.c:119
+#, no-c-format
+msgid "You are identified as %s."
+msgstr "Estás identificado como %s."
+
+#: modules/services/irc_services/svc_nickserv.c:121
+#, no-c-format
+msgid "You are not identified."
+msgstr "No estás identificado."
+
+#: modules/services/irc_services/svc_nickserv.c:124
+#, no-c-format
+msgid "This nickname is registered and you have not proved it is yours, so you cannot do anything else until you identify or are renamed."
+msgstr "Este nick está registrado y no has demostrado que sea tuyo, así que no puedes hacer nada más hasta que te identifiques o se te renombre."
+
+#: modules/services/irc_services/svc_nickserv.c:131
+msgid "IDENTIFY <address> <password> [<account>]"
+msgstr "IDENTIFY <dirección> <contraseña> [<cuenta>]"
+
+#: modules/services/irc_services/svc_nickserv.c:131
+msgid "Prove an account is yours."
+msgstr "Demuestra que una cuenta es tuya."
+
+#: modules/services/irc_services/svc_nickserv.c:133
+msgid "STATUS"
+msgstr "STATUS"
+
+#: modules/services/irc_services/svc_nickserv.c:133
+msgid "Say whether you are identified."
+msgstr "Dice si estás identificado."

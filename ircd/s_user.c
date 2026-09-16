@@ -1473,8 +1473,20 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
    * The account follows the flag: the nick in use when +r was granted,
    * nothing once it is taken away.
    */
-  if (!WasAccount(setflags) && IsAccount(acptr))
+  if (!WasAccount(setflags) && IsAccount(acptr)) {
     ircd_strncpy(cli_user(acptr)->account, cli_name(acptr), NICKLEN);
+
+    /* And the freeze goes with it.  +f means "carrying a registered nick
+     * this client has not proved is its own", and +r is exactly that
+     * proof, so the two cannot both be true; leaving the mode on would
+     * mean a client that had just identified could still do nothing.
+     * Done here rather than by whoever grants +r because there is no
+     * other way for the grant and the release to be the same event, and
+     * only a server or a +S bot reaches either.  See proposal 007
+     * section 6.
+     */
+    ClearFrozen(acptr);
+  }
   else if (WasAccount(setflags) && !IsAccount(acptr)) {
     cli_user(acptr)->account[0] = '\0';
     /* And the address with it: the two are one identification, and a

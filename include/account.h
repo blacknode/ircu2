@@ -401,6 +401,20 @@ extern int account_logout(struct Client* cptr);
  */
 extern int account_force_guest(struct Client* cptr, const char* reason);
 
+/** Rename every frozen local client to a guest name.
+ *
+ * The safeguard of proposal 007 section 6.  A frozen client is one whose
+ * nickname nobody has proved is its own, and the provider is what would
+ * have taken the proof; when it goes, nothing can ever lift the freeze.
+ * The answer is not to unfreeze them where they stand -- that would leave
+ * a possible impostor holding the name with nobody watching, which is
+ * exactly what section 7 forbids -- but to take the name away.
+ *
+ * Called from account_unregister_provider(), which is in the other half of
+ * the file and may not touch a client.
+ */
+extern void account_provider_gone(void);
+
 /** Forget everything about a client that is leaving. */
 extern void account_client_exiting(struct Client* cptr);
 

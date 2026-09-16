@@ -161,4 +161,27 @@ extern const char* svc_module_version(void);
 /** The module's translations, or NULL; what I18N_DOMAIN names. */
 extern struct I18nDomain* svc_i18n;
 
+/** This module's handle, for the calls that ask for one. */
+extern struct ModuleHandle* svc_module(void);
+
+/** The bot running the first service of \a type, or NULL.
+ *
+ * By type and not by nick: a module knows which service it implements, not
+ * what an operator decided to call it.
+ */
+extern struct Client* svc_bot_of_type(const char* type);
+
+/*
+ * nick_policy.c -- the grace period of proposal 007 sections 5 to 7.
+ */
+
+/** Register the hooks the policy runs on.  Zero on failure. */
+extern int nickpolicy_init(struct ModuleHandle* mod);
+
+/** Re-read the Service{} options.  Start-up and every rehash. */
+extern void nickpolicy_config(void);
+
+/** Drop every hold and question.  mi_fini only. */
+extern void nickpolicy_fini(void);
+
 #endif /* INCLUDED_services_h */

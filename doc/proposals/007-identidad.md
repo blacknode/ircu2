@@ -387,6 +387,10 @@ identidad desaparece —módulo descargado, sin driver—, nadie puede ya
 descongelar a nadie. El core **renombra a `guest-*`** a todos los congelados en
 lugar de descongelarlos donde están: descongelar sería dejar a un posible
 impostor con el nick y sin nadie mirando, que es justo lo que §7 prohíbe.
+Es `account_provider_gone()`, en `account_user.c`, llamada desde
+`account_unregister_provider()`; recorre los clientes locales en vez de
+mantener una lista, porque una lista que se lee una vez cada mucho es una
+lista que está mal el día que se lee.
 
 ---
 
@@ -550,13 +554,47 @@ una dirección no es algo que una contraseña equivocada pueda averiguar; por
 lo mismo «no existe esa dirección» y «la contraseña no es esa» son la misma
 respuesta.
 
-### 9.2 `nickserv` — la política y la voz
+### 9.2 `nickserv` — la política y la voz *(hecho en parte)*
 
-`modules/services/nickserv/`. Tiene el bot (`Service{}` + `bot_create()`),
-escucha `HOOK_CLIENT_REGISTERED` y `HOOK_CLIENT_NICK_CHANGED`, pregunta a
-`identity` de quién es el nick, y aplica el plazo: avisa, pone `+f`, arma un
-temporizador, y al vencer renombra a `guest-*`. Atiende `/msg NickServ` para
-registrar, identificarse, verificar el correo y cambiar la contraseña.
+**No es un módulo aparte, y esto corrige la revisión 2.** `irc_services` ya
+crea el bot que declara un `Service { type = "nickserv"; }`, ya tiene la
+tabla de comandos por tipo, ya lee el bloque y ya tiene su dominio de
+traducciones. Un `modules/services/nickserv/` separado no habría separado
+nada: habría sido un segundo módulo creando un bot para el mismo bloque, que
+es una colisión, no una capa. Así que la política va en
+`irc_services/nick_policy.c` y la voz en `irc_services/svc_nickserv.c`.
+
+Escucha `HOOK_CLIENT_REGISTERED` y `HOOK_CLIENT_NICK_CHANGED`, pregunta por
+`account_lookup()` de quién es el nick, y aplica el plazo: avisa, pone `+f`,
+arma un temporizador propio, y al vencer renombra a `guest-*`. Atiende
+`/msg NickServ IDENTIFY` y `STATUS`; registrar, verificar el correo y
+cambiar la contraseña llegan con la escritura.
+
+**`IDENTIFY` no consulta nada por su cuenta**: entrega la credencial a
+`sasl_login_request()`, que es por donde entran también las de
+`AUTHENTICATE` y `ACCOUNT LOGIN`. La pregunta es la misma y lo que se hace
+con la respuesta también, así que hay un solo camino de una credencial a
+una identidad y no tres que haya que mantener sincronizados. Si el usuario
+no dice a qué cuenta, y está congelado, se entiende el nick que lleva
+puesto: «identifícate a este nick» es justo para lo que está ahí.
+
+**El plazo lo levantan tres cosas y las tres están cubiertas.** La primera
+la hace el core solo: `do_user_mode()` quita `+f` en el mismo cambio de
+modo en que concede `+r`, porque `+r` es exactamente la prueba que `+f`
+dice que falta, y así vale para cualquier camino —SASL, `ACCOUNT`,
+`IDENTIFY`— sin que ninguno tenga que acordarse. El vencimiento y el cambio
+a un nick libre los hace `nick_policy.c`.
+
+**La retención es orientativa y el vencimiento es donde se comprueba.** Al
+vencer se mira si el cliente sigue congelado; identificarse con el nick que
+ya llevaba no produce ningún cambio de nick que avisar, así que no hay
+evento al que colgarse, y no hace falta: la condición se vuelve a mirar
+donde importa.
+
+**Con `+f` no se congela a nadie si no hay proveedor.** §7 habla de un
+servicio que ha fallado, no de una red que nunca tuvo cuentas: congelar a
+todo el mundo en un servidor que nunca iba a contestar sería leer «no
+existen cuentas» como «todos los nicks son de otro».
 
 **Su configuración va en el bloque `Service{}` que ya lo declara**, no en uno
 propio. Un `NickServ{}` aparte sería un segundo sitio donde se escribe lo mismo
@@ -660,8 +698,13 @@ Cada punto compila, pasa pruebas y se sube por separado.
    alta una cuenta, suspenderla, cambiar una contraseña— va con `nickserv`,
    que es su único llamante, y lleva los cerrojos de §9.1 consigo: una API
    de escritura sin nadie que la use sería API inventada a ciegas.
-8. **`modules/services/nickserv/`** — el bot, el plazo de gracia, y sus
-   opciones dentro del `Service{}` que ya lo declara.
+8. **El plazo de gracia** *(hecho)* — dentro de `irc_services`, no en un
+   módulo aparte: el bot de `Service { type = "nickserv"; }` ya lo crea
+   ese módulo, y dos módulos peleándose por el mismo bloque no es una
+   separación, es una colisión. La política vive en `nick_policy.c` y la
+   voz en `svc_nickserv.c`, con sus opciones dentro del `Service{}` que ya
+   lo declara. Falta la escritura: dar de alta una cuenta, suspenderla o
+   cambiar una contraseña, con los cerrojos de §9.1.
 9. **Documentación y pruebas** — `doc/readme.accounting` reescrito entero,
    `doc/readme.sasl`, y las de integración: que el email no cruza el enlace,
    que un congelado no puede hacer nada, que el `guest-*` ocurre en los cuatro

@@ -209,6 +209,36 @@ hash to check. Writing — registering an account, suspending one, changing a
 password — is not here: it arrives with `nickserv`, its only caller, and
 brings §9.1's advisory locks with it.
 
+**The grace period** (`modules/services/irc_services/nick_policy.c`,
+proposal 007 §§5–7). What happens to a local client using a registered
+nickname it has not proved is its own: NickServ warns it, sets `+f`, and
+renames it to `guest-*` when the grace period (`"grace_period"` in the
+`Service{}` block, 60s by default) runs out. It is a grace period and not a
+veto because the answer comes from a database and neither registration nor
+a nick change can be held waiting for one. **It lives inside
+`irc_services`, not in a module of its own** — that module already creates
+the bot the `Service { type = "nickserv"; }` block declares, and a second
+module creating a bot for the same block is a collision, not a layer.
+Three things lift a freeze, and the first is the core's: `do_user_mode()`
+clears `+f` in the same mode change that grants `+r`, so *every* path in
+(SASL, `ACCOUNT`, `/msg NickServ IDENTIFY`) lifts it without having to
+remember to. The other two are the deadline and a change to an
+unregistered nick. **The hold is advisory and the deadline is where it is
+checked**: identifying under the nickname already in use produces no nick
+change to hang an event on, so the condition is re-tested where it
+matters. **`ACCOUNT_NICK_UNKNOWN` is acted on, never ignored**: at
+registration the client comes in as `guest-*`, at a nick change it is put
+back under the name it had (which grants it nothing new) — but **none of
+this runs with no provider registered**, because §7 is about a service
+that failed, not a network without accounts. When the provider is unloaded
+with people still frozen, `account_provider_gone()` renames them all:
+unfreezing them in place would leave a possible impostor holding the name
+with nobody watching. `/msg NickServ IDENTIFY` hands its credential to
+`sasl_login_request()` like everything else, and defaults the account to
+the nickname in use when the client is frozen, since that is the one it is
+being asked to prove; `svc_dispatch()` wipes its copy of every line on
+every way out, so a command that carries a password cannot forget to.
+
 **Identity, in progress** (proposal 007). Two pieces of core state are in
 place ahead of the protocol that will drive them. `cli_user()->email` is the
 address a client authenticated with: **local and only local** — it never

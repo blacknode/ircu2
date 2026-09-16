@@ -25,7 +25,8 @@ endif()
 #
 # The keywords are the marking macros of include/ircd_i18n.h: _(to, s),
 # _n(to, s, p, n), N_(s), and N(sym, ctx, fmt) -- the s_err.c table, whose
-# numeric code is the msgctxt.  no-c-format keeps the tools from applying
+# numeric code is the msgctxt -- plus the two functions that translate a
+# literal for their caller, svc_reply() and nick_tell().  no-c-format keeps the tools from applying
 # the C printf check to formats that are ircd_snprintf's: the check that
 # matters is the loader's, at run time.
 # ---------------------------------------------------------------------------
@@ -35,10 +36,10 @@ if(IRCU_XGETTEXT)
   set(_xgettext_flags
     --language=C --from-code=UTF-8 --add-comments=TRANSLATORS
     --keyword=_:2 --keyword=_n:2,3 --keyword=N_ --keyword=N:2c,3
-    --keyword=svc_reply:2
+    --keyword=svc_reply:2 --keyword=nick_tell:2
     --flag=_:2:no-c-format --flag=_n:2:no-c-format --flag=_n:3:no-c-format
     --flag=N_:1:no-c-format --flag=N:3:no-c-format
-    --flag=svc_reply:2:no-c-format
+    --flag=svc_reply:2:no-c-format --flag=nick_tell:2:no-c-format
     --no-wrap --sort-by-file
     --package-name=ircu2 --msgid-bugs-address=coder-com@undernet.org)
 

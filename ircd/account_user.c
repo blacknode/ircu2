@@ -36,6 +36,7 @@
 #include "ircd_string.h"
 #include "msg.h"
 #include "numeric.h"
+#include "s_bsd.h"
 #include "s_debug.h"
 #include "s_misc.h"
 #include "s_user.h"
@@ -242,6 +243,55 @@ int account_logout(struct Client* cptr)
     return CPTR_KILLED;
 
   return 1;
+}
+
+/** Take @c +f off \a cptr on the server's own authority.
+ * @param[in,out] cptr Client to unfreeze.
+ */
+static void account_unfreeze_local(struct Client* cptr)
+{
+  char modebuf[8];
+  char* parv[4];
+
+  strcpy(modebuf, "-f");
+  parv[0] = cli_name(&me);
+  parv[1] = cli_name(cptr);
+  parv[2] = modebuf;
+  parv[3] = NULL;
+
+  set_user_mode_on(&me, &me, cptr, 3, parv);
+}
+
+/** Rename every frozen local client to a guest name.
+ *
+ * The safeguard of proposal 007 section 6; see account.h for why it is a
+ * rename and not an unfreeze.  Walks the local clients rather than keeping
+ * a list, because this runs when an identity module is unloaded and not
+ * otherwise, and a list maintained for an event that happens once a year
+ * is a list that is wrong when it is finally read.
+ */
+void account_provider_gone(void)
+{
+  int i;
+
+  for (i = 0; i <= HighestFd; i++) {
+    struct Client* acptr = LocalClientArray[i];
+
+    if (!acptr || !IsUser(acptr) || !IsFrozen(acptr))
+      continue;
+
+    log_write(LS_USER, L_INFO, 0,
+              "Renaming %s: the identity provider went away while it was "
+              "frozen", cli_name(acptr));
+
+    /* The mode goes first, so that the client can be renamed at all --
+     * and so that whatever is left of it is a plain unidentified client
+     * under a name nobody else has a claim to.
+     */
+    account_unfreeze_local(acptr);
+
+    account_force_guest(acptr, "Nickname services are no longer available");
+  }
 }
 
 /** Forget everything about a client that is leaving. */

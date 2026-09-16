@@ -93,6 +93,24 @@ static struct Timer svc_timer;
 /** Set while mi_fini runs, so a bot leaving is not brought back. */
 static int svc_unloading;
 
+struct ModuleHandle* svc_module(void)
+{
+  return svc_mod;
+}
+
+/** The bot running the first service of \a type, or NULL. */
+struct Client* svc_bot_of_type(const char* type)
+{
+  struct Service* sv;
+
+  for (sv = svc_list; sv; sv = sv->sv_next)
+    if (sv->sv_client && sv->sv_type
+        && 0 == ircd_strcmp(sv->sv_type->st_name, type))
+      return sv->sv_client;
+
+  return NULL;
+}
+
 const char* svc_module_version(void)
 {
   return module_version(svc_mod);
@@ -538,6 +556,7 @@ static enum HookResult svc_on_config(struct HookContext* ctx, void* user)
   (void) user;
 
   svc_reconcile();
+  nickpolicy_config();
 
   return HOOK_CONTINUE;
 }
@@ -559,7 +578,8 @@ static int svc_init(struct ModuleHandle* mod)
       || !module_add_hook(mod, HOOK_MESSAGE_RECEIVED, svc_on_message,
                           HOOK_PRIORITY_DEFAULT, NULL)
       || !module_add_hook(mod, HOOK_CONFIG_LOADED, svc_on_config,
-                          HOOK_PRIORITY_DEFAULT, NULL))
+                          HOOK_PRIORITY_DEFAULT, NULL)
+      || !nickpolicy_init(mod))
     return -1;
 
   /* Loaded from a Module{} block, this runs in the middle of the parse,
@@ -568,8 +588,10 @@ static int svc_init(struct ModuleHandle* mod)
    * come.  Loaded by an operator, the configuration is complete and the
    * server is up, and nothing else will call.
    */
-  if (module_loaded_by(mod))
+  if (module_loaded_by(mod)) {
     svc_reconcile();
+    nickpolicy_config();
+  }
 
   return 0;
 }
@@ -585,6 +607,8 @@ static void svc_fini(struct ModuleHandle* mod)
 
   while (svc_list)
     svc_remove(svc_list, "Services unloaded");
+
+  nickpolicy_fini();
 
   svc_mod = NULL;
   svc_i18n = NULL;

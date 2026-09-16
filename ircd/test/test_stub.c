@@ -85,3 +85,11 @@ void timer_del(struct Timer *timer)
 void sasl_advertise(void)
 {
 }
+
+/* Likewise the safeguard that renames every frozen client when the
+ * identity provider goes away: it lives in account_user.c, the half that
+ * dereferences clients, and account.c is tested without it.
+ */
+void account_provider_gone(void)
+{
+}

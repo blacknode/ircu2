@@ -41,6 +41,7 @@
 #include "ircd_chattr.h"
 #include "ircd_log.h"
 #include "ircd_snprintf.h"
+#include "ircd_sha256.h"   /* ircd_crypto_wipe() */
 #include "ircd_string.h"
 #include "s_user.h"
 
@@ -160,7 +161,7 @@ void svc_dispatch(struct Service* sv, struct Client* source,
   call.sc_argc = split_words(line, call.sc_argv, SVC_MAXARGS);
 
   if (call.sc_argc == 0)
-    return;
+    goto done;
 
   for (p = call.sc_argv[0]; *p; p++)
     *p = ToUpper(*p);
@@ -175,25 +176,33 @@ void svc_dispatch(struct Service* sv, struct Client* source,
     if (!notice && !chptr)
       svc_reply(&call, "Unknown command %s.  Type HELP for a list of "
                 "commands.", call.sc_argv[0]);
-    return;
+    goto done;
   }
 
   if (chptr && !(cmd->cmd_flags & SVC_CMD_FANTASY))
-    return;
+    goto done;
 
   if ((cmd->cmd_flags & SVC_CMD_OPER) && !IsOper(source)) {
     if (!notice)
       svc_reply(&call, "Permission denied: %s is for IRC operators.",
                 cmd->cmd_name);
-    return;
+    goto done;
   }
 
   if ((unsigned int) (call.sc_argc - 1) < cmd->cmd_min_args) {
     if (!notice)
       svc_reply(&call, "Not enough parameters.  Syntax: %s",
                 _(source, cmd->cmd_syntax));
-    return;
+    goto done;
   }
 
   cmd->cmd_run(&call);
+
+done:
+  /* Some of these lines carry a password -- IDENTIFY does -- and this is
+   * the copy this module made.  Every way out goes through here rather
+   * than a flag on the rows that need it, so that a command added later
+   * cannot forget.
+   */
+  ircd_crypto_wipe(line, sizeof(line));
 }

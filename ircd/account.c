@@ -339,6 +339,9 @@ void account_unregister_provider(struct ModuleHandle* mod)
 
   log_write(LS_SYSTEM, L_INFO, 0, "Identity provider %s withdrawn", name);
 
+  /* And nobody is left who could lift a freeze.  See account.h. */
+  account_provider_gone();
+
   sasl_advertise();
 }
 

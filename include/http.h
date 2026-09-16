@@ -16,29 +16,33 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 /** @file
- * @brief HTTP, as a thing a module provides and other modules use.
+ * @brief HTTP: served by the core, routed to whichever module asked.
  *
- * The same shape as db.h and cache.h, and for the same two reasons:
- * modules are @c RTLD_LOCAL and cannot resolve each other's symbols, so
- * the core has to be the meeting point between whoever serves HTTP and
- * whoever wants a route on it; and holding the requests in flight here is
- * what lets either module be unloaded with some outstanding.
+ * The server is Mongoose (ircd/mongoose/, ircd/http_server.c), running on
+ * a worker thread of its own; this header is what the rest of the tree
+ * sees of it.  A module claims a **route** and is handed requests that
+ * are already parsed, in the main thread, and never touches a socket.
  *
- * The core knows nothing about sockets, TLS, chunked encoding or
- * keep-alive.  It knows there is a **provider** that might not be there,
- * a set of **routes** modules have asked for, and a request that is a
- * method, a path, some headers and a body.  @c modules/workers/http/ is
- * the provider; it owns the listener and does the network work on its own
- * thread, handing the main thread only requests that are already parsed.
+ * The core serves it rather than a module, because HTTP is not a thing a
+ * server either has or has not: a listener is one of the server's own
+ * ports, it has to come up before any module is loaded and stay up
+ * across a rehash that unloads one, and its TLS is the server's TLS.
+ * What is pluggable is the routes, and those are what modules bring.
  *
  * @section http_degrade A consumer degrades, it does not guess
  *
- * A module that wants a route checks http_available() when it loads and
- * says so -- in the log and in @c /MODULE @c LIST -- if there is no
- * provider.  It does not fail to load and it does not wait for one: the
- * part of it that needed HTTP is switched off and the rest works.  That
- * is the same contract db.h has, and it is what keeps "the HTTP module is
- * not loaded" from being an outage.
+ * A module that wants a route checks http_available() -- is a port
+ * configured at all -- and says so, in the log and in @c /MODULE @c LIST,
+ * if there is not.  It does not fail to load: the part of it that needed
+ * HTTP is switched off and the rest works.  Ask from
+ * @c HOOK_CONFIG_LOADED rather than from @c mi_init, because @c mi_init
+ * runs in the middle of the parse and @c FEAT_HTTP_PORT may not have been
+ * read yet.
+ *
+ * Claiming a route before the listener is up is fine and expected.  The
+ * route is what the module owns; whether anybody is listening is the
+ * operator's business, and making load order matter would make it part of
+ * the configuration.
  *
  * @section http_async Answering later
  *
@@ -53,6 +57,12 @@
  * core's own.  One that passes is answered 504 and the handler's later
  * answer, if it ever comes, is dropped: a client holding a socket open
  * because a module forgot about it is the failure this exists to bound.
+ *
+ * @section http_threads Which thread is which
+ *
+ * The socket is the worker's and the routes are the main thread's, and
+ * neither reaches across.  Nothing in this header may be called from the
+ * worker; nothing a handler is given outlives the main thread's turn.
  */
 #ifndef INCLUDED_http_h
 #define INCLUDED_http_h
@@ -163,50 +173,70 @@ struct HttpResponse {
 typedef int (*HttpHandlerFn)(http_req_t id, const struct HttpRequest* req,
                              struct HttpResponse* res, void* user);
 
-/** What a provider offers the core. */
-struct HttpProvider {
-  /** Its name, for the log and for /MODULE LIST. */
-  const char* hp_name;
+/** How an answer reaches the socket.
+ *
+ * Core-internal: ircd/http_server.c is the one implementation and sets it
+ * when the listener comes up.  It is an interface rather than a direct
+ * call so that ircd/http.c -- the routes, the requests in flight and the
+ * deadline -- stays testable with no socket at all (@c http_t), the same
+ * split ircd/migration.c has from ircd/migration_run.c.  A module has no
+ * business here.
+ */
+struct HttpTransport {
+  /** Its name, for the log and for /STATS. */
+  const char* ht_name;
 
   /** Send an answer for a request the core dispatched.
-   * @param[in] id The request.
+   * @param[in] id The request, as http_dispatch() was given it.
    * @param[in] res What to send.  Valid only during the call.
    */
-  void (*hp_respond)(http_req_t id, const struct HttpResponse* res);
+  void (*ht_respond)(http_req_t id, const struct HttpResponse* res);
 
   /** Forget a request the core will never answer.
    *
-   * Called when the module owning its route is unloaded, so the provider
-   * can close or fail the connection rather than hold it open for an
-   * answer that is not coming.
+   * Called when the module owning its route is unloaded, so the
+   * connection is let go rather than held for an answer that is not
+   * coming.
    */
-  void (*hp_cancel)(http_req_t id);
+  void (*ht_cancel)(http_req_t id);
 };
 
 /*
- * The provider side.  One at a time, like the database driver.
+ * The server side.  ircd/http_server.c calls these; nothing else does.
  */
 
-/** Register the HTTP provider.
- * @param[in] mod The module offering it.
- * @param[in] provider Its calls.  Must outlive the registration.
- * @return Non-zero on success; zero if one is already registered.
+/** Install the transport.  One at a time.
+ * @param[in] transport Its calls.  Must outlive the installation.
+ * @return Non-zero on success.
  */
-extern int http_register_provider(struct ModuleHandle* mod,
-                                  const struct HttpProvider* provider);
+extern int http_set_transport(const struct HttpTransport* transport);
 
-/** Withdraw it.  Every request in flight is failed. */
-extern void http_unregister_provider(struct ModuleHandle* mod);
+/** Take it away.  Every request in flight is dropped. */
+extern void http_clear_transport(void);
 
-/** Non-zero when a provider is loaded. */
-extern int http_available(void);
+/** The transport's name, or NULL when nothing is listening. */
+extern const char* http_transport_name(void);
 
-/** The provider's name, or NULL. */
-extern const char* http_provider_name(void);
+/** Non-zero when the listener is up this instant.
+ *
+ * For @c /STATS and the log.  A consumer wants http_available() instead:
+ * whether the listener is momentarily down across a rehash is not a
+ * module's business.
+ */
+extern int http_listening(void);
 
 /*
  * The consumer side.
  */
+
+/** Non-zero when this server is configured to serve HTTP at all.
+ *
+ * That is @c FEAT_HTTP_PORT, not "the socket is open this instant": a
+ * consumer wants to know whether its route will ever be reached, and the
+ * listener coming and going across a rehash is not its business.  See
+ * @ref http_degrade for when to ask.
+ */
+extern int http_available(void);
 
 /** Claim a route.
  *
@@ -268,19 +298,19 @@ extern const char* http_request_header(const struct HttpRequest* req,
                                        const char* name);
 
 /*
- * The provider calls this; nothing else does.
+ * ircd/http_server.c calls this; nothing else does.
  */
 
 /** Hand a parsed request to whatever claimed its route.
  *
  * @param[in] req The request.
- * @param[in] pid What the provider wants to be called back with.  It is
- *   the provider's own identifier and the core passes it back
- *   unchanged, so the provider never has to keep a table of the core's.
- * @return Zero when the request was answered synchronously (the provider
- *   has already had hp_respond()), non-zero when an answer is coming
- *   later, and negative when nothing claimed the route -- in which case
- *   the provider sends its own 404 and the core holds nothing.
+ * @param[in] pid What the transport wants to be called back with -- the
+ *   connection, in its own terms.  The core passes it back unchanged, so
+ *   the transport never has to keep a table of the core's handles.
+ * @return Zero when the request was answered synchronously (ht_respond()
+ *   has already run), non-zero when an answer is coming later, and
+ *   negative when nothing claimed the route -- in which case the
+ *   transport sends its own 404 and the core holds nothing.
  */
 extern int http_dispatch(const struct HttpRequest* req, http_req_t pid);
 

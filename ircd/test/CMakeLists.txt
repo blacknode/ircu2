@@ -96,16 +96,6 @@ add_ircu_test(http_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
-# The other half of HTTP: the provider's parser and renderer, which are the
-# only part of a module reachable from a socket before anything has been
-# authenticated.  They are pure -- bytes in, bytes out -- so the module's
-# source is compiled straight into the test, the way every other test
-# compiles the ircd source it exercises.
-add_ircu_test(httpd_t
-  "${PROJECT_SOURCE_DIR}/modules/workers/http/http_parse.c")
-target_include_directories(httpd_t PRIVATE
-  "${PROJECT_SOURCE_DIR}/modules/workers/http")
-
 add_ircu_test(account_t
   "${IRCU_IRCD_DIR}/account.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"

@@ -133,6 +133,8 @@ enum Feature {
   FEAT_HTTP_PORT,
   FEAT_HTTP_BIND,
   FEAT_HTTP_MAX_CLIENTS,
+  FEAT_HTTP_TLS_CERT,
+  FEAT_HTTP_TLS_KEY,
 
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,

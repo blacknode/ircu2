@@ -748,24 +748,33 @@ main thread, and it answers with cache_complete() exactly once per call.
 HTTP
 ====
 
-Any module may claim a route; one module serves them.  See doc/readme.http
+The core serves the HTTP -- Mongoose, on a worker thread of its own -- and
+a module claims routes on it.  A module never sees a socket: it is handed
+a request that is already parsed, in the main thread.  See doc/readme.http
 for the whole of it, and include/http.h for the API.
 
-  if (!module_http_available()) {
-    log_write(LS_SYSTEM, L_WARNING, 0, "mymod: no HTTP provider; uploads off");
-    /* carry on: the rest of the module works */
-  } else {
+  static enum HookResult on_config(struct HookContext* ctx, void* user) {
+    if (!module_http_available()) {
+      log_write(LS_SYSTEM, L_WARNING, 0, "mymod: no HTTP_PORT; uploads off");
+      return HOOK_CONTINUE;         /* the rest of the module works */
+    }
     module_add_route(mod, "POST", "/upload", handle_upload, self);
+    return HOOK_CONTINUE;
   }
 
-A consumer degrades, it does not guess.  It does not fail to load, it does
-not wait for a provider, and it says in the log what it switched off.
-"The HTTP module is not loaded" must not be an outage.
+Ask from HOOK_CONFIG_LOADED and not from mi_init.  mi_init runs in the
+middle of the parse, where HTTP_PORT may not have been read yet, and a
+module that asks there gets "no" on a server that serves HTTP perfectly
+well.  That is the one mistake this API makes easy, and it is silent.
 
-A route may be claimed before any provider exists: the module that wants
-one loads first as often as not, and making that an error would make load
-order part of the configuration.  Routes are reverted when either module
-unloads.
+A consumer degrades, it does not guess.  It does not fail to load and it
+does not wait: it says in the log what it switched off, and the rest of it
+works.  "Nobody configured HTTP_PORT" must not be an outage.
+
+Claiming a route while nothing is listening is fine.  The route is what
+the module owns; whether the listener is up is the operator's business,
+and it comes and goes across a rehash.  Routes are reverted when the
+module unloads.
 
 A handler runs in the main thread and does not have to answer there.  It
 either fills in the response and returns non-zero, or keeps its
@@ -773,12 +782,6 @@ http_req_t, returns zero, and calls http_respond() when the answer
 arrives -- which is what authorising an upload against a database looks
 like.  There is a deadline either way (HTTP_TIMEOUT), and answering after
 it is ignored rather than fatal.
-
-To serve instead, register a struct HttpProvider with
-module_add_http_provider() and hand the core each request with
-http_dispatch().  One provider at a time.  modules/workers/http/ is the
-one in the tree: it owns the socket on a worker thread and the main
-thread never touches it.
 
 
 COMMAND HOOKS
@@ -1148,12 +1151,6 @@ THE EXAMPLES
                          service bots, for HOOK_CONFIG_LOADED, and for
                          a module that brings a client back when the
                          network takes it away (doc/readme.services)
-  workers/http/          the HTTP provider behind include/http.h; the
-                         reference for a module that owns a listening
-                         socket, and for one whose worker has a queue in
-                         both directions -- worker_post() going up, a
-                         mutex and a self-pipe coming back
-                         (doc/readme.http)
 
 All paths are under modules/.
 

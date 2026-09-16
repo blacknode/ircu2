@@ -109,6 +109,7 @@ set(IRCU_SOURCES
   bot.c
   cache.c
   http.c
+  http_server.c
   capab.c
   chan_modes.c
   channel.c
@@ -279,6 +280,37 @@ set(IRCU_SOURCES
 # backend.  See cmake/IrcuOptions.cmake and cmake/IrcuTLS.cmake.
 list(APPEND IRCU_SOURCES ${IRCU_ENGINE_SOURCES} ${IRCU_TLS_SOURCE})
 
+# ---------------------------------------------------------------------------
+# Mongoose, the HTTP server
+# ---------------------------------------------------------------------------
+# Upstream's amalgamation, compiled on its own so that its warnings are its
+# own and its definitions reach exactly the two files that need them:
+# itself, and ircd/http_server.c through the PUBLIC ones.  See
+# ircd/mongoose/README -- the copy in the tree is never edited.
+#
+# TLS: MG_TLS_OPENSSL when the ircd already links OpenSSL, so there is one
+# TLS library in the process and not two.  Otherwise Mongoose's own, which
+# is self-contained and TLS 1.3 only -- IRCU_TLS picks what the *IRC* ports
+# speak and can be gnutls, or none, and neither is a reason for the HTTP
+# port to have no TLS at all.
+if(IRCU_TLS STREQUAL "openssl")
+  set(IRCU_MG_TLS 2)            # MG_TLS_OPENSSL
+else()
+  set(IRCU_MG_TLS 3)            # MG_TLS_BUILTIN
+endif()
+
+add_library(ircu_mongoose STATIC mongoose/mongoose.c)
+target_include_directories(ircu_mongoose PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(ircu_mongoose PUBLIC
+  MG_TLS=${IRCU_MG_TLS}
+  # The worker thread may not touch the core's log, and Mongoose's own
+  # writes to stdout.  Failures are reported through the task it posts.
+  MG_ENABLE_LOG=0
+  # Nothing here serves a directory; a listing is a thing to opt into.
+  MG_ENABLE_DIRLIST=0)
+target_link_libraries(ircu_mongoose PRIVATE ircu::tls)
+set_target_properties(ircu_mongoose PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_executable(ircd
   ${IRCU_SOURCES}
   ${BISON_IrcdParser_OUTPUTS}
@@ -292,7 +324,7 @@ target_include_directories(ircd PRIVATE
   "${PROJECT_SOURCE_DIR}/include"        # a patchlist.h written by ircd-patch
   "${IRCU_PATCHLIST_DIR}")               # ... otherwise an empty one
 target_link_libraries(ircd PRIVATE
-  ircu_config ircu::tls ${IRCU_SYSTEM_LIBRARIES} ${CMAKE_DL_LIBS})
+  ircu_config ircu_mongoose ircu::tls ${IRCU_SYSTEM_LIBRARIES} ${CMAKE_DL_LIBS})
 
 # Modules resolve the core's symbols against the executable itself, so the
 # ircd has to carry a dynamic symbol table (-rdynamic).  See doc/readme.modules.

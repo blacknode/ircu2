@@ -38,6 +38,7 @@
 #include "gline.h"
 #include "hash.h"
 #include "hooks.h"
+#include "http_server.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
@@ -1491,6 +1492,13 @@ int rehash(struct Client *cptr, int sig)
 
   attach_conf_uworld(&me);
   webirc_remove_stale();
+
+  /* The HTTP listener follows the features, and this is the first moment
+   * they are final.  Before the hook, so that a module reconciling its
+   * routes there sees the same answer from http_available() that it will
+   * see from then on.
+   */
+  http_server_reconfigure();
 
   /* Last, with the file read in full and the modules it no longer names
    * gone: a module that keeps state derived from the configuration -- the

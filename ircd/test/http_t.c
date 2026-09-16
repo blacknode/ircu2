@@ -19,9 +19,14 @@
 
 /* --- stubs ---------------------------------------------------------- */
 
+/** What FEAT_HTTP_PORT answers, so http_available() can be steered. */
+int test_http_port;
+
 int feature_int(enum Feature feat)
 {
-  (void) feat;
+  if (feat == FEAT_HTTP_PORT)
+    return test_http_port;
+
   return 0;
 }
 
@@ -32,7 +37,6 @@ const char* feature_str(enum Feature feat)
 }
 
 /* Module handles; the register only ever compares these pointers. */
-static struct ModuleHandle* const MOD_PROVIDER = (struct ModuleHandle*) 0x1;
 static struct ModuleHandle* const MOD_A = (struct ModuleHandle*) 0x2;
 static struct ModuleHandle* const MOD_B = (struct ModuleHandle*) 0x3;
 
@@ -72,7 +76,7 @@ static void fake_cancel(http_req_t id)
   prov_last_pid = id;
 }
 
-static const struct HttpProvider fake_provider = {
+static const struct HttpTransport fake_transport = {
   "fake", fake_respond, fake_cancel
 };
 
@@ -137,57 +141,69 @@ static struct HttpRequest make_req(const char* method, const char* path,
 /* --- tests ------------------------------------------------------------ */
 
 /** With no provider a consumer gets nothing, and that is not an error. */
-static void test_no_provider(void)
+static void test_no_transport(void)
 {
   struct HttpRequest req = make_req("GET", "/health", 0, 0, 0);
 
   http_shutdown();
   prov_reset();
 
+  /* http_available() is the *feature*, not the socket: a consumer is
+   * asking whether its route will ever be reached, and a listener that is
+   * momentarily down between a rehash and the next poll is not something
+   * a module should have to see. */
+  test_http_port = 0;
   assert(http_available() == 0);
-  assert(http_provider_name() == 0);
 
-  /* A route may be claimed before a provider exists: the module that
+  test_http_port = 8080;
+  assert(http_available() == 1);
+
+  assert(http_transport_name() == 0);
+  assert(http_listening() == 0);
+
+  /* A route may be claimed before anything is listening: the module that
    * wants it loads first as often as not, and making that an error would
    * make load order part of the configuration. */
   assert(http_add_route(MOD_A, "GET", "/health", handler_now, 0) == 1);
   assert(http_route_count(MOD_A) == 1);
 
   /* But nothing can be dispatched, and http_dispatch() says so without
-   * touching anything. */
+   * running the handler: an answer that cannot be sent is worse than no
+   * answer, because the handler may have done something. */
   assert(http_dispatch(&req, 7) < 0);
   assert(http_pending() == 0);
+  assert(prov_responses == 0);
 
-  printf("  no provider: a route waits, a request is refused\n");
+  printf("  no transport: a route waits, a request is refused\n");
 }
 
-/** One provider at a time. */
-static void test_one_provider(void)
+/** One transport at a time. */
+static void test_one_transport(void)
 {
-  static const struct HttpProvider other = { "other", fake_respond,
-                                             fake_cancel };
+  static const struct HttpTransport other = { "other", fake_respond,
+                                              fake_cancel };
 
   http_shutdown();
 
-  assert(http_register_provider(MOD_PROVIDER, &fake_provider) == 1);
-  assert(http_available() == 1);
-  assert(!strcmp(http_provider_name(), "fake"));
+  assert(http_set_transport(&fake_transport) == 1);
+  assert(http_listening() == 1);
+  assert(!strcmp(http_transport_name(), "fake"));
 
   /* A second is refused rather than replacing the first: two things
    * owning the same socket is not a state to arrive at silently. */
-  assert(http_register_provider(MOD_B, &other) == 0);
-  assert(!strcmp(http_provider_name(), "fake"));
+  assert(http_set_transport(&other) == 0);
+  assert(!strcmp(http_transport_name(), "fake"));
 
-  /* And one that is missing half its calls is not a provider. */
+  /* And one that is missing half its calls is not a transport. */
   {
-    static const struct HttpProvider broken = { "broken", 0, 0 };
+    static const struct HttpTransport broken = { "broken", 0, 0 };
 
-    http_unregister_provider(MOD_PROVIDER);
-    assert(http_register_provider(MOD_B, &broken) == 0);
-    assert(http_available() == 0);
+    http_clear_transport();
+    assert(http_set_transport(&broken) == 0);
+    assert(http_listening() == 0);
   }
 
-  printf("  one provider at a time, and it has to be whole\n");
+  printf("  one transport at a time, and it has to be whole\n");
 }
 
 /** A handler that answers on the spot. */
@@ -203,7 +219,7 @@ static void test_synchronous(void)
   ircd_strncpy(headers[0].hh_name, "X-Thing", sizeof(headers[0].hh_name) - 1);
   ircd_strncpy(headers[0].hh_value, "yes", sizeof(headers[0].hh_value) - 1);
 
-  http_register_provider(MOD_PROVIDER, &fake_provider);
+  http_set_transport(&fake_transport);
   assert(http_add_route(MOD_A, "POST", "/upload",
                         handler_now, (void*) 0x55) == 1);
 
@@ -243,7 +259,7 @@ static void test_asynchronous(void)
   handler_calls = 0;
   handler_last_id = 0;
 
-  http_register_provider(MOD_PROVIDER, &fake_provider);
+  http_set_transport(&fake_transport);
   http_add_route(MOD_A, "GET", "/slow", handler_later, 0);
 
   assert(http_dispatch(&req, 99) == 1);
@@ -285,7 +301,7 @@ static void test_deadline(void)
 
   CurrentTime = 1000;
 
-  http_register_provider(MOD_PROVIDER, &fake_provider);
+  http_set_transport(&fake_transport);
   http_add_route(MOD_A, "GET", "/slow", handler_later, 0);
 
   assert(http_dispatch(&req, 5) == 1);
@@ -313,7 +329,7 @@ static void test_routing(void)
   prov_reset();
   handler_calls = 0;
 
-  http_register_provider(MOD_PROVIDER, &fake_provider);
+  http_set_transport(&fake_transport);
 
   assert(http_add_route(MOD_A, "GET", "/files/", handler_now, 0) == 1);
   assert(http_add_route(MOD_A, "GET", "/files/thumb/", handler_now, 0) == 1);
@@ -361,7 +377,7 @@ static void test_unload(void)
   http_shutdown();
   prov_reset();
 
-  http_register_provider(MOD_PROVIDER, &fake_provider);
+  http_set_transport(&fake_transport);
   http_add_route(MOD_A, "GET", "/slow", handler_later, 0);
   http_add_route(MOD_B, "GET", "/other", handler_now, 0);
 
@@ -369,7 +385,7 @@ static void test_unload(void)
   assert(http_pending() == 1);
 
   /* The consumer goes: its routes go, and the request it will never
-   * answer is given back to the provider rather than held to the
+   * answer is given back to the transport rather than held to the
    * deadline. */
   http_drop_module(MOD_A);
 
@@ -379,22 +395,23 @@ static void test_unload(void)
   assert(prov_cancels == 1);
   assert(prov_last_pid == 11);
 
-  /* The provider goes: everything in flight goes with it, silently,
-   * because there is nobody left to answer through. */
+  /* The listener goes -- HTTP_PORT set to 0, or the server shutting
+   * down: everything in flight goes with it, silently, because there is
+   * nobody left to answer through. */
   prov_reset();
   http_add_route(MOD_A, "GET", "/slow", handler_later, 0);
   assert(http_dispatch(&req, 12) == 1);
   assert(http_pending() == 1);
 
-  http_drop_module(MOD_PROVIDER);
+  http_clear_transport();
 
-  assert(http_available() == 0);
+  assert(http_listening() == 0);
   assert(http_pending() == 0);
   assert(prov_responses == 0);
   assert(prov_cancels == 0);
 
-  /* The consumer's routes are still there, waiting for another
-   * provider. */
+  /* The consumer's routes are still there, waiting for the listener to
+   * come back. */
   assert(http_route_count(MOD_A) == 1);
 
   printf("  unloading takes the routes, and the requests with them\n");
@@ -459,8 +476,8 @@ int main(void)
 {
   printf("http_t:\n");
 
-  test_no_provider();
-  test_one_provider();
+  test_no_transport();
+  test_one_transport();
   test_synchronous();
   test_asynchronous();
   test_deadline();

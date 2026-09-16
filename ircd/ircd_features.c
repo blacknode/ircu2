@@ -445,6 +445,12 @@ static struct FeatureDesc {
   F_I(HTTP_PORT, FEAT_OPER, 0, 0),
   F_S(HTTP_BIND, FEAT_OPER | FEAT_NULL, 0, 0),
   F_I(HTTP_MAX_CLIENTS, FEAT_OPER, 64, 0),
+  /* TLS for the HTTP listener, which is Mongoose's and not the ircd's:
+   * IRCU_TLS picks the backend the *IRC* ports use and can be gnutls or
+   * none, so the HTTP side reads its own PEM files.  Both set, or
+   * neither; one alone is not half of a configuration. */
+  F_S(HTTP_TLS_CERT, FEAT_OPER | FEAT_NULL, 0, 0),
+  F_S(HTTP_TLS_KEY, FEAT_OPER | FEAT_NULL, 0, 0),
 
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),

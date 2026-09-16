@@ -501,55 +501,71 @@ driver: one dedicated worker per pooled connection, always `PQsendPrepare` +
 `PQsendQueryPrepared` (never `PQexec`), with a hard deadline capped at
 `DB_TIMEOUT_MAX_MS` (5s) enforced by `poll()` rather than by libpq.
 
-**HTTP** (`include/http.h`, `ircd/http.c`, `doc/readme.http`, proposal 006
-§7.4). The `db.h` arrangement a third time: the core holds the register,
-one module is the *provider* (it owns the listener, the parsing and its
-own TLS, and does the network work on its own thread), and other modules
-claim **routes** on it. A consumer **degrades, it does not guess** — it
-checks `http_available()` at load, says so in the log, and switches that
-part of itself off; a route may be claimed before any provider exists,
-because making load order matter would make it part of the configuration.
-Routing is exact match, or a path ending in `/` matching everything under
-it, longest prefix winning — deliberately the whole language, since a
-pattern syntax is something every consumer would have to learn and every
-provider agree about. A handler runs in the main thread and **does not
-have to answer there**: it keeps the `http_req_t` and calls
-`http_respond()` later, under a deadline (`FEAT_HTTP_TIMEOUT`) that
-answers 504 for it; answering after that is ignored, not fatal.
-`HTTP_BODY_MAX` bounds what crosses into the event loop, not what HTTP can
-transfer — a big upload is the provider's to stream. Unloading a consumer
-hands its in-flight requests back with `hp_cancel()`; unloading the
-provider drops them silently, and the routes wait for another. `http_t`
-covers all of it without a socket.
+**HTTP** (`include/http.h`, `ircd/http.c`, `ircd/http_server.c`,
+`ircd/mongoose/`, `doc/readme.http`, proposal 006 §7.4). **The core serves
+it and modules claim routes on it** — not the `db.h` arrangement, because
+HTTP is not a thing a server either has or has not: a listener is one of
+the server's own ports, it has to come up before any module loads and stay
+up across a rehash that unloads one, and its TLS is configuration. What is
+pluggable is the routes. The server is **Mongoose**, vendored in
+`ircd/mongoose/` as upstream's amalgamation and **never edited** — a local
+patch would give away the only reason to use somebody else's twenty
+years of fuzzing on HTTP framing, and it is what brought chunked bodies,
+TLS, and WebSockets and SSE for when they are wanted. It is GPL-2.0-only,
+so an ircd built with it is GPL-2.0 rather than "2 or later".
+`ircd/http_server.c` is the only file that knows Mongoose exists;
+`ircd/http.c` is the routes, the requests in flight and the deadline, with
+**one indirection left** (`struct HttpTransport`, core-internal) purely so
+that all of it stays testable with no socket — `http_t`, the split
+`migration.c` has from `migration_run.c`.
 
-**The HTTP provider** (`modules/workers/http/`, proposal 006 §7.4). The
-listener, on a thread of its own, and nothing else: it serves no route and
-knows nothing about what any of them are for. `FEAT_HTTP_PORT` is **0 by
-default and at 0 nothing listens** — a server does not open a second port
-because a module was loaded — and the thread is started from
-`HOOK_CONFIG_LOADED`, not `mi_init`, because `mi_init` runs mid-parse with
-the features not final; a rehash that changes the port, the address or
-`FEAT_HTTP_MAX_CLIENTS` restarts it and one that changes none of them does
-not, since restarting a listener drops every connection on it. The socket
-is the worker's and the routes are the main thread's: a request goes up
-through `worker_post()` and an answer comes back down the module's own
-queue — a mutex, a list and a self-pipe, because the worker is asleep in
-`poll()` and a condition variable would be no use to it. Both directions
-carry one `struct HttpXfer` of **bytes**, with the connection named by an
-`http_req_t` rather than by its address. The parser refuses rather than
-guesses: chunked (501), a folded header (400), a version it does not
-implement (505), `..`, `%2F` or `%00` in a path (400) — an encoded
-separator would turn what the client wrote as data into a separator and
-reach a prefix route it is not under. **What a client pipelined stays in
-the buffer** and is parsed once the request in hand has been answered,
-because promising keep-alive and then dropping the next request is worse
-than not keeping the connection; nothing is unbounded about it, the buffer
-being one head and one body. A response header whose name or value holds
-a newline is dropped and the response still sent, a newline there being
-how one response becomes two. There is **no TLS in it yet**. `httpd_t`
-covers the parser and the renderer — pure, and the whole of what a
-stranger on a socket reaches before anything is authenticated; the
-`poll()` loop is not unit-tested, for the reason `migration_run.c` is not.
+Routing is exact match, or a path ending in `/` matching everything under
+it, longest prefix winning — deliberately the whole language. A handler
+runs in the main thread and **does not have to answer there**: it keeps
+the `http_req_t` and calls `http_respond()` later, under
+`FEAT_HTTP_TIMEOUT`, which answers 504 for it; answering after that is
+ignored, not fatal. `HTTP_BODY_MAX` bounds what crosses into the event
+loop, not what HTTP can transfer.
+
+**`http_available()` is `FEAT_HTTP_PORT`, not the socket** — a consumer is
+asking whether its route will ever be reached, and a listener that is down
+for the length of a rehash is not a module's business. **Ask it from
+`HOOK_CONFIG_LOADED`, never from `mi_init`**, which runs mid-parse where
+the features are not final; that is the one mistake this API makes easy
+and it is silent. Claiming a route while nothing is listening is fine and
+expected.
+
+**The listener follows the configuration.** `FEAT_HTTP_PORT` is 0 by
+default and at 0 nothing listens; `http_server_reconfigure()` runs once
+the file has been read in full (`ircd.c` at start-up, `s_conf.c` after
+each rehash, both *before* `HOOK_CONFIG_LOADED` so a module sees the same
+answer it will keep), and a rehash that changed none of port, bind,
+`FEAT_HTTP_MAX_CLIENTS`, `FEAT_HTTP_TLS_CERT` or `FEAT_HTTP_TLS_KEY` does
+nothing, because restarting a listener drops every connection on it. TLS
+here is **Mongoose's, not the ircd's** — `IRCU_TLS` picks what the *IRC*
+ports speak and can be gnutls or none — so it reads its own PEM files; the
+build gives Mongoose OpenSSL when the ircd already links it and Mongoose's
+own otherwise — which is **TLS 1.3 and ECDSA only**, so the same PEM files
+that work on an `openssl` build are refused at the handshake on a `gnutls`
+or `none` one, and from the client that looks like the connection being
+dropped.
+
+**The socket is the worker's and the routes are the main thread's.** A
+request goes up through `worker_post()`; an answer comes back down through
+`mg_wakeup()`, which Mongoose documents as safe from any thread — so there
+is no queue and no self-pipe here, the library already has one. What
+crosses is a struct of **bytes** and a connection id, never a pointer.
+Mongoose's own logging is compiled out (`MG_ENABLE_LOG=0`) because a
+worker may not touch the core's log; a failed listen comes back as the
+task the worker posts. **The order in `http_server_stop()` is the whole of
+the thread safety**: clear the transport (so no further `mg_wakeup()` can
+be issued), then `worker_stop()`, which joins the thread, which frees the
+manager last.
+
+**What Mongoose does not decide is what a path means**, and that is
+`http_server.c`'s: `..`, `%2F`, `%5C`, `%00` or a control byte is 400,
+because the path is handed to modules and one of them will open a file.
+The path a handler gets is decoded; the query string is not.
 
 **`server_die()` stops the threads before it closes the descriptors.**
 `close_connections()` closes every descriptor there is, by number, without

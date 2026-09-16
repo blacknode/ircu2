@@ -996,26 +996,7 @@ cache_id_t module_cache_del(struct ModuleHandle *mod, const char *key,
   return cache_del(mod, key, fn, user);
 }
 
-/** Register this module as the HTTP provider.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] provider Static description; must outlive the module.
- * @return Non-zero on success.
- */
-int module_add_http_provider(struct ModuleHandle *mod,
-                             const struct HttpProvider *provider) {
-  assert(0 != mod);
-  return http_register_provider(mod, provider);
-}
-
-/** Withdraw this module's HTTP provider.
- * @param[in] mod Handle passed to mi_init.
- */
-void module_del_http_provider(struct ModuleHandle *mod) {
-  assert(0 != mod);
-  http_unregister_provider(mod);
-}
-
-/** Non-zero when some module is serving HTTP. */
+/** Non-zero when this server is configured to serve HTTP. */
 int module_http_available(void) {
   return http_available();
 }

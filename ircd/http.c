@@ -18,8 +18,11 @@
 /** @file
  * @brief The register between whoever serves HTTP and whoever wants a route.
  *
- * See include/http.h.  There is no socket in this file and no parsing:
- * one provider, a list of routes, and the requests waiting for an answer.
+ * See include/http.h.  There is no socket in this file and no parsing --
+ * those are ircd/http_server.c's, and Mongoose's under it.  What is here
+ * is a list of routes, the requests waiting for an answer, the deadline
+ * that bounds them, and one indirection to the transport so that all of
+ * it can be tested without a socket (http_t).
  */
 #include "config.h"
 
@@ -51,17 +54,15 @@ struct HttpRoute {
 struct HttpCall {
   struct HttpCall*     hc_next;   /**< Next, in no order. */
   http_req_t           hc_id;     /**< The core's handle. */
-  http_req_t           hc_pid;    /**< The provider's, passed back. */
+  http_req_t           hc_pid;    /**< The transport's, passed back. */
   struct ModuleHandle* hc_mod;    /**< Whose route it went to. */
   time_t               hc_deadline; /**< When it gives up. */
   struct HttpResponse  hc_res;    /**< Being filled in. */
   char                 hc_body[HTTP_BODY_MAX + 1]; /**< Its storage. */
 };
 
-/** The provider, or NULL. */
-static const struct HttpProvider* http_provider;
-/** The module that registered it. */
-static struct ModuleHandle* http_provider_owner;
+/** The transport, or NULL when nothing is listening. */
+static const struct HttpTransport* http_transport;
 
 /** Every route, newest first. */
 static struct HttpRoute* http_routes;
@@ -150,28 +151,23 @@ const char* http_request_header(const struct HttpRequest* req,
 }
 
 /* ------------------------------------------------------------------- *
- * The provider                                                        *
+ * The transport                                                       *
  * ------------------------------------------------------------------- */
 
-int http_register_provider(struct ModuleHandle* mod,
-                           const struct HttpProvider* provider)
+int http_set_transport(const struct HttpTransport* transport)
 {
-  if (!provider || !provider->hp_name || !provider->hp_respond
-      || !provider->hp_cancel)
+  if (!transport || !transport->ht_name || !transport->ht_respond
+      || !transport->ht_cancel)
     return 0;
 
-  if (http_provider) {
+  if (http_transport) {
     log_write(LS_SYSTEM, L_ERROR, 0,
-              "http: %s cannot register: %s is already the provider",
-              provider->hp_name, http_provider->hp_name);
+              "http: %s cannot take over: %s is already the transport",
+              transport->ht_name, http_transport->ht_name);
     return 0;
   }
 
-  http_provider = provider;
-  http_provider_owner = mod;
-
-  log_write(LS_SYSTEM, L_INFO, 0, "HTTP provider %s registered",
-            provider->hp_name);
+  http_transport = transport;
 
   return 1;
 }
@@ -182,35 +178,31 @@ int http_register_provider(struct ModuleHandle* mod,
  */
 static void http_finish(struct HttpCall* call, int status)
 {
-  if (status && http_provider) {
+  if (status && http_transport) {
     struct HttpResponse res;
 
     memset(&res, 0, sizeof(res));
     res.hres_status = status;
     ircd_strncpy(res.hres_type, "text/plain", sizeof(res.hres_type) - 1);
 
-    (http_provider->hp_respond)(call->hc_pid, &res);
-  } else if (!status && http_provider) {
-    (http_provider->hp_cancel)(call->hc_pid);
+    (http_transport->ht_respond)(call->hc_pid, &res);
+  } else if (!status && http_transport) {
+    (http_transport->ht_cancel)(call->hc_pid);
   }
 
   MyFree(call);
   http_call_count--;
 }
 
-void http_unregister_provider(struct ModuleHandle* mod)
+void http_clear_transport(void)
 {
-  if (!http_provider || http_provider_owner != mod)
+  if (!http_transport)
     return;
 
-  log_write(LS_SYSTEM, L_INFO, 0, "HTTP provider %s withdrawn",
-            http_provider->hp_name);
-
-  /* The provider is going, so there is nobody to answer through: the
+  /* The transport is going, so there is nobody to answer through: the
    * calls are dropped without a word rather than answered into a socket
    * that no longer has an owner. */
-  http_provider = NULL;
-  http_provider_owner = NULL;
+  http_transport = NULL;
 
   while (http_calls) {
     struct HttpCall* call = http_calls;
@@ -221,14 +213,24 @@ void http_unregister_provider(struct ModuleHandle* mod)
   }
 }
 
-int http_available(void)
+int http_listening(void)
 {
-  return http_provider != NULL;
+  return http_transport != NULL;
 }
 
-const char* http_provider_name(void)
+const char* http_transport_name(void)
 {
-  return http_provider ? http_provider->hp_name : 0;
+  return http_transport ? http_transport->ht_name : 0;
+}
+
+int http_available(void)
+{
+  /* The feature, not the socket.  A consumer is asking whether its route
+   * will ever be reached; a listener that is momentarily down between a
+   * rehash and the next poll is not something a module should see, and
+   * answering from the socket would make module load order decide what a
+   * module does. */
+  return feature_int(FEAT_HTTP_PORT) != 0;
 }
 
 /* ------------------------------------------------------------------- *
@@ -476,13 +478,16 @@ int http_dispatch(const struct HttpRequest* req, http_req_t pid)
 
   assert(0 != req);
 
-  if (!http_provider)
+  /* Only the transport calls this, so in the running server there always
+   * is one; the guard is what makes the file testable on its own and what
+   * stops a handler running for an answer that could not be sent. */
+  if (!http_transport)
     return -1;
 
   route = http_route_find(req->hreq_method ? req->hreq_method : "",
                           req->hreq_path ? req->hreq_path : "");
 
-  /* Nothing claimed it, so the core never owned it: the provider sends
+  /* Nothing claimed it, so the core never owned it: the transport sends
    * its own 404 and there is nothing here to clean up. */
   if (!route)
     return -1;
@@ -511,7 +516,8 @@ int http_dispatch(const struct HttpRequest* req, http_req_t pid)
      * returned non-zero; then the call is already gone and there is
      * nothing to send twice. */
     if (mine) {
-      (http_provider->hp_respond)(mine->hc_pid, &mine->hc_res);
+      if (http_transport)
+        (http_transport->ht_respond)(mine->hc_pid, &mine->hc_res);
       MyFree(mine);
       http_call_count--;
     }
@@ -534,9 +540,9 @@ void http_respond(http_req_t id, const struct HttpResponse* res)
   if (!call)
     return;
 
-  if (http_provider)
-    (http_provider->hp_respond)(call->hc_pid,
-                                res ? res : &call->hc_res);
+  if (http_transport)
+    (http_transport->ht_respond)(call->hc_pid,
+                                 res ? res : &call->hc_res);
 
   MyFree(call);
   http_call_count--;
@@ -551,11 +557,6 @@ void http_drop_module(struct ModuleHandle* mod)
   struct HttpRoute** rp;
   struct HttpCall** cp;
 
-  /* If it was the provider, that goes first and takes every call with
-   * it; what is left after that is only its own routes. */
-  if (http_provider_owner == mod)
-    http_unregister_provider(mod);
-
   rp = &http_routes;
   while (*rp) {
     struct HttpRoute* r = *rp;
@@ -568,7 +569,7 @@ void http_drop_module(struct ModuleHandle* mod)
   }
 
   /* A request whose handler is being unloaded will never be answered, so
-   * the provider is told to let the connection go rather than hold it
+   * the transport is told to let the connection go rather than hold it
    * open until the deadline. */
   cp = &http_calls;
   while (*cp) {
@@ -604,8 +605,7 @@ void http_shutdown(void)
   }
 
   http_call_count = 0;
-  http_provider = NULL;
-  http_provider_owner = NULL;
+  http_transport = NULL;
 
   if (http_timer_armed) {
     timer_del(&http_timer);

@@ -57,7 +57,7 @@
 #include "cache.h"      /* struct CacheDriver, cache_id_t */
 #endif
 #ifndef INCLUDED_http_h
-#include "http.h"       /* struct HttpProvider, HttpHandlerFn */
+#include "http.h"       /* HttpHandlerFn, http_available() */
 #endif
 #ifndef INCLUDED_worker_h
 #include "worker.h"     /* struct WorkTask, WorkerMainFn */
@@ -76,7 +76,7 @@ struct ModuleHandle;
  * recompiled.  A mismatched pointer layout in a shared address space is
  * not a failure worth being lenient about.
  */
-#define IRCU_MODULE_ABI 21
+#define IRCU_MODULE_ABI 22
 
 /** Description of a module, exported by the shared object.
  *
@@ -589,32 +589,21 @@ extern cache_id_t module_cache_del(struct ModuleHandle* mod, const char* key,
                                    CacheResultFn fn, void* user);
 
 /*
- * HTTP: the provider, and the routes modules claim on it.
+ * HTTP: the routes a module claims on the server's listener.
  *
- * One module implements the listener (modules/workers/http/); any module
- * may claim a route on it.  The core holds both ends for the reasons in
- * include/http.h -- modules cannot resolve each other's symbols, and
- * holding the requests here is what lets either side be unloaded with
- * some outstanding.
+ * The core serves the HTTP (ircd/http_server.c, Mongoose underneath) and
+ * a module claims routes on it; see include/http.h.  A module never sees
+ * a socket: it is handed a request that is already parsed, in the main
+ * thread, and answers now or later.
  *
  * A consumer degrades, it does not guess: check module_http_available()
- * when the module loads, say so if there is no provider, and switch off
- * the part that needed it.  "The HTTP module is not loaded" must not be
- * an outage.
+ * -- is a port configured at all -- say so if not, and switch off the
+ * part that needed it.  Ask from HOOK_CONFIG_LOADED and not from
+ * mi_init, which runs in the middle of the parse when HTTP_PORT may not
+ * have been read yet.
  */
 
-/** Register this module as the HTTP provider.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] provider Static description; must outlive the module.
- * @return Non-zero on success; zero if one is already registered.
- */
-extern int module_add_http_provider(struct ModuleHandle* mod,
-                                    const struct HttpProvider* provider);
-
-/** Withdraw this module's HTTP provider, failing its requests in flight. */
-extern void module_del_http_provider(struct ModuleHandle* mod);
-
-/** Non-zero when some module is serving HTTP. */
+/** Non-zero when this server is configured to serve HTTP. */
 extern int module_http_available(void);
 
 /** Claim a route.  A path ending in '/' matches everything under it.

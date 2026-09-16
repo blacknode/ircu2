@@ -1,49 +1,66 @@
-HTTP, as a thing a module provides and other modules use
-========================================================
+HTTP: served by the core, routed to whichever module asked
+==========================================================
 
-Phase 5 of doc/proposals/006-comunicaciones-unificadas.md.  The core holds
-a register; a module serves the HTTP; other modules ask it for routes.
+Phase 5 of doc/proposals/006-comunicaciones-unificadas.md.  The server is
+Mongoose, on a worker thread of its own; modules claim routes on it and
+never see a socket.
 
-This is the same arrangement as doc/readme.database and doc/readme.cache,
-and for the same two reasons.  Modules are RTLD_LOCAL and cannot resolve
-each other's symbols, so the core has to be the meeting point between
-whoever serves and whoever wants to be served; and holding the requests in
-flight in the core is what lets either module be unloaded with some
-outstanding.
+The core serves it rather than a module.  HTTP is not a thing a server
+either has or has not: a listener is one of the server's own ports, it has
+to come up before any module is loaded and stay up across a rehash that
+unloads one, and its TLS is configuration and not code.  What is
+pluggable is the routes, and those are what modules bring.
 
-The core knows nothing about sockets, TLS, chunked encoding or keep-alive.
-It knows there is a provider that might not be there, a set of routes
-modules have asked for, and a request that is a method, a path, some
-headers and a body.
+
+WHY A LIBRARY
+=============
+
+This replaced a hand-written parser and poll() loop that worked.  The
+argument is not that it was broken; it is that HTTP is a protocol where
+being nearly right is a security bug, and the list of ways to get framing
+wrong -- chunked encoding, folded headers, pipelining, Content-Length
+against Transfer-Encoding -- is a list somebody else has already walked,
+with fuzzers, for twenty years.
+
+What came with it, none of it written here: chunked request bodies, TLS,
+and WebSockets and SSE for when they are wanted.
+
+The rule that follows: ircd/mongoose/ is upstream's amalgamation and is
+never edited.  A local patch would give away the only thing this is for.
+Updating is replacing the two files and running the tests.  Mongoose is
+GPL-2.0-only, so an ircd built with it is GPL-2.0 rather than "2 or
+later"; see ircd/mongoose/README.
 
 
 THE TWO SIDES
 =============
 
-The **provider** owns the listener, the parsing and its own TLS, and does
-the network work on its own thread.  What reaches the main thread is a
-request that is already parsed.  It registers with
-
-  http_register_provider(mod, &provider)
-
-and hands the core each request with http_dispatch().  One provider at a
-time: a second is refused rather than replacing the first, because two
-things owning the same socket is not a state to arrive at silently.
+The **server** is ircd/http_server.c: the only file in the tree that knows
+Mongoose exists.  It owns the socket, the parsing and the TLS, on a
+thread of its own, and hands the main thread requests that are already
+parsed.
 
 The **consumer** claims routes:
 
   http_add_route(mod, "POST", "/upload", handle_upload, self)
 
-and checks, when it loads:
+and checks, from HOOK_CONFIG_LOADED:
 
   if (!http_available())
     /* say so in the log; switch that part off; carry on */
 
 It does not fail to load and it does not wait.  The part of it that needed
 HTTP is off and the rest works.  That is the contract db.h has too, and it
-is what keeps "the HTTP module is not loaded" from being an outage.
+is what keeps "nobody set HTTP_PORT" from being an outage.
 
-A route may be claimed before any provider exists.  The module that wants
+http_available() answers from HTTP_PORT, not from the socket: a consumer
+is asking whether its route will ever be reached, and a listener that is
+down for the length of a rehash is not a module's business.  Ask it from
+HOOK_CONFIG_LOADED rather than mi_init, which runs in the middle of the
+parse where the features are not final -- that is the one mistake here
+that is silent.
+
+A route may be claimed while nothing is listening.  The module that wants
 one loads first as often as not, and making that an error would make load
 order part of the configuration.
 
@@ -60,7 +77,7 @@ shorter one:
   /files/             matches everything else under /files/
 
 That is the whole routing language, on purpose.  A pattern syntax is a
-thing every consumer would have to learn and every provider would have to
+thing every consumer would have to learn and every server would have to
 agree about, and nothing here has needed one.
 
 The method is part of the route.  Two claims on the same method and path
@@ -68,7 +85,7 @@ are refused: two handlers for one route is a question with no right
 answer.
 
 Nothing claimed means the core never owned the request: http_dispatch()
-says so, the provider sends its own 404, and there is nothing to clean up.
+says so, the server sends its own 404, and there is nothing to clean up.
 
 
 ANSWERING LATER
@@ -95,12 +112,12 @@ WHAT UNLOADING TAKES
 ====================
 
 A consumer unloading takes its routes, and the requests it will never
-answer are handed back to the provider -- hp_cancel() -- so the connection
-is let go rather than held to the deadline.
+answer are handed back to the transport -- ht_cancel() -- so the
+connection is let go rather than held to the deadline.
 
-The provider unloading takes every request in flight with it, silently:
-there is nobody left to answer through.  The consumers' routes stay, and
-wait for another provider.
+The listener going down -- HTTP_PORT set to 0, or the server shutting
+down -- takes every request in flight with it, silently: there is nobody
+left to answer through.  The routes stay, and wait for it to come back.
 
 
 LIMITS
@@ -113,91 +130,116 @@ LIMITS
 
 HTTP_BODY_MAX is not a limit on what HTTP can transfer.  It is a limit on
 what the event loop holds: a file upload is streamed to storage by the
-provider and its handler is given the metadata, because a hundred
+server and its handler is given the metadata, because a hundred
 megabytes buffered here would be a hundred megabytes every other client
 waits behind.
 
 
-THE PROVIDER
-============
-
-modules/workers/http/ is it: a listener on a thread of its own, a parser,
-and nothing else.  It serves no route -- it has none to serve -- and it
-knows nothing about what any of them are for.
+CONFIGURING IT
+==============
 
   F:HTTP_PORT:8080
   F:HTTP_BIND:127.0.0.1
   F:HTTP_MAX_CLIENTS:64
-
-  Module { name = "http"; };
+  F:HTTP_TLS_CERT:/etc/ircd/http-cert.pem
+  F:HTTP_TLS_KEY:/etc/ircd/http-key.pem
 
 and WORKER_THREADS at one or more, because the listener is a thread.
-
-HTTP_PORT is 0 by default and at 0 nothing listens.  A server does not
-open a second port because a module was loaded; an operator says where.
-The listener is started from HOOK_CONFIG_LOADED rather than from mi_init,
-because mi_init runs in the middle of the parse and the features are not
-final yet, and a rehash that changes the port, the address or the limit
-restarts it.  One that changes none of them does not: restarting a
-listener drops every connection on it.
 
   HTTP_PORT           0       where to listen; 0 is off
   HTTP_BIND           ""      what to bind to; empty is every address
   HTTP_MAX_CLIENTS    64      connections at once, past which new ones
                               are closed rather than queued
+  HTTP_TLS_CERT       ""      PEM certificate; both or neither
+  HTTP_TLS_KEY        ""      PEM private key
 
-Which thread is which:
+HTTP_PORT is 0 by default and at 0 nothing listens.  A server does not
+open a second port because a feature exists; an operator says where.
+
+The listener follows the configuration.  It is reconciled once the file
+has been read in full -- at start-up and after every rehash, never in the
+middle of a parse -- and a rehash that changed none of the five settings
+above does nothing at all, because restarting a listener drops every
+connection on it.
+
+TLS is Mongoose's, not the ircd's.  IRCU_TLS picks what the *IRC* ports
+speak and can be gnutls, or none, so the HTTP side reads its own PEM
+files.  Set both or neither; one alone is half a configuration and is
+read as "no TLS".
+
+Which TLS it is depends on the build, and so does what certificate it
+will take:
+
+  IRCU_TLS=openssl    Mongoose uses OpenSSL, which the ircd already links
+                      -- one TLS library in the process, not two.  RSA or
+                      ECDSA, whatever OpenSSL takes.
+  anything else       Mongoose's own: self-contained, TLS 1.3 only, and
+                      **ECDSA only**.  An RSA certificate is refused at
+                      the handshake, which from the client looks like the
+                      connection being dropped.
+
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+      -keyout http-key.pem -out http-cert.pem -days 365 -nodes \
+      -subj "/CN=irc.example.net"
+
+That asymmetry is worth knowing before it is diagnosed at three in the
+morning: the same PEM files that work on an openssl build fail on a
+gnutls one.
+
+
+WHICH THREAD IS WHICH
+=====================
 
   the socket           the worker's, always
   the routes           the main thread's, always
   a request going up   worker_post(), which runs the dispatch in the main
                        thread
-  an answer coming     the module's own queue -- a mutex, a list and a
-  back                 self-pipe, because the worker is asleep in poll()
-                       and a condition variable would be no use to it
+  an answer coming     mg_wakeup(), which Mongoose documents as safe from
+  back                 any thread and which wakes its poll
 
-Both directions carry one struct of bytes.  No pointer into anything
-either side might free crosses, and a connection is named by an
-http_req_t rather than by its address -- the rule worker_task_set_client()
-follows for clients, for the same reason.
+There is no queue and no self-pipe here: the library already has one.
 
-What it will not read:
+Across that line travels a struct of bytes and a connection id -- an
+integer Mongoose guarantees unique -- never a pointer.  A connection that
+went away while its answer was being worked out simply is not found, which
+is the ordinary case for a client that pressed stop.
 
-  chunked request body    501, not silence.  A server that reads a chunked
-                          body as if it were not one has been handed the
-                          next request as this one's content.
-  a folded header         400.  Two readers that disagree about whether
-                          that is one header or two is how a request is
-                          smuggled past the one in front.
-  HTTP/2, HTTP/0.9        505.  Guessing at a framing is how one request
-                          becomes two.
-  ".." in a path          400.  Nothing here opens a file, but a path is
-                          handed to modules and one of them will.
-  "%2F" or "%00"          400.  Routing happens on the decoded path, so an
-                          encoded separator would turn what the client
-                          wrote as data into a separator and reach a prefix
-                          route it is not under; an encoded NUL would
-                          shorten the path for whoever reads it next.
-  a head over 8 KiB       431.
-  a body over 64 KiB      413 -- HTTP_BODY_MAX, above.
+Nothing on the worker touches core state: no struct Client, no
+CurrentTime, no MyMalloc(), no log_write(), no sendto_*.  Mongoose's own
+logging is compiled out for the same reason, and what it has to say about
+a failed listen comes back as the task it posts.
 
-What comes after a request stays in the connection's buffer and is parsed
-once that request has been answered, so a client that pipelined is not
-promised keep-alive and then ignored.  Nothing is unbounded about holding
-it: the buffer is one head and one body, and the connection is not read
-again until the request in hand is answered.
 
-A header a module wrote is dropped if its name or value holds a newline,
-and the response is still sent.  A newline there is how one response
-becomes two, and the second one is whatever the module was handed.
+WHAT IT WILL NOT READ
+=====================
 
-There is no TLS in it yet.  Put it behind a reverse proxy that has some,
-or bind it to the loopback.
+Mongoose does the framing.  What it deliberately does not do is decide
+what a path *means*, and that decision is ircd/http_server.c's:
 
-httpd_t covers the parser and the renderer, which are pure -- bytes in,
-bytes out -- and are the whole of what a stranger on a socket can reach
-before anything has been authenticated.  The poll() loop and the module
-lifecycle are not unit-tested, for the same reason migration_run.c is not.
+  ".." in a path        400.  Nothing here opens a file, but a path is
+                        handed to modules and one of them will, so the
+                        check belongs where the path is first believed.
+  "%2F", "%5C"          400.  Routing happens on the decoded path, so an
+                        encoded separator would turn what the client
+                        wrote as data into a separator and reach a prefix
+                        route it is not under.
+  "%00"                 400.  It shortens the path for whoever reads it
+                        with str*() next.
+  a control byte        400.
+  a body over 64 KiB    413 -- HTTP_BODY_MAX, below.
+
+The path a handler is given is decoded; the query string is not, because
+"+" means a space there and nowhere else and a server that decided would
+be deciding for every route at once.
+
+A response header whose name or value holds a newline is dropped and the
+response still sent: a newline there is how one response becomes two, and
+the second one is whatever the module was handed.
+
+http_t covers the routes, the deadline and what unloading takes, with no
+socket at all -- the split ircd/migration.c has from migration_run.c.
+There is no unit test of the parser any more, because the parser is not
+ours; that is the trade.
 
 
 WHAT THIS IS FOR
@@ -206,9 +248,10 @@ WHAT THIS IS FOR
 File upload and download with object storage behind it, with the ircd
 issuing a short-lived token -- HMAC-SHA256 or AES-256-GCM from
 include/ircd_sha256.h and include/ircd_aes.h -- bound to the account and
-the channel, which the provider validates.  Incoming webhooks and a REST
-API for integrations are routes on the same provider.
+the channel, which the route validates.  Incoming webhooks and a REST
+API for integrations are routes on the same listener.
 
-None of that is in the tree yet.  What is here is the register and the
-provider: the two parts that have to exist before any of it can be written
-as a module of its own.
+Files are deferred for now.  What is here is the server and the routes on
+it -- the part that has to exist before any of that can be written as a
+module of its own, and the part that webhooks and a REST API need and
+nothing more.

@@ -1020,35 +1020,62 @@ con tres cosas que el diseño no decía y hubo que decidir:
   megabytes almacenados aquí son cien megabytes que el resto de los
   clientes esperan.
 
-**El proveedor está implementado** (`modules/workers/http/`, `httpd_t`).
-Es el oyente y nada más: no sirve ninguna ruta y no sabe para qué es
-ninguna. Tres decisiones que el diseño no traía:
+**Decisión revisada: el servidor HTTP va en el core y es Mongoose**
+(`ircd/mongoose/`, `ircd/http_server.c`), no un módulo con parser propio.
 
-- **`HTTP_PORT` vale 0 y a 0 no escucha nada.** Un servidor no abre un
-  segundo puerto porque se haya cargado un módulo; lo dice el operador.
-  El hilo arranca en `HOOK_CONFIG_LOADED` y no en `mi_init`, porque
-  `mi_init` corre en medio del parseo y las *features* todavía no son
-  definitivas, y un *rehash* que cambie puerto, dirección o límite lo
-  reinicia —uno que no cambie nada, no, porque reiniciar un oyente tira
-  todas las conexiones que tiene.
-- **El socket es del worker y las rutas son del hilo principal.** La
-  petición sube por `worker_post()` y la respuesta baja por una cola
-  propia del módulo —un mutex, una lista y una tubería, porque el worker
-  está dormido en `poll()` y una variable de condición no le serviría de
-  nada. En los dos sentidos viaja un `struct HttpXfer` de **bytes**, y la
-  conexión se nombra con un `http_req_t`, nunca con su dirección: la
-  misma regla que `worker_task_set_client()` sigue con los clientes.
-- **El parser rechaza, no adivina:** *chunked* (501), cabecera plegada
-  (400), versión que no implementa (505), `..`, `%2F` o `%00` en el
-  camino (400). Un separador codificado convertiría en separador lo que
-  el cliente escribió como dato, y con eso alcanzaría una ruta de prefijo
-  bajo la que no está. Lo que venga **encadenado** detrás de una petición
-  se queda en el buffer y se parsea cuando la anterior se ha contestado:
-  prometer *keep-alive* y luego tirar la siguiente petición es peor que
-  no mantener la conexión.
+Se escribió primero un proveedor propio como módulo
+(`modules/workers/http/`) y funcionaba. Se ha sustituido, y el motivo no
+es que estuviera roto:
 
-No lleva TLS todavía: detrás de un proxy inverso, o atado al *loopback*.
-Falta, encima de él, los ficheros.
+- **HTTP es un protocolo donde estar *casi* bien es un fallo de
+  seguridad.** La lista de formas de equivocarse con el *framing*
+  —*chunked*, cabeceras plegadas, *pipelining*, `Content-Length` contra
+  `Transfer-Encoding`— es una lista que otro ya ha recorrido, con
+  *fuzzers*, durante veinte años. Con Mongoose llegaron además, sin
+  escribir nada: cuerpos *chunked*, TLS, y WebSockets y SSE para cuando
+  hagan falta.
+- **El servidor va en el core, no en un módulo.** HTTP no es algo que un
+  servidor tenga o no tenga: un oyente es uno de los puertos del propio
+  servidor, tiene que levantarse antes de que se cargue ningún módulo y
+  seguir en pie cuando un *rehash* descargue uno, y su TLS es
+  configuración. Lo enchufable son las **rutas**, y eso es lo que traen
+  los módulos. Se mantiene `http_add_route()` tal cual estaba; lo que
+  desaparece es `http_register_provider()`, que era la indirección que
+  existía sólo porque el servidor era un módulo. Queda una indirección
+  interna (`struct HttpTransport`) para que `ircd/http.c` siga siendo
+  comprobable sin socket (`http_t`), que es la misma separación de
+  `migration.c` frente a `migration_run.c`.
+- **`ircd/mongoose/` es la amalgama de upstream y no se edita nunca.** Un
+  parche local regalaría lo único que justifica usar código de otro.
+  Actualizar es sustituir los dos ficheros y pasar las pruebas. Mongoose
+  es GPL-2.0-only, así que un ircd construido con él es GPL-2.0 y no «2 o
+  posterior»; está dicho en `ircd/mongoose/README`.
+
+Tres cosas más que hubo que decidir:
+
+- **`http_available()` es `HTTP_PORT`, no el socket.** Un consumidor
+  pregunta si su ruta llegará a usarse alguna vez, y un oyente que está
+  caído lo que dura un *rehash* no es asunto suyo. Y se pregunta desde
+  `HOOK_CONFIG_LOADED`, nunca desde `mi_init`, que corre en medio del
+  parseo con las *features* todavía sin leer: es el único error que esta
+  API pone fácil y es silencioso.
+- **El TLS del puerto HTTP es el de Mongoose, no el del ircd.**
+  `IRCU_TLS` elige lo que hablan los puertos *de IRC* y puede ser gnutls,
+  o nada; el puerto HTTP lee sus propios PEM (`HTTP_TLS_CERT`,
+  `HTTP_TLS_KEY`). La compilación le da OpenSSL a Mongoose cuando el ircd
+  ya lo enlaza —una biblioteca TLS en el proceso y no dos— y el suyo
+  propio en caso contrario, que es **sólo TLS 1.3 y sólo ECDSA**: los
+  mismos PEM que funcionan en una compilación con openssl los rechaza en
+  el saludo una con gnutls, y desde el cliente eso se ve como que la
+  conexión se cae.
+- **Lo que Mongoose no decide es qué *significa* un camino**, y eso sigue
+  siendo nuestro: `..`, `%2F`, `%5C`, `%00` o un byte de control son 400,
+  porque el camino se le entrega a los módulos y alguno acabará abriendo
+  un fichero.
+
+**Los ficheros quedan aplazados.** Lo que hay es el servidor y las rutas
+encima, que es lo que necesitan los *webhooks* y una API REST, y la base
+sobre la que los ficheros entrarán como un módulo más cuando toque.
 
 Por §4, un módulo no puede llamar a otro. La forma correcta es la misma que la
 de la base de datos, y va en el core como interfaz delgada:

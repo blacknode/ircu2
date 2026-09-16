@@ -77,6 +77,7 @@
 #include "version.h"
 #include "websocket.h"
 #include "whowas.h"
+#include "http_server.h"
 #include "worker.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
@@ -166,6 +167,7 @@ void server_die(const char *message)
    * unloaded where they always were, after the event loop, with their
    * workers already gone -- which the worker API allows for.
    */
+  http_server_stop();
   worker_shutdown();
 
   flush_connections(0);
@@ -902,6 +904,7 @@ int main(int argc, char **argv) {
    * still unread and &me not yet a server.  This is the first moment both
    * are true; the same hook fires again after every rehash.
    */
+  http_server_reconfigure();
   hook_notify(HOOK_CONFIG_LOADED, NULL, NULL, NULL, NULL);
 
   event_loop();

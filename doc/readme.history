@@ -299,6 +299,50 @@ server is an announcement: the deletion has happened already, every server
 reads the same store, and there is nothing left to check.
 
 
+HOW FAR SOMEBODY HAS READ: MARKREAD
+===================================
+
+  MARKREAD <target>                       what is my marker?
+  MARKREAD <target> timestamp=<ISO 8601>  move it here
+  MARKREAD <target> *                     I have read nothing
+
+and the answer to all three is the same line, saying where the marker
+*is*:
+
+  MARKREAD <target> timestamp=<ISO 8601>
+  MARKREAD <target> *
+
+IRCv3 draft/read-marker.  It is what turns a history into an inbox:
+without it a client reconnecting can fetch everything it missed but cannot
+tell which of it it has already seen, so either everything is unread or
+nothing is.
+
+**Per account, not per connection.**  A person reads on their phone and
+expects their laptop to know, which is the whole point.  A client with no
+account has no person for this to belong to and is told so
+(FAIL MARKREAD NEED_REGISTRATION).
+
+**It only moves forward.**  Two clients of the same person race
+constantly -- one is catching up while the other is at the bottom -- and a
+marker that could move backwards would make messages unread again every
+time the slower one reported in.  So a request to move it back is not an
+error: the answer is where the marker is, which is where it already was.
+
+Moving it tells **every one of that person's clients**, not only the one
+that moved it, because that is how a laptop finds out what a phone did.
+Asking answers the client that asked.
+
+The marker is a timestamp and not a msgid.  "Everything up to here" is a
+point in time, and a message arriving late -- from a server that was
+split -- is behind the marker if it was *sent* behind it, which is the
+answer a person means.  A msgid would name one message and say nothing
+about the ones around it.
+
+It never crosses a link: the marker lives in the store every server
+reads, so the other servers' copies of that person are told by their own
+server.
+
+
 RETENTION, PURGING, EXPORT AND DELETION
 =======================================
 
@@ -380,6 +424,7 @@ HOW IT IS PUT TOGETHER
                    how the answer goes on the wire
   hist_redact.c    REDACT: who may take a message back, and what goes
                    with it
+  hist_marker.c    MARKREAD: how far somebody has read
   hist_store.c     every statement this module sends, and nothing else
   hist_store.h     the store as the rest of the module sees it
   migrations/      the schema

@@ -1181,3 +1181,108 @@ int hist_store_redact(const char* msgid,
 
   return 1;
 }
+
+/* ------------------------------------------------------------------- *
+ * Read markers                                                        *
+ * ------------------------------------------------------------------- */
+
+/** What a caller of the marker calls is waiting on. */
+struct HistMarker {
+  HistMarkerFn hm_cb;
+  void*        hm_user;
+};
+
+/** A marker query came back. */
+static void hist_marker_done(const struct DbResult* res, void* user)
+{
+  struct HistMarker* hm = (struct HistMarker*) user;
+
+  if (res->err.dberr_code != DB_OK) {
+    hist_complain("marker", res, DB_OK);
+    if (hm->hm_cb)
+      (hm->hm_cb)(0, "", hm->hm_user);
+  } else if (hm->hm_cb) {
+    /* No row is not a failure: it is somebody who has never marked this
+     * conversation, which is most people and most conversations. */
+    (hm->hm_cb)(1, db_rows(res->data) ? db_row_str(res->data, 0, "marker")
+                                      : "", hm->hm_user);
+  }
+
+  MyFree(hm);
+}
+
+/** Shared body of the two marker calls. */
+static int hist_marker_call(const struct DbQuery* query, int write,
+                            HistMarkerFn cb, void* user)
+{
+  struct HistMarker* hm;
+  enum DbError err;
+
+  hm = (struct HistMarker*) MyCalloc(1, sizeof(*hm));
+  hm->hm_cb = cb;
+  hm->hm_user = user;
+
+  err = write ? db_exec(hist_mod, query, hist_marker_done, hm)
+              : db_query(hist_mod, query, hist_marker_done, hm);
+
+  if (err != DB_OK) {
+    hist_complain("marker", 0, err);
+    MyFree(hm);
+    return 0;
+  }
+
+  return 1;
+}
+
+int hist_store_marker_set(const char* account, const char* target,
+                          const char* marker, HistMarkerFn cb, void* user)
+{
+  struct DbParam p_account = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam p_target = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam p_marker = { DB_TYPE_TIMESTAMPTZ, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[4];
+  struct DbQuery query;
+
+  assert(0 != account);
+  assert(0 != target);
+  assert(0 != marker);
+
+  query.sql = "SELECT to_char(read_marker_set($1, $2, $3) AT TIME ZONE 'UTC',"
+              " 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS marker";
+
+  p_account.value = account;
+  p_target.value = target;
+  p_marker.value = marker;
+  params[0] = &p_account;
+  params[1] = &p_target;
+  params[2] = &p_marker;
+  params[3] = NULL;
+  query.params = params;
+
+  return hist_marker_call(&query, 1, cb, user);
+}
+
+int hist_store_marker_get(const char* account, const char* target,
+                          HistMarkerFn cb, void* user)
+{
+  struct DbParam p_account = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam p_target = { DB_TYPE_TEXT, 0, DB_FORMAT_TEXT };
+  struct DbParam* params[3];
+  struct DbQuery query;
+
+  assert(0 != account);
+  assert(0 != target);
+
+  query.sql = "SELECT to_char(marker AT TIME ZONE 'UTC', "
+              "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS marker "
+              "FROM read_marker WHERE account = $1 AND target_canon = $2";
+
+  p_account.value = account;
+  p_target.value = target;
+  params[0] = &p_account;
+  params[1] = &p_target;
+  params[2] = NULL;
+  query.params = params;
+
+  return hist_marker_call(&query, 0, cb, user);
+}

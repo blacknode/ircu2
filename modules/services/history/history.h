@@ -55,6 +55,18 @@ struct Client;
 /** The capability that says a client understands REDACT. */
 #define HIST_REDACT_CAP "draft/message-redaction"
 
+/** How far somebody has read.  No P10 token: the marker lives in the
+ * store every server reads, so there is nothing to route -- the other
+ * servers' copies of that person are told by their own server. */
+#define MSG_MARKREAD "MARKREAD"
+#define TOK_MARKREAD "MARKREAD"
+
+/** The capability that says a client keeps read markers. */
+#define HIST_MARKER_CAP "draft/read-marker"
+
+/** Its position, or -1. */
+extern int hist_marker_cap;
+
 /** Its position, handed out by the server; -1 when not registered. */
 extern int hist_redact_cap;
 
@@ -133,5 +145,13 @@ extern int hist_ms_redact(struct Client* cptr, struct Client* sptr,
 
 /** An ISO 8601 timestamp \a seconds in the past, into \a buf. */
 extern void hist_time_ago(char* buf, size_t buflen, int seconds);
+
+/*
+ * Read markers (hist_marker.c).
+ */
+
+/** MARKREAD, from a client. */
+extern int hist_m_markread(struct Client* cptr, struct Client* sptr,
+                           int parc, char* parv[]);
 
 #endif /* INCLUDED_history_h */

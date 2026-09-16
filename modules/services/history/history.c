@@ -85,6 +85,9 @@ static int hist_cap = -1;
 /** The position draft/message-redaction got, or -1. */
 int hist_redact_cap = -1;
 
+/** The position draft/read-marker got, or -1. */
+int hist_marker_cap = -1;
+
 /** How many months ahead partitions are created. */
 #define HIST_MONTHS_AHEAD 1
 
@@ -224,6 +227,17 @@ static MessageHandler admin_handlers[] = {
   0                 /* service */
 };
 
+/** MARKREAD, which never leaves this server: the marker is in the store
+ * every server reads, so the other servers' copies of that person are
+ * told by their own server rather than by this one. */
+static MessageHandler marker_handlers[] = {
+  0,                  /* unregistered */
+  hist_m_markread,    /* client */
+  0,                  /* server */
+  hist_m_markread,    /* oper */
+  0                   /* service */
+};
+
 /** And /REDACT, which is the one of these that crosses a link. */
 static MessageHandler redact_handlers[] = {
   0,                 /* unregistered */
@@ -267,6 +281,12 @@ static int history_init(struct ModuleHandle* mod)
     return -1;
   }
 
+  if (!module_add_command(mod, MSG_MARKREAD, TOK_MARKREAD, MAXPARA,
+                          0, marker_handlers)) {
+    hist_mod = NULL;
+    return -1;
+  }
+
   /* The capability last, and only if the command is really there: its
    * value is a promise about an answer, and advertising one the server
    * cannot give is worse than not advertising at all.
@@ -278,6 +298,7 @@ static int history_init(struct ModuleHandle* mod)
    * a command they have never heard of, and a line they cannot parse is
    * not an improvement on a message they still have. */
   module_add_cap(mod, HIST_REDACT_CAP, 0, &hist_redact_cap);
+  module_add_cap(mod, HIST_MARKER_CAP, 0, &hist_marker_cap);
 
   /* Everything that depends on the configuration waits for
    * HOOK_CONFIG_LOADED.  mi_init runs in the middle of the parse: a
@@ -310,6 +331,7 @@ static void history_fini(struct ModuleHandle* mod)
 
   hist_cap = -1;
   hist_redact_cap = -1;
+  hist_marker_cap = -1;
   hist_i18n = NULL;
 
   /* An export writes to a file this module holds open, and the pages it

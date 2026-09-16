@@ -922,7 +922,35 @@ Todo esto son tags sobre `msgid`, y cabe en módulos una vez existe la fase 0:
   hacía falta dejarlo pasar, y no guardarlo.
 - **Marcas de leído y no-leídos:** `draft/read-marker` (`MARKREAD`), por cuenta
   y por objetivo. Es lo que convierte esto en una bandeja de entrada.
-- **Menciones:** derivadas de la cuenta, no del nick.
+  **Implementado.** Dos propiedades que merecen estar escritas:
+
+  **Es por cuenta y no por conexión.** Una persona lee en el móvil y espera
+  que el portátil se entere; quien no se ha identificado no tiene persona a
+  la que esto pertenezca y se le dice. Mover la marca se le cuenta a *todos*
+  los clientes de esa persona, no sólo al que la movió.
+
+  **Sólo avanza.** Dos clientes de la misma persona compiten
+  constantemente —uno está poniéndose al día mientras el otro está en el
+  fondo— y una marca que pudiera retroceder volvería a marcar mensajes como
+  no leídos cada vez que el lento diera parte. Así que pedir que retroceda
+  no es un error: la respuesta es dónde está la marca, que es donde ya
+  estaba.
+
+  La marca es una hora y no un `msgid`: «todo hasta aquí» es un punto en el
+  tiempo, y un mensaje que llega tarde —de un servidor que estaba
+  partido— está por detrás de la marca si se *envió* por detrás, que es lo
+  que una persona quiere decir.
+
+  No cruza ningún enlace: la marca vive en el almacén que todos los
+  servidores leen, así que a las copias de esa persona en otros servidores
+  se lo cuenta su propio servidor.
+- **Menciones:** derivadas de la cuenta, no del nick. **Ya está, por el
+  modelo de identidad y no por código nuevo**: aquí una cuenta *es* un
+  nickname (propuesta 007), así que mencionar a `maria` es mencionar la
+  cuenta `maria` siempre que esa persona se haya identificado, y `+r` es
+  exactamente lo que dice si lo ha hecho. No hace falta resolver nada, y el
+  servidor no se pone a interpretar prosa para adivinar a quién se
+  menciona, que es trabajo del cliente y además frágil.
 
 ### 7.3 Fase 4 — Texto enriquecido
 

@@ -372,6 +372,21 @@ link (token `RD`), because every server's clients saw the message; what
 arrives from a peer is an announcement, since every server reads the same
 store.
 
+**MARKREAD** (`hist_marker.c`, IRCv3 `draft/read-marker`, §7.2). What turns
+a history into an inbox. **Per account, not per connection** — a person
+reads on their phone and expects their laptop to know, so moving the marker
+tells every one of that person's clients, and a client with no account is
+refused. **It only moves forward**: two clients of the same person race
+constantly, and a marker that could go back would make messages unread
+again every time the slower one reported in; a backwards request is not an
+error, the answer is just where the marker already was. It is a
+**timestamp, not a msgid** — "everything up to here" is a point in time, and
+a message arriving late from a split is behind the marker if it was *sent*
+behind it. It never crosses a link: the store is shared, so the other
+servers' copies of that person are told by their own server. Mentions need
+no code at all — an account *is* a nickname, so mentioning `maria` is
+mentioning the account whenever `+r` says she proved it.
+
 **Channel modes.** Bits of a `chanmode_t` mask in `chptr->mode.mode`
 (`include/chan_flags.h`), registered in a run-time list in `ircd/chan_modes.c`
 (`channel_chan_modes()` and friends) so modules can add their own; test them with

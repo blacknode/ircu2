@@ -281,6 +281,43 @@ extern int hist_store_redact(const char* msgid,
                              void (*cb)(long long rows, void* user),
                              void* user);
 
+/** Receives a read marker.  Runs in the main thread.
+ * @param[in] ok Non-zero if the store answered.
+ * @param[in] marker Where the marker is now, ISO 8601, or "" for none.
+ * @param[in] user What was handed to the call.
+ */
+typedef void (*HistMarkerFn)(int ok, const char* marker, void* user);
+
+/** Move a read marker forward, and say where it ended up.
+ *
+ * Only ever forward.  Two clients of the same person race constantly --
+ * one is catching up while the other is at the bottom -- and a marker
+ * that could move backwards would make messages unread again every time
+ * the slower one reported in.  The answer is where the marker *is*,
+ * which may not be where the caller asked to put it, and that is what
+ * the client is told.
+ *
+ * @param[in] account The account, canonical.
+ * @param[in] target The conversation, canonical.
+ * @param[in] marker Where to move it to, ISO 8601.
+ * @param[in] cb Called in the main thread.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted.
+ */
+extern int hist_store_marker_set(const char* account, const char* target,
+                                 const char* marker, HistMarkerFn cb,
+                                 void* user);
+
+/** Read a marker back.
+ * @param[in] account The account, canonical.
+ * @param[in] target The conversation, canonical.
+ * @param[in] cb Called in the main thread; "" when there is no marker.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted.
+ */
+extern int hist_store_marker_get(const char* account, const char* target,
+                                 HistMarkerFn cb, void* user);
+
 /** Store one message.
  *
  * Fire and forget: there is nobody to tell if it fails, and a message

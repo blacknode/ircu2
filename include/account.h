@@ -66,9 +66,18 @@ enum AccountResult {
   ACCOUNT_ERR_NOSUCH,      /**< That identity has no such account. */
   ACCOUNT_ERR_SUSPENDED,   /**< The account exists and is suspended. */
   ACCOUNT_ERR_INUSE,       /**< Somebody else is using the account's nick. */
+  ACCOUNT_ERR_EXISTS,      /**< That nickname is registered already. */
+  ACCOUNT_ERR_LIMIT,       /**< The address already holds as many as it may. */
   ACCOUNT_ERR_UNAVAILABLE, /**< No provider, or it went away mid-question. */
   ACCOUNT_ERR_TIMEOUT,     /**< The provider took too long. */
   ACCOUNT_ERR_LAST         /**< Number of results. */
+};
+
+/** What a change is asking for. */
+enum AccountWrite {
+  ACCOUNT_WRITE_REGISTER,  /**< Take this nickname for this address. */
+  ACCOUNT_WRITE_PASSWD,    /**< Replace this address's password. */
+  ACCOUNT_WRITE_DROP       /**< Give this nickname up. */
 };
 
 /** What is being asked about a nickname. */
@@ -108,6 +117,41 @@ struct AccountRequest {
   int         ar_tls;         /**< Non-zero if the connection is TLS. */
 };
 
+/** One change to make, and the proof that it may be made.
+ *
+ * One request for all three kinds of write, the shape #DbQuery has, for
+ * the same reason: a pointer per operation in #AccountProvider would be
+ * three things to implement, three to document and three to get wrong,
+ * where what differs between them is which fields are filled in.
+ *
+ * The core's, and it does not outlive the ap_change() call.  Every write
+ * carries the current password, because every write is an act only the
+ * holder of the address may perform and the provider is the only thing
+ * that can tell whether this is the holder -- except for a registration
+ * of an address nobody has yet, where the password given is the one being
+ * set.
+ */
+struct AccountChange {
+  enum AccountWrite ach_what;      /**< Which change. */
+  const char* ach_email;           /**< The address.  Always. */
+  const char* ach_secret;          /**< The current password. */
+  size_t      ach_secretlen;       /**< Its length. */
+  const char* ach_nick;            /**< Account, for REGISTER and DROP. */
+  const char* ach_new;             /**< New password, for PASSWD. */
+  size_t      ach_newlen;          /**< Its length. */
+  /** Accounts this address may hold, or 0 for no limit.
+   *
+   * Policy, and it travels with the request rather than living in the
+   * provider, because the service that administers the accounts is what
+   * decides it -- and because counting them and then inserting is a race
+   * between two servers unless the count and the insert are the same
+   * transaction, which is the provider's to arrange.
+   */
+  int         ach_max;
+  const char* ach_ip;              /**< Where the client came from. */
+  int         ach_tls;             /**< Non-zero if the link is TLS. */
+};
+
 /** What answers the questions.  A module registers one of these. */
 struct AccountProvider {
   /** Short name, for logs and /STATS. */
@@ -140,6 +184,17 @@ struct AccountProvider {
    * @param[in] email Address to list, which the caller has authenticated.
    */
   void (*ap_list)(account_id_t id, const char* email);
+
+  /** Make a change to the store.
+   *
+   * Same contract as ap_verify(): copies what it needs, never blocks, and
+   * answers later with account_complete().  The secret is wiped as soon
+   * as this returns.
+   *
+   * @param[in] id Handle to hand back.
+   * @param[in] req What to change.
+   */
+  void (*ap_change)(account_id_t id, const struct AccountChange* req);
 
   /** Forget a question.  The core has stopped caring about the answer.
    * @param[in] id Handle it was given.
@@ -250,6 +305,21 @@ extern account_id_t account_verify(struct Client* cptr,
  */
 extern account_id_t account_lookup(struct Client* cptr, const char* nick,
                                    AccountOwnerFn done, void* data);
+
+/** Ask for a change to the store.
+ *
+ * @param[in] cptr Client it is about; the request is dropped if it leaves
+ *   -- the change may still happen, because a write that has reached the
+ *   database is not something the core can take back; what is dropped is
+ *   the answer.
+ * @param[in] req What to change.  Not kept.
+ * @param[in] done Called with the answer.
+ * @param[in] data Opaque pointer for \a done.
+ * @return The handle, or 0 if there is no provider.
+ */
+extern account_id_t account_change(struct Client* cptr,
+                                   const struct AccountChange* req,
+                                   AccountDoneFn done, void* data);
 
 /** Ask what accounts an address holds.
  *

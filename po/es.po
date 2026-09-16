@@ -1440,3 +1440,13 @@ msgstr "el servicio de identidad no está disponible"
 #, no-c-format
 msgid "the identity service did not answer in time"
 msgstr "el servicio de identidad no ha respondido a tiempo"
+
+#: ircd/account.c:166
+#, no-c-format
+msgid "that nickname is registered already"
+msgstr "ese nick ya está registrado"
+
+#: ircd/account.c:167
+#, no-c-format
+msgid "that address already holds as many accounts as it may"
+msgstr "esa dirección ya tiene todas las cuentas que puede tener"

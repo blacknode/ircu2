@@ -82,6 +82,19 @@ static struct Timer account_timer;
 /** Whether #account_timer is on the queue. */
 static int account_timer_armed;
 
+/** Whether the timer struct has been through timer_init().
+ *
+ * Once, and never again.  timer_init() zeroes the generator's flags,
+ * GEN_MARKED among them, and that flag is what tells timer_add() it is
+ * being called from inside the timer's own expiry -- which is exactly
+ * where it is called from, every time a callback starts something new.
+ * Without the flag the timer is queued a second time while timer_run()
+ * still holds it, and the server dies later on an event for a generator
+ * that is no longer active.  Re-arming an initialised timer is what
+ * check_pings() does.
+ */
+static int account_timer_ready;
+
 static void account_timeout(struct Event* ev);
 
 /** Earliest deadline of anything in flight, or 0 if there is nothing. */
@@ -113,8 +126,12 @@ static void account_arm(void)
   if (!(deadline = account_deadline()))
     return;
 
-  timer_add(timer_init(&account_timer), account_timeout, 0, TT_ABSOLUTE,
-            deadline);
+  if (!account_timer_ready) {
+    timer_init(&account_timer);
+    account_timer_ready = 1;
+  }
+
+  timer_add(&account_timer, account_timeout, 0, TT_ABSOLUTE, deadline);
   account_timer_armed = 1;
 }
 
@@ -162,6 +179,8 @@ static const char* account_result_text[ACCOUNT_ERR_LAST] = {
   N_("that identity has no such account"),
   N_("that account is suspended"),
   N_("somebody else is using that nickname"),
+  N_("that nickname is registered already"),
+  N_("that address already holds as many accounts as it may"),
   N_("the identity service is not available"),
   N_("the identity service did not answer in time")
 };
@@ -281,10 +300,11 @@ int account_register_provider(struct ModuleHandle* mod,
    * tell from an outage.
    */
   if (!provider || !provider->ap_name || !provider->ap_verify
-      || !provider->ap_lookup || !provider->ap_list) {
+      || !provider->ap_lookup || !provider->ap_list
+      || !provider->ap_change) {
     log_write(LS_SYSTEM, L_ERROR, 0,
               "Refusing an identity provider that is missing a name, "
-              "ap_verify, ap_lookup or ap_list");
+              "ap_verify, ap_lookup, ap_list or ap_change");
     return 0;
   }
 
@@ -422,6 +442,33 @@ account_id_t account_verify(struct Client* cptr,
    * the entry can be freed underneath us.
    */
   (*account_provider->ap_verify)(id, req);
+
+  return id;
+}
+
+/** Ask for a change to the store.
+ * @param[in] cptr Client it is about.
+ * @param[in] req What to change.
+ * @param[in] done Called with the answer.
+ * @param[in] data Opaque pointer for \a done.
+ * @return The handle, or 0 if there is no provider.
+ */
+account_id_t account_change(struct Client* cptr,
+                            const struct AccountChange* req,
+                            AccountDoneFn done, void* data)
+{
+  struct AccountCall* call;
+  account_id_t id;
+
+  assert(0 != req);
+  assert(0 != done);
+
+  if (!(call = account_begin(cptr, done, NULL, NULL, data)))
+    return 0;
+
+  id = call->ac_id;
+
+  (*account_provider->ap_change)(id, req);
 
   return id;
 }

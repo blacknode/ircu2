@@ -56,7 +56,8 @@ struct json_t;
 enum IdentKind {
   IDENT_VERIFY,   /**< ap_verify(): is this credential good? */
   IDENT_LOOKUP,   /**< ap_lookup(): whose nickname is this? */
-  IDENT_LIST      /**< ap_list(): what does this address hold? */
+  IDENT_LIST,     /**< ap_list(): what does this address hold? */
+  IDENT_CHANGE    /**< ap_change(): make it so. */
 };
 
 /** What crosses to a worker thread and back.
@@ -106,6 +107,14 @@ struct IdentRequest {
    * worker_alloc() at the start, so that the only copy this module ever
    * makes is the one that crosses the queue. */
   struct IdentPwWork* ir_work;
+
+  /* --- a change --- */
+  enum AccountWrite ir_what;   /**< Which write. */
+  int  ir_max;                 /**< Accounts the address may hold. */
+  /** The password being set, waiting for a worker to hash it.  A second
+   * payload rather than a field, for ir_work's reason: it is going to
+   * cross a queue, so it is allocated where it has to end up. */
+  struct IdentPwWork* ir_make;
 };
 
 /** This module's handle; db_query() and cache_get() both want it. */
@@ -163,6 +172,15 @@ extern int ident_row_null(const struct DbResult* res, unsigned int row,
  */
 
 extern void ident_verify(account_id_t id, const struct AccountRequest* areq);
+extern void ident_change(account_id_t id, const struct AccountChange* req);
+
+/** Forget what the cache knows about a nickname.  Called after a write. */
+extern void ident_forget_nick(const char* canon);
+
+/** Fill in a worker payload with a password, ready to cross the queue.
+ * @return The payload, or NULL if there is no memory.
+ */
+extern struct IdentPwWork* ident_pw_new(const char* secret, size_t len);
 extern void ident_lookup(account_id_t id, const char* nick);
 extern void ident_list(account_id_t id, const char* email);
 extern void ident_cancel(account_id_t id);

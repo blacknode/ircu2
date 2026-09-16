@@ -68,7 +68,9 @@ static struct Client* const CLI_B = (struct Client*) 0x20;
 static int prov_verify_calls;
 static int prov_lookup_calls;
 static int prov_list_calls;
+static int prov_change_calls;
 static int prov_cancel_calls;
+static enum AccountWrite prov_last_what;
 static account_id_t prov_last_id;
 static char prov_last_authcid[ACCOUNT_EMAIL_MAX + 1];
 static char prov_last_nick[NICKLEN + 1];
@@ -79,7 +81,8 @@ static int prov_answer_now;
 static void prov_reset(void)
 {
   prov_verify_calls = prov_lookup_calls = prov_list_calls = 0;
-  prov_cancel_calls = 0;
+  prov_change_calls = prov_cancel_calls = 0;
+  prov_last_what = ACCOUNT_WRITE_REGISTER;
   prov_last_id = 0;
   prov_last_authcid[0] = '\0';
   prov_last_nick[0] = '\0';
@@ -111,6 +114,14 @@ static void prov_list(account_id_t id, const char* email)
   ircd_strncpy(prov_last_email, email, ACCOUNT_EMAIL_MAX);
 }
 
+static void prov_change(account_id_t id, const struct AccountChange* req)
+{
+  prov_change_calls++;
+  prov_last_id = id;
+  prov_last_what = req->ach_what;
+  ircd_strncpy(prov_last_email, req->ach_email, ACCOUNT_EMAIL_MAX);
+}
+
 static void prov_cancel(account_id_t id)
 {
   prov_cancel_calls++;
@@ -118,22 +129,22 @@ static void prov_cancel(account_id_t id)
 }
 
 static const struct AccountProvider provider = {
-  "test", prov_verify, prov_lookup, prov_list, prov_cancel
+  "test", prov_verify, prov_lookup, prov_list, prov_change, prov_cancel
 };
 
 /** A second provider, to prove only one may register. */
 static const struct AccountProvider provider_two = {
-  "other", prov_verify, prov_lookup, prov_list, prov_cancel
+  "other", prov_verify, prov_lookup, prov_list, prov_change, prov_cancel
 };
 
 /** One with a hole in it. */
 static const struct AccountProvider provider_broken = {
-  "broken", 0, prov_lookup, prov_list, prov_cancel
+  "broken", 0, prov_lookup, prov_list, prov_change, prov_cancel
 };
 
 /** One that can verify but cannot list, which is also a hole. */
 static const struct AccountProvider provider_no_list = {
-  "nolist", prov_verify, prov_lookup, 0, prov_cancel
+  "nolist", prov_verify, prov_lookup, 0, prov_change, prov_cancel
 };
 
 /* --- what the core was told ----------------------------------------- */
@@ -616,6 +627,37 @@ static void test_list_fails(void)
   printf("ok - a listing that fails carries no entries\n");
 }
 
+/** A change is asked of the provider and answered like anything else. */
+static void test_change(void)
+{
+  struct AccountChange req;
+  account_id_t id;
+
+  setup();
+  assert(account_register_provider(MOD_A, &provider));
+
+  memset(&req, 0, sizeof(req));
+  req.ach_what = ACCOUNT_WRITE_REGISTER;
+  req.ach_email = "maria@example.org";
+  req.ach_secret = "secreto";
+  req.ach_secretlen = 7;
+  req.ach_nick = "maria";
+  req.ach_max = 3;
+
+  id = account_change(CLI_A, &req, on_done, 0);
+  assert(id != 0);
+  assert(prov_change_calls == 1);
+  assert(prov_last_what == ACCOUNT_WRITE_REGISTER);
+  assert(0 == strcmp(prov_last_email, "maria@example.org"));
+
+  assert(account_complete(id, ACCOUNT_ERR_EXISTS, 0, 0, 0));
+  assert(done_calls == 1);
+  assert(done_result == ACCOUNT_ERR_EXISTS);
+  assert(account_pending_count() == 0);
+
+  printf("ok - a change goes to the provider and comes back\n");
+}
+
 int main(void)
 {
   test_register();
@@ -625,6 +667,7 @@ int main(void)
   test_lookup();
   test_list();
   test_list_fails();
+  test_change();
   test_client_gone();
   test_expire();
   test_provider_withdrawn();

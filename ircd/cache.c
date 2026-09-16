@@ -106,6 +106,19 @@ static struct Timer cache_timer;
 /** Whether #cache_timer is on the queue. */
 static int cache_timer_armed;
 
+/** Whether the timer struct has been through timer_init().
+ *
+ * Once, and never again.  timer_init() zeroes the generator's flags,
+ * GEN_MARKED among them, and that flag is what tells timer_add() it is
+ * being called from inside the timer's own expiry -- which is exactly
+ * where it is called from, every time a callback starts something new.
+ * Without the flag the timer is queued a second time while timer_run()
+ * still holds it, and the server dies later on an event for a generator
+ * that is no longer active.  Re-arming an initialised timer is what
+ * check_pings() does.
+ */
+static int cache_timer_ready;
+
 static void cache_timeout(struct Event* ev);
 
 /** Find a call by handle. */
@@ -144,8 +157,12 @@ static void cache_arm(void)
   if (!(deadline = cache_deadline()))
     return;
 
-  timer_add(timer_init(&cache_timer), cache_timeout, 0, TT_ABSOLUTE,
-            deadline);
+  if (!cache_timer_ready) {
+    timer_init(&cache_timer);
+    cache_timer_ready = 1;
+  }
+
+  timer_add(&cache_timer, cache_timeout, 0, TT_ABSOLUTE, deadline);
   cache_timer_armed = 1;
 }
 

@@ -169,6 +169,19 @@ static struct Timer hook_timer;
 /** Whether #hook_timer is on the queue. */
 static int hook_timer_armed;
 
+/** Whether the timer struct has been through timer_init().
+ *
+ * Once, and never again.  timer_init() zeroes the generator's flags,
+ * GEN_MARKED among them, and that flag is what tells timer_add() it is
+ * being called from inside the timer's own expiry -- which is exactly
+ * where it is called from, every time a callback starts something new.
+ * Without the flag the timer is queued a second time while timer_run()
+ * still holds it, and the server dies later on an event for a generator
+ * that is no longer active.  Re-arming an initialised timer is what
+ * check_pings() does.
+ */
+static int hook_timer_ready;
+
 static void hook_pending_timeout(struct Event* ev);
 
 /** Make sure the timer will fire by the earliest outstanding deadline.
@@ -189,8 +202,12 @@ static void hook_pending_arm(void)
   if (!deadline)
     return;
 
-  timer_add(timer_init(&hook_timer), hook_pending_timeout, 0, TT_ABSOLUTE,
-            deadline);
+  if (!hook_timer_ready) {
+    timer_init(&hook_timer);
+    hook_timer_ready = 1;
+  }
+
+  timer_add(&hook_timer, hook_pending_timeout, 0, TT_ABSOLUTE, deadline);
   hook_timer_armed = 1;
 }
 

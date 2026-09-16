@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ircu2\n"
 "Report-Msgid-Bugs-To: coder-com@undernet.org\n"
-"POT-Creation-Date: 2026-09-16 02:44+0000\n"
+"POT-Creation-Date: 2026-09-16 09:21+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -22,37 +22,47 @@ msgstr ""
 msgid "%C :on %u ca %u(%u) ft %u(%u)%s"
 msgstr ""
 
-#: ircd/account.c:160
+#: ircd/account.c:177
 #, no-c-format
 msgid "authentication succeeded"
 msgstr ""
 
-#: ircd/account.c:161
+#: ircd/account.c:178
 #, no-c-format
 msgid "no such account, or the password is wrong"
 msgstr ""
 
-#: ircd/account.c:162
+#: ircd/account.c:179
 #, no-c-format
 msgid "that identity has no such account"
 msgstr ""
 
-#: ircd/account.c:163
+#: ircd/account.c:180
 #, no-c-format
 msgid "that account is suspended"
 msgstr ""
 
-#: ircd/account.c:164
+#: ircd/account.c:181
 #, no-c-format
 msgid "somebody else is using that nickname"
 msgstr ""
 
-#: ircd/account.c:165
+#: ircd/account.c:182
+#, no-c-format
+msgid "that nickname is registered already"
+msgstr ""
+
+#: ircd/account.c:183
+#, no-c-format
+msgid "that address already holds as many accounts as it may"
+msgstr ""
+
+#: ircd/account.c:184
 #, no-c-format
 msgid "the identity service is not available"
 msgstr ""
 
-#: ircd/account.c:166
+#: ircd/account.c:185
 #, no-c-format
 msgid "the identity service did not answer in time"
 msgstr ""

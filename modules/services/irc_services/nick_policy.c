@@ -188,8 +188,15 @@ static void nick_arm(void)
   if (nick_timer_armed)
     timer_chg(&nick_timer, TT_ABSOLUTE, deadline);
   else {
-    timer_add(timer_init(&nick_timer), nick_timeout, NULL, TT_ABSOLUTE,
-              deadline);
+    /* Never timer_init() here.  That zeroes the generator's flags,
+     * GEN_MARKED among them, and GEN_MARKED is what tells timer_add() it
+     * is being called from inside the timer's own expiry -- which is
+     * where it is called from every time a rename starts something new.
+     * Without it the timer is queued a second time while timer_run()
+     * still holds it, and the server dies later on an event for a
+     * generator that is no longer active.  Initialised once, in
+     * nickpolicy_init(). */
+    timer_add(&nick_timer, nick_timeout, NULL, TT_ABSOLUTE, deadline);
     nick_timer_armed = 1;
   }
 }
@@ -200,12 +207,16 @@ static void nick_arm(void)
 
 /** Say something to \a cptr as NickServ, if there is a NickServ.
  *
+ * Not static, because an answer that arrives long after the command that
+ * asked for it -- which is every answer a write gets -- has no
+ * #ServiceCall left to go through svc_reply().
+ *
  * Silence when there is no bot is deliberate rather than a fallback to a
  * server notice: the freeze still happens, and a message from the server
  * about identifying to a service that is not running would send the user
  * somewhere there is nobody to answer.
  */
-static void nick_tell(struct Client* cptr, const char* fmt, ...)
+void nick_tell(struct Client* cptr, const char* fmt, ...)
 {
   struct Client* bot = svc_bot_of_type("nickserv");
   char buf[BUFSIZE];

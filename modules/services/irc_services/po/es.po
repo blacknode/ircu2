@@ -224,3 +224,67 @@ msgstr "STATUS"
 #: modules/services/irc_services/svc_nickserv.c:133
 msgid "Say whether you are identified."
 msgstr "Dice si estás identificado."
+
+#: modules/services/irc_services/svc_nickserv.c:191
+#, no-c-format
+msgid "That did not work: %s"
+msgstr "Eso no ha funcionado: %s"
+
+#: modules/services/irc_services/svc_nickserv.c:197
+#, no-c-format
+msgid "%s is yours."
+msgstr "%s es tuyo."
+
+#: modules/services/irc_services/svc_nickserv.c:204
+#, no-c-format
+msgid "Registered, but the nickname could not be taken; identify when you can."
+msgstr "Registrado, pero no se ha podido tomar el nick; identifícate cuando puedas."
+
+#: modules/services/irc_services/svc_nickserv.c:209
+#, no-c-format
+msgid "Your password has been changed."
+msgstr "Se ha cambiado tu contraseña."
+
+#: modules/services/irc_services/svc_nickserv.c:213
+#, no-c-format
+msgid "%s is no longer registered."
+msgstr "%s ya no está registrado."
+
+#: modules/services/irc_services/svc_nickserv.c:245
+#, no-c-format
+msgid "Use the service on your own server."
+msgstr "Usa el servicio de tu propio servidor."
+
+#: modules/services/irc_services/svc_nickserv.c:279
+#, no-c-format
+msgid "You are identified as %s.  Change nickname to the one you want to register first."
+msgstr "Estás identificado como %s.  Cambia primero al nick que quieras registrar."
+
+#: modules/services/irc_services/svc_nickserv.c:312
+#, no-c-format
+msgid "Identify first."
+msgstr "Identifícate primero."
+
+#: modules/services/irc_services/svc_nickserv.c:340
+msgid "REGISTER <address> <password>"
+msgstr "REGISTER <dirección> <contraseña>"
+
+#: modules/services/irc_services/svc_nickserv.c:340
+msgid "Register the nickname you are using."
+msgstr "Registra el nick que estás usando."
+
+#: modules/services/irc_services/svc_nickserv.c:343
+msgid "PASSWORD <old> <new>"
+msgstr "PASSWORD <vieja> <nueva>"
+
+#: modules/services/irc_services/svc_nickserv.c:343
+msgid "Change the password of the address you identified with."
+msgstr "Cambia la contraseña de la dirección con la que te identificaste."
+
+#: modules/services/irc_services/svc_nickserv.c:346
+msgid "DROP <password>"
+msgstr "DROP <contraseña>"
+
+#: modules/services/irc_services/svc_nickserv.c:346
+msgid "Give up the nickname you are identified to."
+msgstr "Da de baja el nick al que estás identificado."

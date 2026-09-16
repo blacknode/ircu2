@@ -175,6 +175,14 @@ extern struct Client* svc_bot_of_type(const char* type);
  * nick_policy.c -- the grace period of proposal 007 sections 5 to 7.
  */
 
+/** Say something to \a cptr as NickServ, if this server runs one.
+ *
+ * What svc_reply() is for a command that answers where it stands; this is
+ * for the answers that arrive later, when the call is long gone.  The
+ * format is translated for \a cptr, so a literal here is a msgid.
+ */
+extern void nick_tell(struct Client* cptr, const char* fmt, ...);
+
 /** Register the hooks the policy runs on.  Zero on failure. */
 extern int nickpolicy_init(struct ModuleHandle* mod);
 

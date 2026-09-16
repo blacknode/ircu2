@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ircu2\n"
 "Report-Msgid-Bugs-To: coder-com@undernet.org\n"
-"POT-Creation-Date: 2026-09-16 03:53+0000\n"
+"POT-Creation-Date: 2026-09-16 09:21+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -33,22 +33,22 @@ msgstr ""
 msgid "Not enough parameters.  Syntax: %s"
 msgstr ""
 
-#: modules/services/irc_services/nick_policy.c:286
+#: modules/services/irc_services/nick_policy.c:297
 #, no-c-format
 msgid "This nickname is registered.  Identify with /msg %s IDENTIFY <address> <password> within %d seconds, or you will be renamed."
 msgstr ""
 
-#: modules/services/irc_services/nick_policy.c:310
+#: modules/services/irc_services/nick_policy.c:321
 #, no-c-format
 msgid "That nickname is not registered; you are free to use it."
 msgstr ""
 
-#: modules/services/irc_services/nick_policy.c:426
+#: modules/services/irc_services/nick_policy.c:437
 #, no-c-format
 msgid "Nickname services are not available, so this nickname could not be checked."
 msgstr ""
 
-#: modules/services/irc_services/nick_policy.c:508
+#: modules/services/irc_services/nick_policy.c:519
 #, no-c-format
 msgid "You did not identify in time; you are being renamed."
 msgstr ""
@@ -150,107 +150,181 @@ msgstr ""
 msgid "Which services these are, and where they run."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:61
+#: modules/services/irc_services/svc_nickserv.c:68
 #, no-c-format
 msgid "%s is not online."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:65
+#: modules/services/irc_services/svc_nickserv.c:72
 #, no-c-format
 msgid "%s is %s@%s (%s), on %s."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:69
+#: modules/services/irc_services/svc_nickserv.c:76
 #, no-c-format
 msgid "%s is a registered user."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:71
+#: modules/services/irc_services/svc_nickserv.c:78
 #, no-c-format
 msgid "%s is a service of the network."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:86
+#: modules/services/irc_services/svc_nickserv.c:93
 #, no-c-format
 msgid "Identify with the service on your own server."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:93
+#: modules/services/irc_services/svc_nickserv.c:100
+#: modules/services/irc_services/svc_nickserv.c:256
 #, no-c-format
 msgid "Do not send a password to a channel.  Change it."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:121
+#: modules/services/irc_services/svc_nickserv.c:128
 #, no-c-format
 msgid "Another login is already under way."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:125
+#: modules/services/irc_services/svc_nickserv.c:132
 #, no-c-format
 msgid "You have already authenticated."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:129
+#: modules/services/irc_services/svc_nickserv.c:136
 #, no-c-format
 msgid "Too many failed attempts on this connection."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:133
+#: modules/services/irc_services/svc_nickserv.c:140
+#: modules/services/irc_services/svc_nickserv.c:261
 #, no-c-format
 msgid "This server will not take a password over an unencrypted connection."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:138
+#: modules/services/irc_services/svc_nickserv.c:145
+#: modules/services/irc_services/svc_nickserv.c:238
 #, no-c-format
 msgid "Nickname services are not available right now."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:149
+#: modules/services/irc_services/svc_nickserv.c:191
+#, no-c-format
+msgid "That did not work: %s"
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:198
+#, no-c-format
+msgid "%s is yours."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:205
+#, no-c-format
+msgid "Registered, but the nickname could not be taken; identify when you can."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:210
+#, no-c-format
+msgid "Your password has been changed."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:214
+#, no-c-format
+msgid "%s is no longer registered."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:251
+#, no-c-format
+msgid "Use the service on your own server."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:279
+#, no-c-format
+msgid "You are identified as %s.  Change nickname to the one you want to register first."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:313
+#: modules/services/irc_services/svc_nickserv.c:338
+#, no-c-format
+msgid "Identify first."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:360
 #, no-c-format
 msgid "You are identified as %s."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:151
+#: modules/services/irc_services/svc_nickserv.c:362
 #, no-c-format
 msgid "You are not identified."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:154
+#: modules/services/irc_services/svc_nickserv.c:365
 #, no-c-format
 msgid "This nickname is registered and you have not proved it is yours, so you cannot do anything else until you identify or are renamed."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:160
+#: modules/services/irc_services/svc_nickserv.c:371
 #, no-c-format
 msgid "IDENTIFY <address> <password> [<account>]"
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:161
+#: modules/services/irc_services/svc_nickserv.c:372
 #, no-c-format
 msgid "Prove an account is yours."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:163
+#: modules/services/irc_services/svc_nickserv.c:374
+#, no-c-format
+msgid "REGISTER <address> <password>"
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:375
+#, no-c-format
+msgid "Register the nickname you are using."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:377
+#, no-c-format
+msgid "PASSWORD <old> <new>"
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:378
+#, no-c-format
+msgid "Change the password of the address you identified with."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:380
+#, no-c-format
+msgid "DROP <password>"
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:381
+#, no-c-format
+msgid "Give up the nickname you are identified to."
+msgstr ""
+
+#: modules/services/irc_services/svc_nickserv.c:383
 #, no-c-format
 msgid "STATUS"
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:163
+#: modules/services/irc_services/svc_nickserv.c:383
 #, no-c-format
 msgid "Say whether you are identified."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:165
+#: modules/services/irc_services/svc_nickserv.c:385
 #, no-c-format
 msgid "INFO <nick>"
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:165
+#: modules/services/irc_services/svc_nickserv.c:385
 #, no-c-format
 msgid "Show what the network knows about a nick."
 msgstr ""
 
-#: modules/services/irc_services/svc_nickserv.c:172
+#: modules/services/irc_services/svc_nickserv.c:392
 #, no-c-format
 msgid "Nickname services"
 msgstr ""

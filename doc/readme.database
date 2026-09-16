@@ -303,6 +303,35 @@ builds them again from the new configuration.  An unchanged block changes
 nothing and costs nothing.
 
 
+ONE STATEMENT, AND WHAT TO DO WHEN THAT IS NOT ENOUGH
+=====================================================
+
+db_query() and db_exec() run one statement on one connection out of a
+pool.  There is no db_begin(): a transaction has to keep the same
+connection from BEGIN to COMMIT, and a pooled connection is not the
+caller's to keep -- holding one across several round trips to a
+single-threaded server is how a pool of four ends up with four callers
+each waiting for the other.
+
+That is not a limitation to work around with three statements and hope.
+Work that has to be atomic goes into a function, created by the module's
+own migration, and the module calls it with one statement:
+
+  SELECT * FROM account_register($1, $2, $3, $4, $5)
+
+A statement sent on its own runs inside an implicit transaction, so
+everything the function does is one transaction -- including
+pg_advisory_xact_lock(), whose lock is held for exactly that statement and
+released when it ends, server crash included.  The locking then lives
+beside the tables it protects, in the same migration, rather than in C
+that has to remember to take the locks in the same order every time.
+
+modules/services/identity/migrations/v2_account_writes.up.sql is the
+worked example: counting an address's accounts and then inserting one is a
+race the moment there are two servers, and the count and the insert are
+one function call.
+
+
 MIGRATIONS
 ==========
 

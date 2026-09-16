@@ -205,9 +205,20 @@ query and nothing else — while a *database* that is down gives
 lower-cased, because an address is not a nickname. The pepper comes from
 `$IRCU_PASSWORD_PEPPER`, not the config file. `cert_fingerprint` is what
 SASL EXTERNAL matches on, and matching it *is* the proof, so there is no
-hash to check. Writing — registering an account, suspending one, changing a
-password — is not here: it arrives with `nickserv`, its only caller, and
-brings §9.1's advisory locks with it.
+hash to check. **Writing goes through `ap_change()`** — one entry point and
+one `struct AccountChange` for register, password and drop, `DbQuery`'s
+shape and for its reason — and every write is read the row, one Argon2 hop,
+one statement. That statement calls a **SQL function** created by migration
+v2, not SQL this module composes: counting an address's accounts and then
+inserting one is a race between two servers, `db.h` has no transactions
+(a pooled connection is not the caller's to hold), and a statement sent on
+its own runs in an implicit transaction — so `pg_advisory_xact_lock()`
+inside a function called by one statement is held for exactly that
+statement. The locks are taken address-then-nickname, always in that order,
+because the only thing preventing a deadlock is that nobody writes the
+other order. The unique indexes stay, as what catches a hand-written
+`INSERT`. Every successful write `cache_del()`s the nickname rather than
+waiting for the TTL, because the store is shared.
 
 **The grace period** (`modules/services/irc_services/nick_policy.c`,
 proposal 007 §§5–7). What happens to a local client using a registered
@@ -238,6 +249,25 @@ with nobody watching. `/msg NickServ IDENTIFY` hands its credential to
 the nickname in use when the client is frozen, since that is the one it is
 being asked to prove; `svc_dispatch()` wipes its copy of every line on
 every way out, so a command that carries a password cannot forget to.
+`REGISTER <address> <password>` takes the nickname **in use** (an account
+is a nickname, so registering one you are not wearing is registering a name
+you have not shown you can hold) and logs the client in on the spot with
+`account_login()` — the password was just checked or just set, so asking
+again would be ceremony; `PASSWORD <old> <new>` and `DROP <password>` need
+`cli_user()->email`, and a drop ends with `account_logout()`, because a
+`+r` to an account that no longer exists is not a state the model defines.
+`"max_accounts"` rides in the request as `ach_max`: the limit is the
+service's policy, but enforcing it has to happen inside the lock.
+
+**Never `timer_add(timer_init(&t), …)` from inside `t`'s own callback.**
+`timer_init()` zeroes the generator's flags, `GEN_MARKED` among them, and
+that flag is the only thing telling `timer_add()` it is re-arming a timer
+`timer_run()` still holds — without it the timer is queued twice and the
+server dies later on an event for a generator that is no longer active.
+Every deadline timer here re-arms from inside its own expiry (a callback
+starts new work), so `account.c`, `cache.c`, `hooks.c` and `nick_policy.c`
+all `timer_init()` once and `timer_add()` the same struct thereafter, the
+way `check_pings()` does.
 
 **Identity, in progress** (proposal 007). Two pieces of core state are in
 place ahead of the protocol that will drive them. `cli_user()->email` is the

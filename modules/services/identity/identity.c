@@ -64,6 +64,7 @@
 #include "ircd_env.h"
 #include "ircd_log.h"
 #include "ircd_sha256.h"   /* ircd_crypto_wipe() */
+#include "ircd_snprintf.h"
 #include "ircd_string.h"
 #include "module.h"
 #include "worker.h"
@@ -86,6 +87,7 @@ static const struct AccountProvider ident_provider = {
   ident_verify,
   ident_lookup,
   ident_list,
+  ident_change,
   ident_cancel
 };
 
@@ -150,11 +152,17 @@ void ident_free(struct IdentRequest* req)
     }
   }
 
-  /* The password, if it never got as far as a worker. */
+  /* The passwords, if they never got as far as a worker. */
   if (req->ir_work) {
     ircd_crypto_wipe(req->ir_work, sizeof(*req->ir_work));
     worker_free(req->ir_work);
     req->ir_work = NULL;
+  }
+
+  if (req->ir_make) {
+    ircd_crypto_wipe(req->ir_make, sizeof(*req->ir_make));
+    worker_free(req->ir_make);
+    req->ir_make = NULL;
   }
 
   MyFree(req);
@@ -319,6 +327,58 @@ void ident_pw_set_pepper(struct IdentPwWork* work)
   memcpy(work->pw_pepper, pepper, len);
   work->pw_pepper[len] = '\0';
   work->pw_pepperlen = len;
+}
+
+/** Fill in a worker payload with a password, ready to cross the queue.
+ *
+ * Allocated with worker_alloc() from the start, so that the one copy this
+ * module makes of a password is the one that ends up on the far side of a
+ * queue rather than a copy of a copy.
+ *
+ * @param[in] secret The password.
+ * @param[in] len Its length.
+ * @return The payload, or NULL.
+ */
+struct IdentPwWork* ident_pw_new(const char* secret, size_t len)
+{
+  struct IdentPwWork* work;
+
+  if (!secret || !len || len > SASL_SECRET_MAX)
+    return NULL;
+
+  if (!(work = (struct IdentPwWork*) worker_alloc(sizeof(*work))))
+    return NULL;
+
+  memset(work, 0, sizeof(*work));
+  memcpy(work->pw_secret, secret, len);
+  work->pw_secret[len] = '\0';
+  work->pw_secretlen = len;
+  ident_pw_set_pepper(work);
+
+  return work;
+}
+
+/** Forget what the cache knows about a nickname.
+ *
+ * Every write calls this, and it is the half of the caching rule that
+ * makes the other half safe: the store is shared, so one delete here is a
+ * delete for every server on the network.  Waiting for the TTL instead
+ * would mean a nickname registered on one server reading as free on the
+ * rest for as long as five minutes, which is exactly long enough for
+ * somebody to take it.
+ *
+ * @param[in] canon Canonical nickname.
+ */
+void ident_forget_nick(const char* canon)
+{
+  char key[CACHE_KEY_MAX + 1];
+
+  if (EmptyString(canon) || !cache_available())
+    return;
+
+  ircd_snprintf(0, key, sizeof(key), "nick:%s", canon);
+
+  cache_del(ident_mod, key, NULL, NULL);
 }
 
 /** Release a worker payload, wiping the password first.

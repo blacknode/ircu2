@@ -139,9 +139,24 @@ struct AccountProvider {
   void (*ap_lookup)(account_id_t id, const char* nick);
   /* ¿Qué cuentas tiene esta dirección?  La que responde a ACCOUNT LIST. */
   void (*ap_list)(account_id_t id, const char* email);
+  /* Escribir: dar de alta, cambiar la contraseña, dar de baja. */
+  void (*ap_change)(account_id_t id, const struct AccountChange* req);
   void (*ap_cancel)(account_id_t id);
 };
 ```
+
+**Una sola `ap_change()` y una sola `struct AccountChange` para las tres
+escrituras**, con la forma de `DbQuery` y por su razón: un puntero por
+operación serían tres cosas que implementar, tres que documentar y tres en
+las que equivocarse, cuando lo único que cambia entre ellas es qué campos
+van rellenos. Toda escritura lleva la contraseña actual, porque toda
+escritura es un acto que sólo el dueño de la dirección puede hacer y el
+proveedor es lo único capaz de saber si éste lo es — salvo el alta de una
+dirección que aún no existe, donde la contraseña dada es la que se fija.
+`ach_max` viaja en la petición y no vive en el proveedor: el límite lo
+decide el servicio que administra las cuentas, pero contarlas y luego
+insertar sólo es seguro si las dos cosas son la misma transacción, que es
+del proveedor.
 
 Las tres son obligatorias. Un proveedor que verificara pero no supiera
 listar haría que `ACCOUNT LIST` contestase «el servicio de identidad no está
@@ -516,20 +531,42 @@ nick. La normalización la hace el módulo antes de escribir.
 Contar las cuentas de un email y luego insertar es una carrera en cuanto hay
 dos servidores: los dos cuentan dos, los dos insertan, el email acaba con
 cuatro. La transacción empieza tomando un cerrojo consultivo sobre el email, y
-otro sobre el nick canónico:
+otro sobre el nick canónico.
+
+**Y va dentro de una función de SQL, no en sentencias que el módulo componga.**
+`db.h` no tiene transacciones, y no por descuido: una transacción tiene que
+quedarse con la misma conexión desde el `BEGIN` hasta el `COMMIT`, y una
+conexión del pool no es del llamante para quedársela. Pero una sentencia
+suelta corre dentro de una transacción implícita, así que un
+`pg_advisory_xact_lock()` tomado dentro de una función llamada por una sola
+sentencia se mantiene exactamente lo que dura esa sentencia. De modo que:
 
 ```sql
-BEGIN;
-  SELECT pg_advisory_xact_lock(hashtext('ident:' || $1));   -- el email
-  SELECT pg_advisory_xact_lock(hashtext('nick:'  || $2));   -- el nick
+CREATE FUNCTION account_register(p_email text, p_hash text, p_nick text,
+                                 p_canon text, p_max integer)
+RETURNS TABLE (status text, account text, is_new boolean) AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('ident:' || p_email));
+  PERFORM pg_advisory_xact_lock(hashtext('nick:'  || p_canon));
   -- contar, comprobar el límite, insertar
-COMMIT;
+END; $$ LANGUAGE plpgsql;
 ```
+
+y el módulo manda `SELECT * FROM account_register($1,$2,$3,$4,$5)`. El
+cerrojo queda al lado de las tablas que protege, en la misma migración, en
+vez de en C que tiene que acordarse de tomarlos siempre en el mismo orden.
+Y ese orden es **el email primero y el nick después, siempre**: dos
+transacciones tomando los mismos dos cerrojos al revés es un abrazo mortal,
+y lo único que lo impide es que nadie escriba el otro orden.
 
 El cerrojo es de transacción (`_xact_`) a propósito: se suelta solo con el
 `COMMIT` o el `ROLLBACK`, así que un servidor que se muera a mitad no deja un
 email bloqueado para siempre. El `UNIQUE` sigue estando para lo que el cerrojo
 no cubre — alguien insertando a mano.
+
+**Un `DROP` que se lleva la cuenta por defecto asciende a otra.** Un email
+con cuentas y sin ninguna por defecto es un email que no puede identificarse
+sin nombrar una, que es un estado que el resto del modelo no sabe explicar.
 
 **La verificación no bloquea.** `ap_verify()` lanza la consulta y vuelve;
 cuando llegan las filas, **el Argon2 va a un `worker`** —`ircd_pwhash_verify()`
@@ -698,13 +735,15 @@ Cada punto compila, pasa pruebas y se sube por separado.
    alta una cuenta, suspenderla, cambiar una contraseña— va con `nickserv`,
    que es su único llamante, y lleva los cerrojos de §9.1 consigo: una API
    de escritura sin nadie que la use sería API inventada a ciegas.
-8. **El plazo de gracia** *(hecho)* — dentro de `irc_services`, no en un
-   módulo aparte: el bot de `Service { type = "nickserv"; }` ya lo crea
-   ese módulo, y dos módulos peleándose por el mismo bloque no es una
-   separación, es una colisión. La política vive en `nick_policy.c` y la
-   voz en `svc_nickserv.c`, con sus opciones dentro del `Service{}` que ya
-   lo declara. Falta la escritura: dar de alta una cuenta, suspenderla o
-   cambiar una contraseña, con los cerrojos de §9.1.
+8. **El plazo de gracia y la escritura** *(hecho)* — dentro de
+   `irc_services`, no en un módulo aparte: el bot de
+   `Service { type = "nickserv"; }` ya lo crea ese módulo, y dos módulos
+   peleándose por el mismo bloque no es una separación, es una colisión.
+   La política vive en `nick_policy.c` y la voz y los comandos en
+   `svc_nickserv.c`, con sus opciones dentro del `Service{}` que ya lo
+   declara. `REGISTER`, `PASSWORD` y `DROP` escriben por `ap_change()`, y
+   los cerrojos están en la migración v2 (§9.1). Queda la verificación del
+   correo, que no toca `struct Client` y puede ir cuando haga falta.
 9. **Documentación y pruebas** — `doc/readme.accounting` reescrito entero,
    `doc/readme.sasl`, y las de integración: que el email no cruza el enlace,
    que un congelado no puede hacer nada, que el `guest-*` ocurre en los cuatro

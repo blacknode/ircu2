@@ -351,6 +351,9 @@ _TOPOLOGY_ORDER = ["network", "hub", "limits", "identity", "dns", "nf_compat",
 
 _active_topology = None
 
+# Bumped every time a topology is actually started; see topology_generation().
+_topology_generation = 0
+
 
 def _required_topology(fixturenames):
     """Topology a test needs, derived from its (transitive) fixture closure."""
@@ -370,7 +373,7 @@ def _required_topology(fixturenames):
 
 
 def _ensure_topology(name):
-    global _active_topology
+    global _active_topology, _topology_generation
     if _active_topology in _SATISFIED_BY[name]:
         return
     # The starter begins by tearing everything down; forget the old
@@ -379,6 +382,25 @@ def _ensure_topology(name):
     _active_topology = None
     _TOPOLOGIES[name]()
     _active_topology = name
+    _topology_generation += 1
+
+
+@pytest.fixture
+def topology_generation():
+    """How many times a topology has been started in this session.
+
+    For a fixture that builds state *inside* a container -- the identity
+    schema, applied with /MODULE MIGRATION APPLY -- and wants to build it
+    once rather than once per test.  It cannot simply be session-scoped:
+    a session-scoped fixture is set up before the function-scoped autouse
+    one that starts the containers, so it would run against a port that
+    nothing is listening on.  Depending on this instead keeps the fixture
+    function-scoped (so it runs *after* the topology is up) while letting
+    it skip the work when nothing has restarted -- and `_start_services`
+    recreates the containers, so a cache that survived a restart would be
+    a schema that is no longer there.
+    """
+    return _topology_generation
 
 
 @pytest.fixture(autouse=True)

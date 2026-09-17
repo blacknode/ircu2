@@ -91,15 +91,28 @@ async def _apply(client, module):
     raise AssertionError(f"migrations for {module} never finished")
 
 
-@pytest.fixture(scope="session")
-async def schema(ircd_identity):
+# Which topology generation the schema was applied to, so that it is applied
+# once per container and not once per test.  See topology_generation() in
+# conftest.py for why this is not simply a session-scoped fixture.
+_schema_generation = None
+
+
+@pytest.fixture
+async def schema(ircd_identity, topology_generation):
     """Create both schemas once, the way an operator would."""
+    global _schema_generation
+
+    if _schema_generation == topology_generation:
+        return True
+
     client = await _oper(ircd_identity)
     try:
         await _apply(client, "identity")
         await _apply(client, "history")
     finally:
         await client.disconnect()
+
+    _schema_generation = topology_generation
     return True
 
 

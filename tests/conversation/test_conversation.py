@@ -71,8 +71,19 @@ async def _apply(client, module):
     raise AssertionError(f"migrations for {module} never finished")
 
 
-@pytest.fixture(scope="session")
-async def schema(ircd_identity):
+# Which topology generation the schema was applied to, so that it is applied
+# once per container and not once per test.  See topology_generation() in
+# conftest.py for why this is not simply a session-scoped fixture.
+_schema_generation = None
+
+
+@pytest.fixture
+async def schema(ircd_identity, topology_generation):
+    global _schema_generation
+
+    if _schema_generation == topology_generation:
+        return True
+
     client = IRCClient()
     await client.connect(ircd_identity["host"], ircd_identity["port"])
     await client.register(f"cvoper{TAG}", f"cvoper{TAG}", "Conversation Oper")
@@ -83,6 +94,8 @@ async def schema(ircd_identity):
         await _apply(client, "history")
     finally:
         await client.disconnect()
+
+    _schema_generation = topology_generation
     return True
 
 

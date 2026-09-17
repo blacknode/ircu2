@@ -118,44 +118,55 @@ def _numeric(msgs, code):
     return None
 
 
-@pytest.fixture(scope="session")
-async def schema(ircd_identity):
-    """Apply the identity module's migrations, once per session.
+# Which topology generation the schema was applied to, so that it is applied
+# once per container and not once per test.  See topology_generation() in
+# conftest.py for why this is not simply a session-scoped fixture.
+_schema_generation = None
+
+
+@pytest.fixture
+async def schema(ircd_identity, topology_generation):
+    """Apply the identity module's migrations, once per container.
 
     /MODULE MIGRATION APPLY is what an operator runs, so running it here
     covers the path a deployment takes rather than reaching around it with
     psql.
     """
-    client = IRCClient()
-    await client.connect(ircd_identity["host"], ircd_identity["port"])
-    try:
-        await client.register("migrator", "oper", "Migrator")
-        await _drain(client)
-        await _oper(client)
+    global _schema_generation
 
-        # Applying is asynchronous and idempotent: "Nothing to apply" on a
-        # container that has already been through this.  Either way the
-        # question that matters is what STATUS says afterwards, so ask
-        # that until nothing is pending rather than trying to read the
-        # running commentary.
-        await client.send("MODULE MIGRATION APPLY identity")
-        await _drain(client, timeout=2.0)
+    if _schema_generation != topology_generation:
+        client = IRCClient()
+        await client.connect(ircd_identity["host"], ircd_identity["port"])
+        try:
+            await client.register("migrator", "oper", "Migrator")
+            await _drain(client)
+            await _oper(client)
 
-        deadline = asyncio.get_running_loop().time() + 90.0
-        status = ""
-        while asyncio.get_running_loop().time() < deadline:
-            await client.send("MODULE MIGRATION STATUS identity")
-            lines = await _read_notices(client, timeout=20.0)
-            status = " ".join(lines)
-            if status and "pending" not in status:
-                break
-            await asyncio.sleep(1.0)
+            # Applying is asynchronous and idempotent: "Nothing to apply" on
+            # a container that has already been through this.  Either way the
+            # question that matters is what STATUS says afterwards, so ask
+            # that until nothing is pending rather than trying to read the
+            # running commentary.
+            await client.send("MODULE MIGRATION APPLY identity")
+            await _drain(client, timeout=2.0)
 
-        assert status, "MODULE MIGRATION STATUS said nothing"
-        assert "pending" not in status, status
-        assert "applied" in status, status
-    finally:
-        await _quit(client)
+            deadline = asyncio.get_running_loop().time() + 90.0
+            status = ""
+            while asyncio.get_running_loop().time() < deadline:
+                await client.send("MODULE MIGRATION STATUS identity")
+                lines = await _read_notices(client, timeout=20.0)
+                status = " ".join(lines)
+                if status and "pending" not in status:
+                    break
+                await asyncio.sleep(1.0)
+
+            assert status, "MODULE MIGRATION STATUS said nothing"
+            assert "pending" not in status, status
+            assert "applied" in status, status
+        finally:
+            await _quit(client)
+
+        _schema_generation = topology_generation
 
     yield
 

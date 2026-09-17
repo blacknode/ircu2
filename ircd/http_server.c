@@ -64,6 +64,8 @@
  */
 #include "config.h"
 
+#include <dirent.h>
+
 #include "http_server.h"
 
 #include "http.h"
@@ -120,6 +122,18 @@ struct HttpXfer {
   struct HttpHeader hx_reply[HTTP_HEADERS_MAX];
   size_t hx_replylen;
 
+  /* A body too big to carry: the worker wrote it here instead, and what
+   * crosses is the path and the size.  Empty for every ordinary request,
+   * which is nearly all of them. */
+  char   hx_file[HTTPD_PATHLEN + 1];
+  size_t hx_filelen;
+
+  /* And the same the other way: a file to send instead of a body, with
+   * the conditional headers of the request it answers. */
+  char   hx_sendfile[HTTPD_PATHLEN + 1];
+  char   hx_range[HTTP_HVALUE_MAX + 1];
+  char   hx_inm[HTTP_HVALUE_MAX + 1];
+
   char   hx_body[HTTP_BODY_MAX + 1];      /**< Request, then reply. */
 };
 
@@ -131,6 +145,9 @@ struct HttpdArgs {
   char ha_key[HTTPD_PATHLEN + 1];
   int  ha_max;                            /**< Connections at once. */
   int  ha_tls;                            /**< The URL says https. */
+  char ha_spool[HTTPD_PATHLEN + 1];       /**< Where a big body is
+                                               written, or "". */
+  unsigned int ha_upload_max;             /**< Largest such body, or 0. */
 };
 
 /** What the worker tells the main thread once it has tried to listen. */
@@ -176,6 +193,39 @@ static int httpd_conn_max;
 static struct mg_str httpd_cert;
 static struct mg_str httpd_key;
 
+/** Worker-side: where a body too big to carry is written, and how big it
+ * may be.  Empty and zero when this server takes no uploads. */
+static char httpd_spool[HTTPD_PATHLEN + 1];
+static unsigned int httpd_upload_max;
+
+/** One request whose body is being written to disk.  Worker thread only.
+ *
+ * The headers arrive first and the body afterwards, so what the request
+ * *is* has to be kept somewhere while Mongoose streams the rest of it.
+ * Not in @c mg_connection::data -- the upload helper owns that -- so a
+ * small list of its own, which is also where the spool file is remembered
+ * until the answer goes out and it can be deleted.
+ */
+struct HttpdUpload {
+  struct HttpdUpload* hu_next;
+  unsigned long       hu_conn;             /**< mg_connection::id. */
+  struct HttpXfer*    hu_xfer;             /**< Headers, already copied. */
+  char                hu_path[HTTPD_PATHLEN + 1]; /**< The spool file. */
+};
+
+/** Uploads in progress, and answers whose file is not deleted yet. */
+static struct HttpdUpload* httpd_uploads;
+
+/** The listening connection, kept for what an upload borrows from it.
+ *
+ * mg_http_start_upload() takes the connection's handlers over while the
+ * body is arriving, and they have to be given back afterwards; the HTTP
+ * protocol handler is Mongoose's own and therefore not a symbol this file
+ * has.  An accepted connection inherits it from the listener, which is
+ * where it is read back from. */
+static struct mg_connection* httpd_listener;
+
+static void httpd_event(struct mg_connection* c, int ev, void* ev_data);
 static void http_server_deliver(struct WorkTask* task);
 static void http_server_ready(struct WorkTask* task);
 static void http_server_respond(http_req_t id, const struct HttpResponse* res);
@@ -261,20 +311,24 @@ static void httpd_status(struct mg_connection* c, int status,
   mg_http_reply(c, status, "Content-Type: text/plain\r\n", "%s\n", text);
 }
 
-/** Turn a parsed request into a transfer and post it.  Worker thread.
- * @return Non-zero if it went up.
+/** Copy everything but the body of a parsed request into a transfer.
+ *
+ * Split out because the body arrives later for an upload: what a request
+ * *is* -- its method, path, query, headers and who sent it -- is all
+ * known when the headers are, and has to be kept while Mongoose streams
+ * the rest of it to disk.  Worker thread.
+ *
+ * @return The transfer, or NULL; on a malformed path the answer has been
+ *   sent and \a *answered is set.
  */
-static int httpd_post_request(struct mg_connection* c,
-                              struct mg_http_message* hm)
+static struct HttpXfer* httpd_xfer_from(struct mg_connection* c,
+                                        struct mg_http_message* hm,
+                                        int* answered)
 {
-  struct WorkTask* task;
   struct HttpXfer* xfer;
   size_t i;
 
-  if (hm->body.len > HTTP_BODY_MAX) {
-    httpd_status(c, 413, "413 Payload Too Large");
-    return 1;
-  }
+  *answered = 0;
 
   if (!(xfer = (struct HttpXfer*) worker_alloc(sizeof(*xfer))))
     return 0;
@@ -292,7 +346,8 @@ static int httpd_post_request(struct mg_connection* c,
   if (!httpd_path(xfer->hx_path, sizeof(xfer->hx_path), hm->uri)) {
     worker_free(xfer);
     httpd_status(c, 400, "400 Bad Request");
-    return 1;
+    *answered = 1;
+    return 0;
   }
 
   mg_snprintf(xfer->hx_remote, sizeof(xfer->hx_remote), "%M",
@@ -311,11 +366,15 @@ static int httpd_post_request(struct mg_connection* c,
     xfer->hx_nheaders++;
   }
 
-  if (hm->body.len) {
-    memcpy(xfer->hx_body, hm->body.buf, hm->body.len);
-    xfer->hx_bodylen = hm->body.len;
-  }
-  xfer->hx_body[xfer->hx_bodylen] = '\0';
+  return xfer;
+}
+
+/** Hand a transfer to the main thread.  Worker thread.
+ * @return Non-zero if it went up.
+ */
+static int httpd_post_xfer(struct mg_connection* c, struct HttpXfer* xfer)
+{
+  struct WorkTask* task;
 
   if (!(task = worker_task_new(0, http_server_deliver))) {
     worker_free(xfer);
@@ -341,7 +400,320 @@ static int httpd_post_request(struct mg_connection* c,
   return 1;
 }
 
+/* ------------------------------------------------------------------- *
+ * Uploads: a body too big to carry                                    *
+ * ------------------------------------------------------------------- */
+
+/** Delete what a previous run left in the spool.  Worker thread.
+ *
+ * A server that died with an upload in progress left a file nobody will
+ * ever ask for.  Only files this server named are touched -- the prefix
+ * is the whole of the safety here, because the directory is configured
+ * and an operator who points it somewhere surprising should not lose
+ * what is in it.
+ */
+static void httpd_sweep_spool(void)
+{
+  DIR* dir;
+  struct dirent* ent;
+  char path[HTTPD_PATHLEN + 1];
+
+  if (!httpd_spool[0])
+    return;
+
+  if (!(dir = opendir(httpd_spool)))
+    return;
+
+  while ((ent = readdir(dir)) != NULL) {
+    if (strncmp(ent->d_name, "ircu-upload-", 12) != 0)
+      continue;
+
+    mg_snprintf(path, sizeof(path), "%s/%s", httpd_spool, ent->d_name);
+    remove(path);
+  }
+
+  closedir(dir);
+}
+
+/** Find the upload on a connection, or NULL.  Worker thread. */
+static struct HttpdUpload* httpd_upload_find(unsigned long conn)
+{
+  struct HttpdUpload* up;
+
+  for (up = httpd_uploads; up; up = up->hu_next)
+    if (up->hu_conn == conn)
+      return up;
+
+  return 0;
+}
+
+/** Forget an upload, deleting what it wrote.  Worker thread.
+ *
+ * The spool file is the worker's from the moment it is created until the
+ * request has been answered: a handler that wanted the bytes has already
+ * moved them, and this unlink then finds nothing, which is not an error.
+ */
+static void httpd_upload_done(unsigned long conn)
+{
+  struct HttpdUpload** up_p;
+  struct HttpdUpload* up;
+
+  for (up_p = &httpd_uploads; (up = *up_p); up_p = &up->hu_next) {
+    if (up->hu_conn != conn)
+      continue;
+
+    *up_p = up->hu_next;
+
+    if (up->hu_path[0])
+      remove(up->hu_path);
+
+    if (up->hu_xfer)
+      worker_free(up->hu_xfer);
+
+    worker_free(up);
+    return;
+  }
+}
+
+/** Mongoose has finished writing the body.  Worker thread.
+ *
+ * @param[in] c The connection.
+ * @param[in] err NULL on success, or what went wrong.
+ */
+static void httpd_upload_finished(struct mg_connection* c, const char* err)
+{
+  struct HttpdUpload* up = httpd_upload_find(c->id);
+  struct HttpXfer* xfer;
+  size_t size = 0;
+
+  /* Give the connection back.  mg_http_start_upload() pointed both
+   * handlers at its own while the body was arriving, and it does not put
+   * them back: leaving them there would send the MG_EV_WAKEUP carrying
+   * the answer -- and the MG_EV_CLOSE that ends the connection -- to a
+   * handler that has nothing left to do, which is a request that is never
+   * answered.  The protocol handler is Mongoose's own, so it is taken
+   * from the listener, which is where this connection got it. */
+  c->fn = httpd_event;
+  c->fn_data = 0;
+
+  if (httpd_listener)
+    c->pfn = httpd_listener->pfn;
+
+  if (!up)
+    return;
+
+  if (err) {
+    /* Not the client's fault as far as this can tell: the disk filled,
+     * or the connection went away mid-body.  Either way there is nothing
+     * to hand up. */
+    httpd_status(c, 500, "500 Internal Server Error");
+    httpd_upload_done(c->id);
+    return;
+  }
+
+  if (!mg_fs_posix.st(up->hu_path, &size, NULL)) {
+    httpd_status(c, 500, "500 Internal Server Error");
+    httpd_upload_done(c->id);
+    return;
+  }
+
+  xfer = up->hu_xfer;
+  up->hu_xfer = 0;            /* the task owns it now */
+
+  ircd_strncpy(xfer->hx_file, up->hu_path, sizeof(xfer->hx_file) - 1);
+  xfer->hx_filelen = size;
+
+  if (!httpd_post_xfer(c, xfer)) {
+    httpd_status(c, 503, "503 Service Unavailable");
+    httpd_upload_done(c->id);
+  }
+}
+
+/** Refuse a request at the headers, before its body has arrived.
+ *
+ * Answering and returning is not enough on its own: the body is still on
+ * its way, and Mongoose would deliver it as a request of its own and have
+ * it answered a second time.  @c is_resp stops the parsing, and
+ * @c is_draining closes the connection once the answer has gone -- which
+ * is the honest end for a request whose body this server is not reading.
+ */
+static void httpd_refuse(struct mg_connection* c, int status, const char* text)
+{
+  httpd_status(c, status, text);
+
+  c->is_resp = 1;
+  c->is_draining = 1;
+}
+
+/** Take a request whose body is about to arrive, if it is an upload.
+ *
+ * Called when the headers have been read and before any of the body has.
+ * That is the only moment a body can be sent somewhere other than into
+ * memory, which is the whole point: a hundred megabytes buffered here
+ * would be a hundred megabytes the event loop is holding while every
+ * other client waits.
+ *
+ * @return Non-zero if this request has been taken over.
+ */
+static int httpd_upload_begin(struct mg_connection* c,
+                              struct mg_http_message* hm)
+{
+  struct HttpdUpload* up;
+  struct HttpXfer* xfer;
+  struct mg_str* te;
+  char name[64];
+  int answered;
+
+  if (!httpd_upload_max || !httpd_spool[0])
+    return 0;
+
+  /* Only where a body is expected at all.  A GET with a body is not an
+   * upload, it is a client with an opinion. */
+  if (mg_strcasecmp(hm->method, mg_str("POST")) != 0
+      && mg_strcasecmp(hm->method, mg_str("PUT")) != 0)
+    return 0;
+
+  /* Small enough to carry: the ordinary path handles it, and a handler
+   * that wanted bytes in memory still gets them. */
+  if (hm->body.len <= HTTP_BODY_MAX)
+    return 0;
+
+  /* Chunked has no length until it ends, and this needs one: what is
+   * being decided here is whether to accept the body at all, before any
+   * of it has been written anywhere.  Saying so is better than taking it
+   * and finding out. */
+  if ((te = mg_http_get_header(hm, "Transfer-Encoding")) != NULL
+      && mg_strcasecmp(*te, mg_str("chunked")) == 0) {
+    httpd_refuse(c, 411, "411 Length Required");
+    return 1;
+  }
+
+  if (hm->body.len > httpd_upload_max) {
+    httpd_refuse(c, 413, "413 Payload Too Large");
+    return 1;
+  }
+
+  if (httpd_upload_find(c->id)) {
+    /* One at a time on one connection; a second while the first is still
+     * arriving is not something a client does by accident. */
+    httpd_refuse(c, 400, "400 Bad Request");
+    return 1;
+  }
+
+  if (!(xfer = httpd_xfer_from(c, hm, &answered))) {
+    if (!answered)
+      return 0;
+
+    /* It answered for us -- a path this server will not hand to a module
+     * -- but the body is still coming, so the connection has to be closed
+     * the way httpd_refuse() closes it. */
+    c->is_resp = 1;
+    c->is_draining = 1;
+
+    return 1;
+  }
+
+  if (!(up = (struct HttpdUpload*) worker_alloc(sizeof(*up)))) {
+    worker_free(xfer);
+    return 0;
+  }
+
+  memset(up, 0, sizeof(*up));
+  up->hu_conn = c->id;
+  up->hu_xfer = xfer;
+
+  /* The name is this server's to choose and nobody else's: it is built
+   * from the connection and the clock, never from anything the client
+   * sent, so a path cannot be smuggled through it.  The prefix is what
+   * the sweep at start-up recognises as ours. */
+  mg_snprintf(name, sizeof(name), "ircu-upload-%lu-%lu", (unsigned long) c->id,
+              (unsigned long) mg_millis());
+  mg_snprintf(up->hu_path, sizeof(up->hu_path), "%s/%s", httpd_spool, name);
+
+  up->hu_next = httpd_uploads;
+  httpd_uploads = up;
+
+  mg_http_start_upload(c, hm, mg_str(name), mg_str(httpd_spool),
+                       &mg_fs_posix, httpd_upload_finished);
+
+  return 1;
+}
+
+/** Turn a parsed request into a transfer and post it.  Worker thread.
+ * @return Non-zero if it went up.
+ */
+static int httpd_post_request(struct mg_connection* c,
+                              struct mg_http_message* hm)
+{
+  struct HttpXfer* xfer;
+  int answered;
+
+  if (hm->body.len > HTTP_BODY_MAX) {
+    /* An upload would have been taken at MG_EV_HTTP_HDRS, before any of
+     * it arrived; reaching here with a body this size means it was not
+     * one -- no spool directory, the wrong method, or more than this
+     * server takes. */
+    httpd_status(c, 413, "413 Payload Too Large");
+    return 1;
+  }
+
+  if (!(xfer = httpd_xfer_from(c, hm, &answered)))
+    return answered;
+
+  if (hm->body.len) {
+    memcpy(xfer->hx_body, hm->body.buf, hm->body.len);
+    xfer->hx_bodylen = hm->body.len;
+  }
+  xfer->hx_body[xfer->hx_bodylen] = '\0';
+
+  return httpd_post_xfer(c, xfer);
+}
+
 /** Write an answer that came back from the main thread.  Worker thread. */
+/** Stream a file the handler named.  Worker thread.
+ *
+ * The request itself is long gone -- it went up, was answered, and came
+ * back as bytes -- so the message mg_http_serve_file() wants is rebuilt
+ * from what travelled with the answer.  It reads three things out of it:
+ * the method, @c Range and @c If-None-Match.  Mongoose does the rest,
+ * including the partial-content arithmetic, and streams the file outside
+ * the event loop.
+ */
+static void httpd_serve_file(struct mg_connection* c,
+                             const struct HttpXfer* xfer,
+                             const char* headers)
+{
+  struct mg_http_message hm;
+  struct mg_http_serve_opts opts;
+  unsigned int n = 0;
+
+  memset(&hm, 0, sizeof(hm));
+  memset(&opts, 0, sizeof(opts));
+
+  hm.method = mg_str("GET");
+
+  if (xfer->hx_range[0]) {
+    hm.headers[n].name = mg_str("Range");
+    hm.headers[n].value = mg_str(xfer->hx_range);
+    n++;
+  }
+
+  if (xfer->hx_inm[0]) {
+    hm.headers[n].name = mg_str("If-None-Match");
+    hm.headers[n].value = mg_str(xfer->hx_inm);
+    n++;
+  }
+
+  opts.extra_headers = headers;
+
+  /* No mime_types: with a Content-Type header already in `headers` the
+   * handler's choice wins, and without one Mongoose guesses from the
+   * name, which is what a handler that did not care asked for. */
+  mg_http_serve_file(c, &hm, xfer->hx_sendfile, &opts);
+
+  c->is_resp = 0;
+}
+
 static void httpd_send_answer(struct mg_connection* c,
                               const struct HttpXfer* xfer)
 {
@@ -378,6 +750,11 @@ static void httpd_send_answer(struct mg_connection* c,
     n += wrote;
   }
 
+  if (xfer->hx_sendfile[0]) {
+    httpd_serve_file(c, xfer, headers);
+    return;
+  }
+
   mg_http_reply(c, xfer->hx_status ? xfer->hx_status : 200, headers, "%.*s",
                 (int) xfer->hx_replylen, xfer->hx_body);
 
@@ -410,8 +787,18 @@ static void httpd_event(struct mg_connection* c, int ev, void* ev_data)
     break;
 
   case MG_EV_CLOSE:
-    if (!c->is_listening)
+    if (!c->is_listening) {
       httpd_conns--;
+      /* Whatever was written for this connection goes with it, answered
+       * or not: nobody is going to ask for it again. */
+      httpd_upload_done(c->id);
+    }
+    break;
+
+  case MG_EV_HTTP_HDRS:
+    /* Before any of the body has arrived, which is the only moment it can
+     * be sent anywhere but into memory. */
+    httpd_upload_begin(c, (struct mg_http_message*) ev_data);
     break;
 
   case MG_EV_HTTP_MSG:
@@ -439,6 +826,11 @@ static void httpd_event(struct mg_connection* c, int ev, void* ev_data)
 
       worker_free(xfer);
     }
+
+    /* The request has been answered, so the spool file has served its
+     * purpose.  A handler that wanted the bytes moved them while it had
+     * the request; this deletes what is left, which is usually nothing. */
+    httpd_upload_done(c->id);
     break;
   }
 
@@ -490,6 +882,9 @@ static void httpd_main(struct Worker* worker, void* arg)
   httpd_self = worker;
   httpd_conns = 0;
   httpd_conn_max = args->ha_max;
+  httpd_upload_max = args->ha_upload_max;
+  ircd_strncpy(httpd_spool, args->ha_spool, sizeof(httpd_spool) - 1);
+  httpd_sweep_spool();
   memset(&httpd_cert, 0, sizeof(httpd_cert));
   memset(&httpd_key, 0, sizeof(httpd_key));
 
@@ -518,6 +913,7 @@ static void httpd_main(struct Worker* worker, void* arg)
   }
 
   listener = mg_http_listen(&httpd_mgr, args->ha_url, httpd_event, NULL);
+  httpd_listener = listener;
 
   if (!listener) {
     httpd_report("could not listen (address in use, or not permitted)",
@@ -542,6 +938,7 @@ static void httpd_main(struct Worker* worker, void* arg)
   mg_free(httpd_key.buf);
   memset(&httpd_cert, 0, sizeof(httpd_cert));
   memset(&httpd_key, 0, sizeof(httpd_key));
+  httpd_listener = 0;
   httpd_self = 0;
 }
 
@@ -567,6 +964,13 @@ static void http_server_deliver(struct WorkTask* task)
   req.hreq_headers = xfer->hx_headers;
   req.hreq_body = xfer->hx_body;
   req.hreq_bodylen = xfer->hx_bodylen;
+
+  /* A body too big to carry is a path instead.  The handler is told
+   * where it is; the worker deletes it once this request is answered. */
+  if (xfer->hx_file[0]) {
+    req.hreq_file = xfer->hx_file;
+    req.hreq_filelen = xfer->hx_filelen;
+  }
 
   /* Negative means nothing claimed the route and the core is holding
    * nothing: the 404 is this file's to send, or the connection would sit
@@ -640,6 +1044,13 @@ static void http_server_respond(http_req_t id, const struct HttpResponse* res)
   for (i = 0; i < res->hres_nheaders && i < HTTP_HEADERS_MAX; i++)
     xfer->hx_reply[xfer->hx_nreply++] = res->hres_headers[i];
 
+  if (res->hres_file[0]) {
+    ircd_strncpy(xfer->hx_sendfile, res->hres_file,
+                 sizeof(xfer->hx_sendfile) - 1);
+    ircd_strncpy(xfer->hx_range, res->hres_range, sizeof(xfer->hx_range) - 1);
+    ircd_strncpy(xfer->hx_inm, res->hres_inm, sizeof(xfer->hx_inm) - 1);
+  }
+
   len = res->hres_bodylen;
   if (len > HTTP_BODY_MAX)
     len = HTTP_BODY_MAX;
@@ -689,6 +1100,16 @@ static void httpd_args_from_features(struct HttpdArgs* args)
   memset(args, 0, sizeof(*args));
 
   args->ha_max = feature_int(FEAT_HTTP_MAX_CLIENTS);
+
+  /* Read here, in the main thread, and handed over: a worker never reads
+   * a feature.  Both or neither -- a size with nowhere to write it is not
+   * an offer to take uploads. */
+  if (http_upload_available()) {
+    ircd_strncpy(args->ha_spool, feature_str(FEAT_HTTP_SPOOL_DIR),
+                 sizeof(args->ha_spool) - 1);
+    args->ha_upload_max = http_upload_max();
+  }
+
   args->ha_tls = (cert && *cert && key && *key) ? 1 : 0;
 
   if (args->ha_tls) {

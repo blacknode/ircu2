@@ -154,6 +154,7 @@ set(IRCU_SOURCES
   ircd_signal.c
   ircd_snprintf.c
   ircd_string.c
+  ircd_token.c
   ircd_vhost.c
   jupe.c
   list.c

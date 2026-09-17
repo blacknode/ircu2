@@ -174,3 +174,8 @@ RUN chown -R ircu:ircu /opt/ircu/lib/modules
 # lands there.  Empty in the image: what goes in it is one person's whole
 # record, so it is created per container and never baked in.
 RUN mkdir -p /opt/ircu/lib/export && chown ircu:ircu /opt/ircu/lib/export
+
+# Where an upload is written as it arrives, and where it is moved to once
+# it has been recorded.  One filesystem, because the move is a rename().
+RUN mkdir -p /opt/ircu/lib/spool /opt/ircu/lib/files \
+  && chown ircu:ircu /opt/ircu/lib/spool /opt/ircu/lib/files

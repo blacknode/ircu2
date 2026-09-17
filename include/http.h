@@ -144,6 +144,21 @@ struct HttpRequest {
   const char* hreq_body;     /**< The body, NUL-terminated for
                                   convenience; may hold NULs. */
   size_t      hreq_bodylen;  /**< Its length in bytes. */
+  /** Where the body was written, for a body too big to carry.
+   *
+   * NULL for every ordinary request.  When it is set, #hreq_body is
+   * empty and the bytes are in this file instead: the worker wrote them
+   * as they arrived, so a hundred megabytes went to disk and not through
+   * the event loop.  See http_upload_available().
+   *
+   * **The file is the worker's.**  It is deleted once the request has
+   * been answered, whatever the answer was.  A handler that wants to
+   * keep the bytes moves them first -- rename() on the same filesystem
+   * is atomic and costs nothing -- and the delete then finds nothing,
+   * which is not an error.
+   */
+  const char* hreq_file;
+  size_t      hreq_filelen;  /**< How many bytes are in it. */
 };
 
 /** What a handler answers with.
@@ -159,6 +174,18 @@ struct HttpResponse {
   char*  hres_body;                      /**< Body buffer, core-owned. */
   size_t hres_bodylen;                   /**< Bytes written into it. */
   size_t hres_bodymax;                   /**< Size of #hres_body. */
+  /** A file to send instead of #hres_body, set by http_response_file().
+   *
+   * The other half of #HttpRequest::hreq_file: a body too big to carry
+   * does not come through the event loop in either direction.  The
+   * transport opens the file and streams it, so what crosses is a path.
+   */
+  char   hres_file[HTTP_PATH_MAX + 1];
+  /** Conditional headers from the request this answers, copied by
+   * http_response_file() so the transport can honour them.  A download
+   * that could not be resumed is a download that starts again. */
+  char   hres_range[HTTP_HVALUE_MAX + 1];
+  char   hres_inm[HTTP_HVALUE_MAX + 1];  /**< If-None-Match. */
 };
 
 /** Handles one request.  Runs in the main thread.
@@ -238,6 +265,46 @@ extern int http_listening(void);
  */
 extern int http_available(void);
 
+/** Non-zero if this server will take an upload at all.
+ *
+ * FEAT_HTTP_UPLOAD_MAX and FEAT_HTTP_SPOOL_DIR, not the socket: the same
+ * question http_available() answers, and asked the same way -- from
+ * @c HOOK_CONFIG_LOADED, never from @c mi_init.  A module that offers
+ * uploads says so in the log when the answer is no, rather than claiming
+ * a route that can only ever answer 413.
+ */
+extern int http_upload_available(void);
+
+/** The largest body this server will stream to disk, in bytes, or zero. */
+extern unsigned int http_upload_max(void);
+
+/** How many bytes of body this request carries, wherever they are.
+ *
+ * #HttpRequest::hreq_bodylen or #HttpRequest::hreq_filelen, whichever
+ * this one has: which of the two it was is the transport's business and
+ * not the handler's.
+ */
+extern size_t http_request_bodylen(const struct HttpRequest* req);
+
+/** Move this request's body to \a path, and stop it being the core's.
+ *
+ * The other half of #HttpRequest::hreq_file.  A body that arrived on
+ * disk is renamed -- atomic, and nothing is read or written by the main
+ * thread, which is why the spool wants to be on the same filesystem as
+ * wherever a handler puts things -- and a body small enough to have come
+ * through memory is written out.  A handler therefore never has to ask
+ * which of the two happened, and there is one description of what taking
+ * an upload means rather than one per module.
+ *
+ * The file is created, never overwritten: two requests answering to one
+ * name is not something to resolve quietly.
+ *
+ * @param[in] req The request whose body to take.
+ * @param[in] path Where to put it.
+ * @return Non-zero on success; zero with @c errno set.
+ */
+extern int http_request_save(const struct HttpRequest* req, const char* path);
+
 /** Claim a route.
  *
  * A path ending in @c / matches everything under it -- @c "/files/" takes
@@ -294,6 +361,29 @@ extern int http_response_header(struct HttpResponse* res, const char* name,
                                 const char* value);
 
 /** One header of a request, by name, case-insensitively, or NULL. */
+/** Answer with the contents of a file.
+ *
+ * For a body too big to put in #HttpResponse::hres_body -- which is
+ * bounded by #HTTP_BODY_MAX, because it crosses into the main thread.
+ * The path is not read here: the transport opens it and streams it,
+ * outside the event loop, and it must still be there when it does.
+ *
+ * The request is taken as well as the response so that @c Range and
+ * @c If-None-Match travel with it: they are the client's half of a
+ * download that can be resumed or skipped, and a handler should not have
+ * to remember to pass them on.
+ *
+ * @param[out] res The answer.
+ * @param[in] req The request being answered.
+ * @param[in] path File to send.
+ * @param[in] type Content-Type, or NULL to let the transport guess from
+ *   the name.
+ * @return Non-zero on success.
+ */
+extern int http_response_file(struct HttpResponse* res,
+                              const struct HttpRequest* req,
+                              const char* path, const char* type);
+
 extern const char* http_request_header(const struct HttpRequest* req,
                                        const char* name);
 

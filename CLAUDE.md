@@ -256,6 +256,41 @@ grew, and NickServ's `VERIFY` comes back through the same function.
 `ACCOUNT_WRITE_VERIFY` is the one write that carries no password, because
 the core checked the proof before asking.
 
+**Signed tokens** (`include/ircd_token.h`, `ircd/ircd_token.c`). What the
+mail verification and the upload ticket are both made of, extracted
+because the second one wanted it: `1.<b64(expiry:payload)>.<b64(16 bytes
+of HMAC)>`, the key derived from the `Security{}` key by a **label** —
+so a token minted for one purpose cannot be presented as another, and
+neither can be used to cipher a hostname. Nothing is stored: every server
+has the key by construction, which is what makes a token minted on one
+recognisable on another, and what makes there be no table to expire.
+Sixteen bytes of tag because a person pastes this back and 128 bits is
+far past what forging one is worth.
+
+**Files** (`modules/services/filehost/`, `doc/readme.files`, proposal 006
+§7.4). Two routes, one command, one table and a directory, on top of the
+HTTP layer. The server never receives a file over IRC: `/FILE UPLOAD`
+mints a **ticket** — `<id>:<account>:<target>`, signed, fifteen minutes —
+and answers with a `curl` line, which is what makes this usable from a
+client written in 1998. **The identifier is in the ticket as well as in
+the path** and they must match, or a ticket would be a ticket to
+overwrite somebody else's file. **Only an identified client may upload**:
+an account is a nickname, and filing an upload under a bare nick files it
+under whoever wears that nick next week. The objects live under two
+characters of fan-out and the row is written **after** the move, because
+a row pointing at nothing is worse than an object nobody has a row for —
+the sweep collects that. **Only a short list of content types is served
+as itself** (image, audio, video, text/plain); everything else is
+`application/octet-stream`, `attachment`, `nosniff`, because serving the
+type the uploader declared is a way to put script on the server's own
+origin. The quota is checked **before** the ticket is minted, since
+telling somebody where to send a file and refusing it on arrival wastes
+their upload. `file_store.c` holds every statement and everything that
+touches the disk, the way `hist_store.c` does — which is also what makes
+object storage one file's worth of work the day it is wanted. There is
+deliberately no `draft/filehost` tag: a tag is read by clients, and the
+clients are the next phase.
+
 **The grace period** (`modules/services/irc_services/nick_policy.c`,
 proposal 007 §§5–7). What happens to a local client using a registered
 nickname it has not proved is its own: NickServ warns it, sets `+f`, and
@@ -603,6 +638,26 @@ the `http_req_t` and calls `http_respond()` later, under
 `FEAT_HTTP_TIMEOUT`, which answers 504 for it; answering after that is
 ignored, not fatal. `HTTP_BODY_MAX` bounds what crosses into the event
 loop, not what HTTP can transfer.
+
+**A body bigger than that never reaches the main thread, either way.**
+Going up, the worker takes the request at `MG_EV_HTTP_HDRS` — the one
+moment a body can be sent anywhere but into memory — and streams it to
+`FEAT_HTTP_SPOOL_DIR`; the handler gets `hreq_file`/`hreq_filelen` and
+takes the bytes with **`http_request_save()`**, which moves them wherever
+they arrived (a `link()`+`unlink()` for a spooled one, a write for one
+small enough to have come through memory) so **no handler asks which of
+the two happened**; `http_request_bodylen()` is the length either way.
+The spool file is the core's and is deleted once the request is answered.
+Going down, `http_response_file()` names a file and the worker streams it,
+carrying `Range` and `If-None-Match` from the request it answers. A
+request refused at the headers (411 chunked, 413 over
+`FEAT_HTTP_UPLOAD_MAX`, 400 for a second on one connection) sets
+`is_resp`/`is_draining`, because the body is still coming and a server
+that answered and then read it would answer it twice. Mongoose's upload
+helper takes the connection's handlers over and does not give them back:
+`httpd_upload_finished()` restores them, or the `MG_EV_WAKEUP` carrying
+the answer reaches a handler with nothing left to do — which looks exactly
+like a request nobody answers.
 
 **`http_available()` is `FEAT_HTTP_PORT`, not the socket** — a consumer is
 asking whether its route will ever be reached, and a listener that is down
@@ -1001,7 +1056,8 @@ module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
 `doc/readme.sasl` (how a user earns `+r`: AUTHENTICATE, `ACCOUNT`, NickServ
 and the provider behind all three), `doc/readme.modules`,
 `doc/readme.workers`,
-`doc/readme.database`, `doc/readme.http`, `doc/readme.isolation`,
+`doc/readme.database`, `doc/readme.http`, `doc/readme.files`,
+`doc/readme.isolation`,
 `doc/readme.migrations`, `doc/readme.history`,
 `doc/readme.richtext`, `doc/readme.translations`, `doc/readme.sdk`,
 `doc/readme.mail`,

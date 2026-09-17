@@ -120,6 +120,60 @@ down -- takes every request in flight with it, silently: there is nobody
 left to answer through.  The routes stay, and wait for it to come back.
 
 
+BODIES THAT DO NOT FIT
+======================
+
+A body bigger than HTTP_BODY_MAX never crosses into the main thread, in
+either direction.
+
+**Going up**, the worker takes the request at the headers -- before any
+of the body has arrived, which is the only moment a body can be sent
+anywhere but into memory -- and writes it to HTTP_SPOOL_DIR as it comes.
+What the handler is given is a path and a length:
+
+  req->hreq_file      where the bytes are, or NULL
+  req->hreq_filelen   how many
+
+The spool file is the **core's** until the request has been answered, and
+is deleted then, whatever the answer was.  A handler that wants to keep
+the bytes takes them first:
+
+  http_request_save(req, "/var/lib/ircd/files/ab/cd/<id>")
+
+which moves the body to that path wherever it arrived -- a link and an
+unlink for one that came on disk, a write for one small enough to have
+come through memory.  That is the point of the call: **a handler never
+asks which of the two happened**, so there is one description of what
+taking an upload means rather than one per module.  It refuses a name
+that already exists, and http_request_bodylen() is the length either way.
+
+Keep the spool on the same filesystem as wherever handlers put things.  A
+copy would read and write the whole file in the main thread, which is the
+one thing that may not happen there; that it is the same filesystem is
+what makes the move free.
+
+**Going down**, http_response_file() names a file and the worker streams
+it -- Mongoose's own sendfile, with the Range arithmetic and the ETag it
+does for static files.  The request is taken as well as the response so
+that Range and If-None-Match travel with it: a download that could not be
+resumed is a download that starts again.
+
+What is refused, at the headers, before a byte of body is read:
+
+  no HTTP_SPOOL_DIR, or   the ordinary path, so anything over
+  HTTP_UPLOAD_MAX is 0    HTTP_BODY_MAX is 413 as it always was
+  chunked                 411.  It has no length until it ends, and what
+                          is being decided here is whether to take the
+                          body at all
+  over HTTP_UPLOAD_MAX    413
+  a second one on the     400
+  same connection
+
+A request refused there closes the connection once the answer has gone:
+the body is still on its way, and a server that answered and then read it
+would answer it a second time as a request of its own.
+
+
 LIMITS
 ======
 
@@ -129,10 +183,9 @@ LIMITS
   HTTP_ROUTES_MAX     64      per module
 
 HTTP_BODY_MAX is not a limit on what HTTP can transfer.  It is a limit on
-what the event loop holds: a file upload is streamed to storage by the
-server and its handler is given the metadata, because a hundred
-megabytes buffered here would be a hundred megabytes every other client
-waits behind.
+what the event loop holds: a bigger body is streamed to disk and back, as
+above, because a hundred megabytes buffered here would be a hundred
+megabytes every other client waits behind.
 
 
 CONFIGURING IT
@@ -152,6 +205,13 @@ and WORKER_THREADS at one or more, because the listener is a thread.
                               are closed rather than queued
   HTTP_TLS_CERT       ""      PEM certificate; both or neither
   HTTP_TLS_KEY        ""      PEM private key
+  HTTP_UPLOAD_MAX     0       largest body streamed to disk; 0 takes none
+  HTTP_SPOOL_DIR      ""      where those are written while they arrive
+
+http_upload_available() is those two and the port, asked the same way
+http_available() is asked and from the same place: a module that offers
+uploads says so in the log when the answer is no, rather than claiming a
+route that can only ever answer 413.
 
 HTTP_PORT is 0 by default and at 0 nothing listens.  A server does not
 open a second port because a feature exists; an operator says where.
@@ -226,7 +286,9 @@ what a path *means*, and that decision is ircd/http_server.c's:
   "%00"                 400.  It shortens the path for whoever reads it
                         with str*() next.
   a control byte        400.
-  a body over 64 KiB    413 -- HTTP_BODY_MAX, below.
+  a body over 64 KiB    413, unless this server takes uploads, in which
+                        case it is streamed to disk and never reaches
+                        memory at all -- HTTP_BODY_MAX, below.
 
 The path a handler is given is decoded; the query string is not, because
 "+" means a space there and nowhere else and a server that decided would
@@ -251,7 +313,6 @@ include/ircd_sha256.h and include/ircd_aes.h -- bound to the account and
 the channel, which the route validates.  Incoming webhooks and a REST
 API for integrations are routes on the same listener.
 
-Files are deferred for now.  What is here is the server and the routes on
-it -- the part that has to exist before any of that can be written as a
-module of its own, and the part that webhooks and a REST API need and
-nothing more.
+Files are modules/services/filehost, on top of what is above:
+doc/readme.files.  Incoming webhooks and a REST API are routes on the
+same listener and need nothing here that is not already written.

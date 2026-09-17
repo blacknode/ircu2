@@ -36,7 +36,11 @@
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 /** One route a module has claimed. */
 struct HttpRoute {
@@ -113,6 +117,44 @@ void http_response_set(struct HttpResponse* res, int status,
   memcpy(res->hres_body, body, bodylen);
   res->hres_body[bodylen] = '\0';
   res->hres_bodylen = bodylen;
+}
+
+int http_response_file(struct HttpResponse* res,
+                       const struct HttpRequest* req,
+                       const char* path, const char* type)
+{
+  const char* value;
+
+  assert(0 != res);
+
+  if (!path || !*path || strlen(path) > HTTP_PATH_MAX)
+    return 0;
+
+  ircd_strncpy(res->hres_file, path, sizeof(res->hres_file) - 1);
+  res->hres_file[sizeof(res->hres_file) - 1] = '\0';
+
+  if (type && *type) {
+    ircd_strncpy(res->hres_type, type, sizeof(res->hres_type) - 1);
+    res->hres_type[sizeof(res->hres_type) - 1] = '\0';
+  } else {
+    res->hres_type[0] = '\0';   /* the transport guesses from the name */
+  }
+
+  if (!res->hres_status)
+    res->hres_status = 200;
+
+  /* The body buffer is not used for this answer, and leaving a length in
+   * it would be two answers in one response. */
+  res->hres_bodylen = 0;
+
+  if (req) {
+    if ((value = http_request_header(req, "Range")))
+      ircd_strncpy(res->hres_range, value, sizeof(res->hres_range) - 1);
+    if ((value = http_request_header(req, "If-None-Match")))
+      ircd_strncpy(res->hres_inm, value, sizeof(res->hres_inm) - 1);
+  }
+
+  return 1;
 }
 
 int http_response_header(struct HttpResponse* res, const char* name,
@@ -231,6 +273,99 @@ int http_available(void)
    * answering from the socket would make module load order decide what a
    * module does. */
   return feature_int(FEAT_HTTP_PORT) != 0;
+}
+
+/** The largest body this server will stream to disk, in bytes, or zero. */
+unsigned int http_upload_max(void)
+{
+  int max = feature_int(FEAT_HTTP_UPLOAD_MAX);
+
+  return max > 0 ? (unsigned int) max : 0;
+}
+
+/** Non-zero if this server will take an upload at all.  See http.h. */
+int http_upload_available(void)
+{
+  /* Both, and the port: a size with nowhere to write it is not an offer,
+   * and neither is a directory with no listener in front of it. */
+  return http_available() && http_upload_max() > 0
+         && !EmptyString(feature_str(FEAT_HTTP_SPOOL_DIR));
+}
+
+/** How many bytes of body this request carries.  See http.h. */
+size_t http_request_bodylen(const struct HttpRequest* req)
+{
+  assert(0 != req);
+
+  return req->hreq_file ? req->hreq_filelen : req->hreq_bodylen;
+}
+
+/** Move this request's body to \a path.  See http.h. */
+int http_request_save(const struct HttpRequest* req, const char* path)
+{
+  int fd;
+  size_t left;
+  const char* at;
+
+  assert(0 != req);
+
+  if (!path || !*path)
+    return 0;
+
+  /* It arrived on disk: a link and nothing read or written here, which is
+   * the whole reason the transport wrote it there.  link() rather than
+   * rename() so that an existing name is refused the same way the other
+   * half refuses it; the spool copy goes either way, and a filesystem
+   * that cannot link falls back to the rename. */
+  if (req->hreq_file) {
+    if (link(req->hreq_file, path) == 0) {
+      remove(req->hreq_file);
+      return 1;
+    }
+
+    if (errno == EEXIST)
+      return 0;
+
+    return rename(req->hreq_file, path) == 0;
+  }
+
+  if (!req->hreq_bodylen)
+    return 0;
+
+  /* It arrived in memory, so it has already crossed into this thread and
+   * writing it out costs one bounded write: HTTP_BODY_MAX is the ceiling
+   * on what can be here at all.  O_EXCL because a name that already
+   * exists is two requests answering to one, not something to settle by
+   * overwriting.
+   */
+  if ((fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600)) < 0)
+    return 0;
+
+  at = req->hreq_body;
+  left = req->hreq_bodylen;
+
+  while (left > 0) {
+    ssize_t wrote = write(fd, at, left);
+
+    if (wrote < 0) {
+      if (errno == EINTR)
+        continue;
+
+      close(fd);
+      remove(path);
+      return 0;
+    }
+
+    at += wrote;
+    left -= (size_t) wrote;
+  }
+
+  if (close(fd) != 0) {
+    remove(path);
+    return 0;
+  }
+
+  return 1;
 }
 
 /* ------------------------------------------------------------------- *

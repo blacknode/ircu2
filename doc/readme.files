@@ -1,0 +1,182 @@
+Files: an upload, a link, and a sweep that ends it
+==================================================
+
+Phase 5 of doc/proposals/006-comunicaciones-unificadas.md, section 7.4 --
+the half that was left for when the HTTP side existed.  It does
+(doc/readme.http), so this is a module on top of it:
+modules/services/filehost/, two routes, one command, one table and a
+directory.
+
+The server never receives a file over IRC.  It says where to send one and
+what the link will be; an ordinary HTTP client does the transfer.  That is
+what makes this usable from a client written in 1998 -- `curl` is a client
+written in 1998.
+
+
+WHAT A USER DOES
+================
+
+  /FILE UPLOAD [#channel]
+
+answers with three lines: a command to run, the link the file will be at,
+and the limits.  The command is the whole of the protocol:
+
+  curl -T holiday.jpg -H 'Authorization: Bearer 1.MTc4OT...' \
+       https://files.example.net/u/3kQ8vN2pLx7aB1cD
+
+and afterwards
+
+  https://files.example.net/f/3kQ8vN2pLx7aB1cD
+
+is the file.  `/FILE LIST` is what this account is holding and
+`/FILE DELETE <id>` takes one back -- the row and the object together.
+
+**Only an identified client may upload.**  An account is a nickname
+(doc/proposals/007-identidad.md), and the only durable handle on a person
+here is the nickname they proved: filing an upload under a bare nick would
+file it under whoever wears that nick next week, and the quota, the
+listing and the deletion all hang off that name.
+
+There is deliberately no `draft/filehost` message tag.  A tag is read by
+clients, and the clients are the next phase; until they exist the URL in
+the text is what every client ever written understands, and inventing the
+tag now would be inventing one nobody reads.
+
+
+THE TICKET
+==========
+
+Authorisation is a **signed statement, not a session**.  The server says
+
+  <id>:<account>:<target>
+
+signed with the network's key (include/ircd_token.h, the mechanism
+doc/readme.mail describes) and good for fifteen minutes, and the upload
+presents it.  Everything the route needs to know it therefore learns from
+something it signed itself: who is uploading, which identifier this is
+for, and what the file was meant for.  Nothing the client sends alongside
+has to be believed, and nothing is stored, so there is no table of
+outstanding tickets to keep, expire or leak.
+
+**The identifier is in the ticket as well as in the path**, and they have
+to be the same one.  A ticket that worked for any identifier would be a
+ticket to overwrite somebody else's file.
+
+Fifteen minutes is not a feature.  It is long enough to paste a command
+into a shell and watch it run, short enough that a ticket found in a
+scrollback tomorrow is worth nothing, and an operator has no reason to
+want a different number.
+
+
+NOTHING LARGE CROSSES THE EVENT LOOP
+====================================
+
+In either direction, which is the rule the HTTP layer was built around
+and the reason a file host can live in a single-threaded server at all.
+
+Going **up**, the worker takes the request at its headers and writes the
+body to HTTP_SPOOL_DIR as it arrives; what the main thread is handed is a
+path and a length.  The module moves it into the store with
+http_request_save() -- a link and an unlink -- and only then writes the
+row.  The move first: a row pointing at an object that is not there is
+worse than an object nobody has a row for, which the sweep collects.
+
+Going **down**, the handler names the file and the worker streams it,
+with the Range arithmetic and the ETag Mongoose does for static files.
+
+So keep FILEHOST_DIR and HTTP_SPOOL_DIR **on the same filesystem**.  A
+copy would read and write the whole file in the main thread, which is the
+one thing that may not happen there.
+
+The objects sit under two characters of fan-out -- `ab/abcdef...` --
+because one directory with a million entries in it is a directory every
+listing walks, and two hundred and forty-odd is not.
+
+
+WHAT THE SERVER WILL SERVE AS ITSELF
+====================================
+
+A short list, and everything else is `application/octet-stream` with a
+`Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`:
+
+  image/png  image/jpeg  image/gif  image/webp
+  audio/mpeg audio/ogg   audio/mp4
+  video/mp4  video/webm
+  text/plain
+
+This is not tidiness.  A file host that serves whatever type the uploader
+declared is a way to put HTML, and therefore script, on the server's own
+origin -- and whatever else that origin is trusted for goes with it.  The
+list is what a chat client renders inline and nothing more.
+
+The name is shown to people and put in a Content-Disposition, never used
+to build a path (the object is named by its identifier); what survives of
+it is letters, digits, dot, dash and underscore, because a name with a
+quote or a newline in it is a header of somebody else's choosing.
+
+An identifier is sixteen characters of base 62 and is checked for that
+before it reaches a path.  An identifier that could be a path is a path.
+
+
+RETENTION
+=========
+
+FILEHOST_RETENTION days, thirty by default, and a sweep every five
+minutes deletes what is past its date -- the object and the row.  Zero
+keeps files until somebody deletes them, which is a decision to make on
+purpose rather than by leaving a setting alone.
+
+FILEHOST_QUOTA is what one account may hold at once, 64 MiB by default.
+It is checked **before** the ticket is minted: telling somebody where to
+send a file and refusing it when it arrives wastes their upload and their
+time.
+
+
+CONFIGURING IT
+==============
+
+  Module { name = "filehost"; };
+
+and, in features:
+
+  F:HTTP_PORT:8080
+  F:HTTP_UPLOAD_MAX:104857600
+  F:HTTP_SPOOL_DIR:/var/lib/ircd/spool
+  F:FILEHOST_DIR:/var/lib/ircd/files
+  F:FILEHOST_BASE_URL:https://files.example.net
+  F:FILEHOST_RETENTION:30
+  F:FILEHOST_QUOTA:67108864
+
+  FILEHOST_DIR        ""      where the objects live; empty hosts nothing
+  FILEHOST_BASE_URL   ""      what a link looks like from outside
+  FILEHOST_RETENTION  30      days to keep one; 0 is for ever
+  FILEHOST_QUOTA      67108864  bytes one account may hold; 0 is no limit
+
+The base URL is what only the operator knows: a server behind a proxy
+cannot work out from its own port what the world calls it.
+
+The schema is the module's and an operator applies it, the way every
+other module's is applied:
+
+  /MODULE MIGRATION APPLY filehost
+
+With any of those missing the module says which one in the log, claims no
+routes, and `/FILE` says this server is not hosting files.  A server that
+hosts no files is an ordinary server.
+
+A `Database{}` block is required -- the listing, the quota and the
+retention are queries -- and WORKER_THREADS at one or more, because the
+HTTP listener is a thread.
+
+
+WHERE TO LOOK
+=============
+
+  modules/services/filehost/filehost.c    load, configuration, the sweep
+  modules/services/filehost/file_http.c   the two routes
+  modules/services/filehost/file_cmd.c    /FILE
+  modules/services/filehost/file_store.c  every statement it sends
+  modules/services/filehost/migrations/   the table
+  include/ircd_token.h                    the ticket, and doc/readme.mail
+  include/http.h                          hreq_file, http_request_save()
+  tests/files/                            the round trip, end to end

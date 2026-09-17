@@ -111,6 +111,7 @@ IDENTITY = {
     "server_port": 4430,
     "name": "identity.test.net",
     "db_port": 15432,
+    "http_port": 6680,
 }
 
 # A (prod release) — B (new, NETWORK_FEATURES=FALSE) — C (new, NETWORK_FEATURES=TRUE)

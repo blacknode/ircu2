@@ -32,7 +32,7 @@
 #include "ircd_sha256.h"
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
-#include "ircd_vhost.h"
+#include "ircd_token.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <stdlib.h>
@@ -397,6 +397,7 @@ mail_id_t mail_send(struct ModuleHandle* mod, const char* to,
   struct MailCall* call;
   struct MailMessage msg;
   enum MailError err;
+  mail_id_t id;
 
   mail_error = MAIL_OK;
 
@@ -453,7 +454,15 @@ mail_id_t mail_send(struct ModuleHandle* mod, const char* to,
   msg.mm_subject = subject;
   msg.mm_body = body;
 
-  err = (*mail_provider->mp_send)(call->mc_id, &msg);
+  /* The identifier and not the pointer from here on: a provider may
+   * answer inside mp_send() -- one that fails before it has queued
+   * anything does -- and mail_complete() frees the call, so `call` is
+   * gone by the time this returns.  mail_find() is what says whether it
+   * still exists.
+   */
+  id = call->mc_id;
+
+  err = (*mail_provider->mp_send)(id, &msg);
 
   if (err != MAIL_OK) {
     /* Refused on the spot.  The caller is told through its callback, the
@@ -462,7 +471,7 @@ mail_id_t mail_send(struct ModuleHandle* mod, const char* to,
      */
     mail_error = err;
 
-    if (mail_find(call->mc_id))
+    if ((call = mail_find(id)))
       mail_answer(call, err, NULL);
 
     return 0;
@@ -470,7 +479,7 @@ mail_id_t mail_send(struct ModuleHandle* mod, const char* to,
 
   mail_arm();
 
-  return call->mc_id;
+  return id;
 }
 
 int mail_complete(mail_id_t id, enum MailError err, const char* detail)
@@ -520,149 +529,35 @@ unsigned int mail_pending_count(void)
  * The token.                                                          *
  * ------------------------------------------------------------------- */
 
-/** Derive the signing key from the network's Security{} key.
+/** What these tokens are minted for; see ircd_token.h.
  *
- * @param[out] out #SHA256_DIGEST_LEN bytes.
- * @return Non-zero when there is a key to derive from.
+ * The label is what stops one of these being presented as a token minted
+ * for something else -- an upload, say -- out of the same key material.
  */
-static int mail_token_key(unsigned char* out)
-{
-  const char* key = vhost_key();
-
-  if (EmptyString(key))
-    return 0;
-
-  ircd_hmac_sha256(key, strlen(key), MAIL_KEY_LABEL,
-                   strlen(MAIL_KEY_LABEL), out);
-
-  return 1;
-}
-
-/** Sign \a payload.
- * @param[in] payload Text being signed.
- * @param[out] tag #MAIL_TAG_LEN bytes.
- * @return Non-zero when there is a key.
- */
-static int mail_token_sign(const char* payload, unsigned char* tag)
-{
-  unsigned char key[SHA256_DIGEST_LEN];
-  unsigned char full[SHA256_DIGEST_LEN];
-
-  if (!mail_token_key(key))
-    return 0;
-
-  ircd_hmac_sha256(key, sizeof(key), payload, strlen(payload), full);
-  memcpy(tag, full, MAIL_TAG_LEN);
-
-  memset(key, 0, sizeof(key));
-  memset(full, 0, sizeof(full));
-
-  return 1;
-}
+#define MAIL_TOKEN_LABEL "ircu-mail-verify-v1"
 
 int mail_token_make(char* buf, size_t len, const char* email, time_t now,
                     int window)
 {
-  char payload[MAIL_ADDRESS_MAX + 32];
-  char payload64[IRCD_BASE64_ENCLEN(sizeof(payload)) + 1];
-  char tag64[IRCD_BASE64_ENCLEN(MAIL_TAG_LEN) + 1];
-  unsigned char tag[MAIL_TAG_LEN];
-  unsigned int wrote;
-
-  assert(0 != buf);
-
   if (EmptyString(email) || strlen(email) > MAIL_ADDRESS_MAX)
     return 0;
 
   if (window <= 0)
     window = MAIL_WINDOW_DEFAULT;
 
-  /* What the token asserts, in the clear: it is not a secret, it is a
-   * claim with a signature on it.  Whoever reads the mail already knows
-   * their own address.
-   */
-  ircd_snprintf(0, payload, sizeof(payload), "%lu:%s",
-                (unsigned long) (now + window), email);
-
-  if (!mail_token_sign(payload, tag))
-    return 0;
-
-  if (ircd_base64_encode(payload, strlen(payload), payload64,
-                         sizeof(payload64)) < 0)
-    return 0;
-
-  if (ircd_base64_encode(tag, sizeof(tag), tag64, sizeof(tag64)) < 0)
-    return 0;
-
-  wrote = ircd_snprintf(0, buf, len, "1.%s.%s", payload64, tag64);
-
-  return wrote > 0 && wrote < len;
+  return ircd_token_make(buf, len, MAIL_TOKEN_LABEL, email, now, window);
 }
 
 enum MailToken mail_token_check(const char* token, char* email, size_t len,
                                 time_t now)
 {
-  char payload[MAIL_ADDRESS_MAX + 32];
-  unsigned char tag[MAIL_TAG_LEN];
-  unsigned char want[MAIL_TAG_LEN];
-  const char* dot;
-  const char* sig;
-  char* colon;
-  int decoded;
-  unsigned long expiry;
-
-  assert(0 != email);
-
-  if (EmptyString(token) || token[0] != '1' || token[1] != '.')
-    return MAIL_TOKEN_MALFORMED;
-
-  if (!(dot = strchr(token + 2, '.')))
-    return MAIL_TOKEN_MALFORMED;
-
-  sig = dot + 1;
-
-  decoded = ircd_base64_decode(token + 2, (size_t) (dot - (token + 2)),
-                               payload, sizeof(payload) - 1);
-  if (decoded <= 0)
-    return MAIL_TOKEN_MALFORMED;
-
-  payload[decoded] = '\0';
-
-  /* A payload with a NUL inside it would be two different strings to two
-   * different readers, which is how a signature ends up covering less
-   * than what is used.
-   */
-  if ((size_t) decoded != strlen(payload))
-    return MAIL_TOKEN_MALFORMED;
-
-  if (ircd_base64_decode(sig, 0, tag, sizeof(tag)) != (int) sizeof(tag))
-    return MAIL_TOKEN_MALFORMED;
-
-  if (!mail_token_sign(payload, want))
-    return MAIL_TOKEN_NOKEY;
-
-  /* The signature before the contents: what an unsigned token says is not
-   * worth parsing, and comparing in constant time is what keeps a guess
-   * from being told how close it was.
-   */
-  if (!ircd_crypto_equal(tag, want, sizeof(tag)))
-    return MAIL_TOKEN_BAD;
-
-  if (!(colon = strchr(payload, ':')) || colon == payload || !colon[1])
-    return MAIL_TOKEN_MALFORMED;
-
-  *colon = '\0';
-  expiry = strtoul(payload, NULL, 10);
-
-  if (!expiry || (time_t) expiry <= now)
-    return MAIL_TOKEN_EXPIRED;
-
-  if (strlen(colon + 1) >= len)
-    return MAIL_TOKEN_MALFORMED;
-
-  ircd_strncpy(email, colon + 1, len - 1);
-
-  return MAIL_TOKEN_OK;
+  switch (ircd_token_check(token, MAIL_TOKEN_LABEL, email, len, now)) {
+  case TOKEN_OK:        return MAIL_TOKEN_OK;
+  case TOKEN_BAD:       return MAIL_TOKEN_BAD;
+  case TOKEN_EXPIRED:   return MAIL_TOKEN_EXPIRED;
+  case TOKEN_NOKEY:     return MAIL_TOKEN_NOKEY;
+  default:              return MAIL_TOKEN_MALFORMED;
+  }
 }
 
 /* ------------------------------------------------------------------- *

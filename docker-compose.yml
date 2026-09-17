@@ -304,6 +304,7 @@ services:
     ports:
       - "6673:6673"
       - "4430:4430"
+      - "6680:6680"
     networks:
       ircu-test-net:
         ipv4_address: 10.55.0.51

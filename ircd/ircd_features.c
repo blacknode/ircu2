@@ -451,6 +451,28 @@ static struct FeatureDesc {
    * neither; one alone is not half of a configuration. */
   F_S(HTTP_TLS_CERT, FEAT_OPER | FEAT_NULL, 0, 0),
   F_S(HTTP_TLS_KEY, FEAT_OPER | FEAT_NULL, 0, 0),
+  /* The largest body that may be streamed to disk instead of being
+   * refused, and where it is streamed to.  Zero is off, which is the
+   * default: a server that was not asked to take uploads does not take
+   * them, and a request with a body bigger than HTTP_BODY_MAX is 413 as
+   * it always was.  Nothing over HTTP_BODY_MAX ever crosses into the
+   * main thread either way -- what a handler is given is the path of a
+   * file the worker wrote and its size. */
+  F_I(HTTP_UPLOAD_MAX, FEAT_OPER, 0, 0),
+  F_S(HTTP_SPOOL_DIR, FEAT_OPER | FEAT_NULL, 0, 0),
+
+  /* The file host (modules/services/filehost).  Empty and zero by
+   * default, which is a server that hosts no files: the module says so
+   * at load and claims no routes rather than answering 500 to everything.
+   * The directory holds the objects; the base URL is what a link looks
+   * like from outside, which only the operator knows -- a server behind a
+   * proxy cannot work it out from its own port. */
+  F_S(FILEHOST_DIR, FEAT_OPER | FEAT_NULL, 0, 0),
+  F_S(FILEHOST_BASE_URL, FEAT_OPER | FEAT_NULL, 0, 0),
+  /* Days to keep a file, or 0 to keep it until somebody deletes it. */
+  F_I(FILEHOST_RETENTION, FEAT_OPER, 30, 0),
+  /* Bytes one account may hold at once, or 0 for no limit. */
+  F_I(FILEHOST_QUOTA, FEAT_OPER, 64 * 1024 * 1024, 0),
 
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),

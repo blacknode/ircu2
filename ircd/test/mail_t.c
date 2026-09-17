@@ -9,9 +9,9 @@
  * The token is a signature, so what has to be pinned down is every way of
  * getting one wrong: an address the server never signed, a byte flipped
  * in the payload, a byte flipped in the tag, a token from a network with
- * another key, and one that was good yesterday.  All five have to fail,
- * and the one legitimate token has to come back with the address it was
- * minted for, byte for byte.
+ * another key, one that was good yesterday, and one minted for something
+ * else entirely.  All six have to fail, and the one legitimate token has
+ * to come back with the address it was minted for, byte for byte.
  */
 
 #include "mail.h"
@@ -20,6 +20,7 @@
 #include "ircd_features.h"
 #include "ircd_base64.h"
 #include "ircd_string.h"
+#include "ircd_token.h"
 #include "ircd_vhost.h"
 
 #include <assert.h>
@@ -525,6 +526,46 @@ static void test_token_long_address(void)
   printf("Passed: the longest address still fits in a token\n");
 }
 
+/* The label is what keeps one kind of token from being another.
+ *
+ * Two things sign with this key -- a verified address and an upload
+ * ticket -- and neither may be presented as the other: a verification
+ * mail that could be pasted into an upload would be an upload nobody
+ * authorised.  Nothing but the label separates them, so this is where
+ * that is pinned down.
+ */
+static void test_token_labels_do_not_mix(void)
+{
+  char token[TOKEN_MAX + 1];
+  char payload[TOKEN_PAYLOAD_MAX + 1];
+
+  reset();
+  assert(vhost_set_key(KEY_ONE));
+
+  assert(ircd_token_make(token, sizeof(token), "ircu-file-upload-v1",
+                         "abcdef:maria:#files", 1000, 900));
+
+  assert(ircd_token_check(token, "ircu-file-upload-v1", payload,
+                          sizeof(payload), 1001) == TOKEN_OK);
+  assert(!strcmp(payload, "abcdef:maria:#files"));
+
+  /* The same bytes, asked about under another name. */
+  assert(ircd_token_check(token, "ircu-mail-verify-v1", payload,
+                          sizeof(payload), 1001) == TOKEN_BAD);
+
+  /* And the mail side's own check, which is that label, refuses it too --
+   * the two are not the same function with a different argument by
+   * accident. */
+  {
+    char email[MAIL_ADDRESS_MAX + 1];
+
+    assert(mail_token_check(token, email, sizeof(email), 1001)
+           == MAIL_TOKEN_BAD);
+  }
+
+  printf("Passed: a token minted under one label is not one under another\n");
+}
+
 int main(int argc, char* argv[])
 {
   (void) argc;
@@ -551,6 +592,7 @@ int main(int argc, char* argv[])
   test_token_tampering();
   test_token_is_per_network();
   test_token_long_address();
+  test_token_labels_do_not_mix();
 
   mail_close();
 

@@ -1073,47 +1073,46 @@ Tres cosas más que hubo que decidir:
   porque el camino se le entrega a los módulos y alguno acabará abriendo
   un fichero.
 
-**Los ficheros quedan aplazados.** Lo que hay es el servidor y las rutas
-encima, que es lo que necesitan los *webhooks* y una API REST, y la base
-sobre la que los ficheros entrarán como un módulo más cuando toque.
+**Los ficheros están hechos** (`modules/services/filehost/`,
+doc/readme.files). Lo que se escribió, y en qué se apartó de lo que esta
+sección proponía:
 
-Por §4, un módulo no puede llamar a otro. La forma correcta es la misma que la
-de la base de datos, y va en el core como interfaz delgada:
+1. **Subida y descarga.** No hay almacenamiento de objetos detrás: los
+   ficheros están en un directorio del servidor, con dos caracteres de
+   *fan-out*, y la metadata en PostgreSQL por `db.h`. S3 se añade el día
+   que haga falta y no antes; `file_store.c` es el único fichero que
+   toca el disco y las sentencias, que es lo que hace que ese día sea un
+   fichero y no una búsqueda.
+2. **Autorización desde el ircd.** Un *ticket* firmado con HMAC-SHA256
+   (`include/ircd_token.h`, el mismo mecanismo que verifica un correo en
+   doc/readme.mail), ligado a la cuenta, al canal y a **un identificador
+   concreto**: un ticket que valiera para cualquier identificador sería
+   un ticket para sobrescribir el fichero de otro. No se guarda nada, así
+   que no hay tabla de tickets vivos que caducar ni que filtrar. AES-GCM
+   no hace falta: no hay nada secreto en lo que el ticket dice, sólo hay
+   que impedir que lo escriba otro.
+3. **Nada grande cruza el bucle de eventos**, en ninguna de las dos
+   direcciones: el *worker* escribe el cuerpo al *spool* según llega y el
+   módulo lo mueve con `http_request_save()` —un `link()` y un
+   `unlink()`—, y de vuelta el *handler* nombra un fichero y el *worker*
+   lo sirve. Es la regla alrededor de la que se construyó §7.4 y la razón
+   de que un servidor de ficheros quepa en un servidor de un solo hilo.
+4. **Sin tag `draft/filehost`.** Un tag lo lee un cliente, y los clientes
+   son la fase siguiente; hasta que existan, la URL en el texto es lo que
+   entiende cualquier cliente escrito desde 1998. Inventarlo ahora sería
+   inventar uno que no lee nadie.
+5. **Sin miniaturas ni antivirus.** Son *workers* encima de esto y no
+   cambian nada de lo anterior.
 
-```c
-/* include/http.h -- el core sólo guarda el registro y despacha. */
-extern int  http_register_provider(struct ModuleHandle* mod,
-                                   const struct HttpProvider* provider);
-extern void http_unregister_provider(struct ModuleHandle* mod);
+Lo que sí hizo falta y no estaba previsto: el servidor sólo sirve como sí
+mismo una lista corta de tipos —imagen, audio, vídeo y texto plano— y
+todo lo demás como `application/octet-stream` adjunto. Servir el tipo que
+declara quien sube es una forma de poner HTML, y por tanto *script*, en
+el origen del propio servidor.
 
-/** ¿Hay proveedor cargado?  Un consumidor comprueba esto y degrada si no. */
-extern int  http_available(void);
-extern const char* http_provider_name(void);
-
-/** Registrar una ruta.  Se revierte al descargar el módulo consumidor. */
-extern int  http_add_route(struct ModuleHandle* mod, const char* method,
-                           const char* path, HttpHandlerFn fn, void* user);
-```
-
-- El **proveedor** es un módulo (`modules/workers/http/`) que posee el socket,
-  el parseo y su TLS, y que hace el trabajo de red **en su propio worker**,
-  entregando al hilo principal sólo peticiones ya parseadas.
-- El **consumidor** hace `if (!http_available()) { /* función desactivada */ }`
-  al cargarse y lo dice en el log y en `/MODULE LIST`. No se cae, no adivina:
-  se desactiva esa parte de su funcionalidad.
-- Las rutas se revierten al descargar cualquiera de los dos módulos.
-
-Sobre esto se construyen los ficheros:
-
-1. **Subida y descarga** con almacenamiento de objetos detrás (S3 o compatible).
-2. **Autorización desde el ircd:** token de vida corta sellado con AES-256-GCM
-   o firmado con HMAC-SHA256 (§5.8), ligado a la cuenta y al canal; el
-   proveedor HTTP lo valida. El mensaje resultante lleva la URL y los metadatos
-   en tags (`draft/filehost`).
-3. Miniaturas y antivirus, en *workers*.
-
-Lo mismo vale para webhooks entrantes y para una API REST de integraciones: son
-rutas sobre el mismo proveedor.
+Lo mismo vale para *webhooks* entrantes y para una API REST de
+integraciones: son rutas sobre el mismo listener y no necesitan nada que
+no esté ya escrito.
 
 ### 7.5 Voz, vídeo y pantalla compartida — **aplazado**
 
@@ -1287,7 +1286,7 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
    │     │
    │     ├──► F2 Historial (PostgreSQL) ──► F3 Conversación ──┐
    │     │                                                     │
-   │     └──► F5 HTTP + ficheros ───────────────────────────────┤
+   │     └──► F5 HTTP ✅ + ficheros ✅ ─────────────────────────┤
    │                                                            ├──► F6 Clientes
    ├──► F4 Texto enriquecido ───────────────────────────────────┘     web y móvil
    │

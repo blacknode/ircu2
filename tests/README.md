@@ -114,6 +114,10 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
                              # may, MARKREAD only moving forward, and rich text
                              # reaching one half of the channel as Markdown and
                              # the other as plain
+  files/
+    test_files.py            # the file host end to end: a signed ticket, a 200 KiB
+                             # PUT that never touches the event loop, the same
+                             # bytes back out of the link, listing and deletion
   i18n/
     test_language.py         # LANGUAGE, draft/languages, translated numerics from
                              # po/es.po (the image installs it), the LG token
@@ -171,7 +175,7 @@ The hub also has Connect blocks for two external test servers used by the P10 te
 
 Configs are baked into the Docker images (in `docker/`), not volume-mounted.
 
-### Identity topology (`identity_db/`, `history/`, `conversation/`)
+### Identity topology (`identity_db/`, `history/`, `conversation/`, `files/`)
 
 One ircd with the identity module and the PostgreSQL it stores accounts
 in -- and, since phase 2, the history module and the messages it stores
@@ -183,7 +187,9 @@ inherit accounts from another one.
 testing about CHATHISTORY needs accounts: a direct message is stored only
 when both ends have identified, a conversation is read back by account,
 REDACT asks who wrote a message, and a read marker belongs to a person
-rather than to a connection.  Those
+rather than to a connection.  `files/` shares it for two reasons at once:
+the file host keeps its metadata in the same database, and only an
+identified client may upload.  Those
 tests put a token unique to the run in every nickname and channel name,
 because the store outlives them -- a fixed name would read back the
 previous run's messages and a fixed nickname would already be registered.
@@ -191,6 +197,7 @@ previous run's messages and a fixed nickname would already be registered.
 | Service       | Server Name        | Client | S2S  | Numeric | IP         |
 |---------------|--------------------|--------|------|---------|------------|
 | ircd-identity | identity.test.net  | 6673   | 4430 | 7       | 10.55.0.51 |
+|               | (its HTTP listener)| 6680   | —    | —       |            |
 | identity-db   | postgres:17-alpine | 15432  | —    | —       | 10.55.0.50 |
 
 There is no Redis: the cache is never the truth (see `doc/readme.cache`),

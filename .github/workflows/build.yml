@@ -68,6 +68,13 @@ jobs:
       - name: Smoke-test the server binary
         run: ./build/ircd/ircd -v
 
+      # doc/example.conf is what an operator starts from, and a block it
+      # documents that the grammar does not accept is a syntax error that
+      # stops the whole file -- so it looks like whatever the operator was
+      # editing at the time.  Checking it here is what catches that.
+      - name: Check that the example configuration parses
+        run: ./build/ircd/ircd -k -f doc/example.conf
+
       - name: Check the example modules built and resolve only core symbols
         run: |
           set -e
@@ -140,6 +147,38 @@ jobs:
             rm -f "$allowed"
           done
           test "$missing" -eq 0
+
+  # The sanitizer presets, which is where a leak or a race in the unit
+  # tests shows up.  One job: they are the same 25 tests and they take a
+  # second, so running them beside the matrix costs nothing and stops the
+  # presets from quietly rotting between the times somebody runs them by
+  # hand.
+  sanitizers:
+    name: ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [asan, tsan]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build bison pkg-config libssl-dev
+          sudo apt-get install -y libpq-dev libjansson-dev
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DIRCU_DOMAIN=example.com
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} -j$(nproc)
+
+      - name: Run unit tests
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
 
   sdk:
     name: sdk

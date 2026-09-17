@@ -1099,6 +1099,12 @@ clientblock: CLIENT
     aconf->conn_class = c_class;
     aconf->maximum = maxlinks;
     aconf->passwd = pass;
+    /* Checked at the end of registration, in s_auth.c: a client with the
+     * wrong certificate is refused with ERR_TLSCLIFINGERPRINT.  Both a
+     * password and a fingerprint have to be satisfied when both are
+     * configured, which is why this does not replace the password. */
+    aconf->tls_fingerprint = tls_fingerprint;
+    tls_fingerprint = NULL;
   }
   if (!aconf) {
     MyFree(username);
@@ -1106,6 +1112,7 @@ clientblock: CLIENT
     MyFree(ip);
     MyFree(pass);
   }
+  MyFree(tls_fingerprint);
   if (username)
     DoIdentLookups = 1;
   host = NULL;
@@ -1114,10 +1121,11 @@ clientblock: CLIENT
   maxlinks = 0;
   ip = NULL;
   pass = NULL;
+  tls_fingerprint = NULL;
   port = 0;
 };
 clientitems: clientitem clientitems | clientitem;
-clientitem: clienthost | clientip | clientusername | clientclass | clientpass | clientmaxlinks | clientport;
+clientitem: clienthost | clientip | clientusername | clientclass | clientpass | clientmaxlinks | clientport | tlsfingerprint;
 clienthost: HOST '=' QSTRING ';'
 {
   char *sep = strchr($3, '@');

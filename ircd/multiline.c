@@ -118,6 +118,24 @@ const char* multiline_batch_for(const struct Client* to)
   return fanout_ctx.id;
 }
 
+/** The Excess Flood ceiling for \a cptr, at least \a limit.  See batch.h.
+ * @param[in] cptr Client being read from.
+ * @param[in] limit The ceiling its class asks for.
+ */
+unsigned int multiline_flood_ceiling(const struct Client* cptr,
+                                     unsigned int limit)
+{
+  unsigned int promised;
+
+  if (!cptr || !CapHas(cli_active(cptr), CAP_MULTILINE))
+    return limit;
+
+  promised = (unsigned int) feature_int(FEAT_MULTILINE_MAX_BYTES)
+           + (unsigned int) feature_int(FEAT_CLIENT_FLOOD);
+
+  return limit > promised ? limit : promised;
+}
+
 /** Does the piece being relayed continue the one before it?  See batch.h.
  * @param[in] to Recipient.
  */

@@ -814,7 +814,13 @@ appends to the previous piece instead of starting a line. Limits are
 `batch_multiline_advertise()` (re-run on rehash). **A piece is charged bytes
 but not the flat per-command flood penalty** (`multiline_in_progress()` in
 `parse.c`): at 2s per line a client sending the 24 the spec allows would be
-throttled off the server for sending one message. `batch` and
+throttled off the server for sending one message. The **Excess Flood ceiling**
+is raised to match for a client that negotiated the capability
+(`multiline_flood_ceiling()`, called from `read_packet()` *after* the class has
+decided the throttle exemption, so it does not hand that out too): the recvQ is
+measured before anything is parsed, so a client sending the `max-bytes` it was
+promised would otherwise be killed before the first piece was read, and an
+advertised limit you are killed for using is a trap. `batch` and
 `draft/multiline-concat` join `label` as tags a client may send
 (`msg_tag_client_may_send()`), and `msg_tag_format_s2s()` drops `batch`
 explicitly — a batch is between one server and one client, and long messages

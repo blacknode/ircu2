@@ -239,6 +239,27 @@ extern int batch_in_capture(struct Client* cptr, int notice,
  */
 extern const char* multiline_batch_for(const struct Client* to);
 
+/** The Excess Flood ceiling for \a cptr, at least \a limit.
+ *
+ * A client that negotiated draft/multiline has been told, in the
+ * capability's own value, that it may send a message of
+ * FEAT_MULTILINE_MAX_BYTES -- in pieces, one after another, as fast as it
+ * can.  The recvQ ceiling is checked before any of it is parsed, so a
+ * client doing exactly what it was invited to do would be killed for
+ * Excess Flood before the server had read the first piece, which makes
+ * the advertised limit a trap.
+ *
+ * So the ceiling for such a client is at least what was promised plus the
+ * ordinary allowance for everything else.  It does not exempt anything:
+ * the throttle still charges the bytes, and a client that negotiated
+ * nothing keeps the classic budget exactly.
+ *
+ * @param[in] cptr Client being read from.
+ * @param[in] limit The ceiling its class asks for.
+ */
+extern unsigned int multiline_flood_ceiling(const struct Client* cptr,
+                                            unsigned int limit);
+
 /** Return non-zero if the piece being relayed continues the one before it.
  *
  * A long message is one *line* however many pieces it was sent in, and a

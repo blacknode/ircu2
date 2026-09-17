@@ -24,6 +24,7 @@
 #include "config.h"
 
 #include "s_bsd.h"
+#include "batch.h"
 #include "client.h"
 #include "IPcheck.h"
 #include "channel.h"
@@ -738,6 +739,13 @@ static int read_packet(struct Client *cptr, int socket_ready)
       SetExemptThrottle(cptr);
     else
       ClearExemptThrottle(cptr);
+
+    /* Raised -- after the exemption is decided from the class alone, so
+     * that this does not hand out the exemption as well -- to whatever a
+     * client that negotiated draft/multiline was promised it could send.
+     * See multiline_flood_ceiling() in batch.h.
+     */
+    flood_limit = multiline_flood_ceiling(cptr, flood_limit);
   }
 
   if (socket_ready &&
@@ -908,7 +916,7 @@ static int read_packet(struct Client *cptr, int socket_ready)
       return exit_client(cptr, cptr, &me, "dbuf_put fail");
 
     Debug((DEBUG_DEBUG, "dbuf: %u maxfl: %u", DBufLength(&(cli_recvQ(cptr))), GetMaxFlood(cptr)));
-    if (recvq_over_flood(cptr, GetMaxFlood(cptr)))
+    if (recvq_over_flood(cptr, flood_limit))
       return exit_client(cptr, cptr, &me, "Excess Flood");
 
     while (DBufLength(&(cli_recvQ(cptr))) && !NoNewLine(cptr) &&

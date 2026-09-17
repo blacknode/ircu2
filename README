@@ -1,27 +1,70 @@
+	ircu2 -- the Undernet IRC daemon, and what it is becoming
 
-	Welcome to ircu2.10.12, the Undernet IRC daemon
+This is ircu, the Undernet IRC server (P10), being extended into a
+unified communications server: accounts that are nicknames, a message
+history you can read back and search, threads and reactions, rich text,
+file hosting, and everything a modern client negotiates for.  It speaks
+to a client written in 1998 exactly as it always did -- every extension
+is behind a capability, and a client that did not ask for one sees
+byte-identical lines to before.  That is a design constraint and not an
+accident; doc/proposals/006-comunicaciones-unificadas.md is the road map
+and says why.
 
-Version u2.10.12 of the Undernet ircd incorporates many new features
-over its predecessor, and we feel that using it will make you very
-happy indeed.
+WHAT IS HERE THAT WAS NOT IN u2.10.12
 
-New features include:
-  - A completely rewritten network event engine, which make full use
-    of the asynchronous event engines available in FreeBSD (kqueue)
-    and Solaris (/dev/poll), resulting in dramaticaly improved
-    performance.
-  - New F: (feature) lines in ircd.conf, and the GET/SET commands allow
-    many settings to be changed dynamically, rather than by with compile-
-    time configuration.
-  - The new "account" feature added to the P10 protocol, allows people to
-    remain logged in to service bots (i.e., gnuworld) during a netsplit.
-    This means people will not have to login again once the network rejoins.
+  - Modules.  A .so the server loads, which can add commands, hooks,
+    user and channel modes, capabilities, bots, SQL migrations and
+    background work; optionally in a process of its own, so a module
+    that crashes takes its host and not the server.
+      doc/readme.modules, doc/readme.isolation
+  - Worker threads for what would otherwise stop the event loop -- a
+    database round trip, an Argon2 hash, an HTTP socket.  The IRC core
+    is still one thread and still touches its own state alone.
+      doc/readme.workers
+  - A database interface and a cache in front of it, both the same
+    shape: the core holds the configuration and the calls in flight and
+    dispatches to one module.  PostgreSQL and Redis drivers ship.
+      doc/readme.database, doc/readme.cache, doc/readme.migrations
+  - Identity.  An account *is* a nickname: SASL, an ACCOUNT command for
+    clients that do not speak IRCv3, NickServ, a grace period for
+    somebody wearing a registered nick they have not proved, and mail to
+    verify the address behind it.
+      doc/readme.accounting, doc/readme.sasl, doc/readme.mail
+  - History.  What was said, kept on PostgreSQL and read back with
+    CHATHISTORY, searched with SEARCH, corrected with EDIT, taken back
+    with REDACT, and marked as read across a person's devices.
+      doc/readme.history
+  - Rich text, negotiated, with the server generating the plain-text
+    equivalent for everybody who did not ask for it.
+      doc/readme.richtext
+  - An HTTP listener in the core with routes claimed by modules, and a
+    file host on top of it: the ircd mints a signed ticket and an
+    ordinary HTTP client sends the bytes.
+      doc/readme.http, doc/readme.files
+  - Translations the server reads itself, one PO file per language,
+    chosen per client.
+      doc/readme.translations
+  - Configuration from the environment, so a container needs no
+    generated ircd.conf.
+      doc/readme.env
+  - IRCv3: message-tags, server-time, msgid, batch, labeled-response,
+    multiline, echo-message, away-notify, chghost, invite-notify,
+    userhost-in-names, standard-replies, and the drafts the conversation
+    model is built on.
+  - A TypeScript client SDK, in this repository because the wire is one
+    thing.
+      doc/readme.sdk
+
+The build is CMake; the autotools build is gone.  See INSTALL.
+
+Everything an operator can change at run time is in doc/readme.features,
+and a commented configuration file is in doc/example.conf.
 
 INSTALLATION
 
-Please see the INSTALL file for installation instructions, for hints on how
-to best configure your OS for running ircu under high load, see the various
-README.<platform> files.
+Please see the INSTALL file for installation instructions; for hints on
+how to best configure your OS for running ircu under high load, see the
+platform sections at the end of this file.
 
 COMPATIBILITY
 
@@ -63,10 +106,14 @@ ircd.conf.
 
 MORE INFORMATION
 
-For more information on this software, see the included documentation
-in the doc/ directory, as well as http://coder-com.undernet.org.
+For more information on this software, see the included documentation in
+the doc/ directory -- doc/readme.features for what can be changed while
+the server runs, doc/example.conf for the configuration file, doc/p10.html
+for the protocol, and doc/proposals/ for the designs behind the larger
+additions, each of which says what was decided and why.
 
-For general information on the Undernet, vist http://www.undernet.org
+For the original server this is built on, see http://coder-com.undernet.org
+and http://www.undernet.org
 
 Happy IRCing!
 

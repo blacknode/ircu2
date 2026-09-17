@@ -562,10 +562,12 @@ Hooks marked as vetoing run before the server acts, so refusing leaves
 nothing to undo.  The rest are notifications: their return value is
 ignored.
 
-Some hook points listed in enum HookType are declared but not yet wired
-into the core -- CHANNEL_PRE_PART, CHANNEL_PRE_MODE, CHANNEL_PRE_TOPIC,
-CHANNEL_DESTROYED and SERVER_SPLIT.  Registering for one of them succeeds
-and simply never fires.
+Some hook points listed in enum HookType are declared but not wired into
+the core -- CHANNEL_PRE_PART, CHANNEL_PRE_TOPIC, CHANNEL_DESTROYED and
+SERVER_SPLIT.  Registering for one of them succeeds and simply never
+fires; they are wired when something needs them, and a module that
+cannot tell the difference is a module that would have been written
+against a hook nobody had tested.
 
 
 SUSPENDING A HOOK
@@ -1129,10 +1131,10 @@ libpq and jansson, and skips the module when either is missing.
 THE EXAMPLES
 ============
 
-  commands/example_cmd/  adds a command; the minimal reference, and the
-                         reference for a module built from a directory:
-                         two sources, a private header and a resource
-                         (hello.txt) it reads through module_dir()
+  modes/umode_nopm.c     adds user mode +P and gives it a meaning; the
+                         reference for registering a user mode, and the
+                         smallest thing here that does something -- one
+                         file, one mode, one hook.  Read it first
   hooks/trace_events.c   logs every notification hook; noisy, for
                          debugging a hook point
   hooks/nickpolicy.c     refuses nicknames; a worked veto
@@ -1140,18 +1142,14 @@ THE EXAMPLES
                          answers for it; the reference for HOOK_PENDING
   hooks/nocaps.c         refuses shouted channel messages and lowercases
                          shouted private ones; a veto and a rewrite
-  modes/umode_nopm.c     adds user mode +P and gives it a meaning; the
-                         reference for registering a user mode
   modes/cmode_nocaps.c   adds channel mode +G and gives it a meaning; the
                          reference for registering a channel mode, and
                          nocaps.c's rule made asked-for instead of
                          always-on
-  workers/worker_demo.c  hashes a password in a worker thread; the
-                         reference for module_submit_work() and for
-                         referring to a client that may have left
-  workers/worker_ticker.c
-                         runs a thread with a loop of its own; the
-                         reference for module_spawn_worker()
+  workers/sendmail/      runs a program on a worker thread and answers
+                         with its exit status; the reference for
+                         module_submit_work() and for a task whose input
+                         and output are bytes and nothing else
   commands/isolated_demo.c
                          registers a command and two hooks, and will
                          crash or spin on request; the reference for
@@ -1165,9 +1163,10 @@ THE EXAMPLES
                          outlive a single task
   commands/m_bot/        adds /BOT, virtual bots operators create on
                          demand; the reference for using the bot API
-                         (see VIRTUAL CLIENTS below) and for a module
-                         that ships translations (po/es.po) and marks
-                         its notices with _()
+                         (see VIRTUAL CLIENTS below), for a module built
+                         from a directory, and for one that ships
+                         translations (po/es.po) and marks its notices
+                         with _()
   services/irc_services/ network services -- NickServ, ChanServ --
                          embedded in the server: service bots from
                          Service{} blocks, answering users through
@@ -1175,6 +1174,36 @@ THE EXAMPLES
                          service bots, for HOOK_CONFIG_LOADED, and for
                          a module that brings a client back when the
                          network takes it away (doc/readme.services)
+  hooks/cmdaudit.c       logs what one user does to another; the
+                         reference for HOOK_COMMAND_PRE and
+                         HOOK_COMMAND_POST, which fire around every
+                         command rather than needing a hook per command
+  hooks/richtext.c       negotiated Markdown, with the plain text the
+                         server generated going to everybody who did not
+                         ask; the reference for a module that gives one
+                         message two bodies (doc/readme.richtext)
+  workers/redis/         the cache driver behind include/cache.h, the
+                         same shape as the database one and optional in
+                         a way it is not: the cache is never the truth
+                         (doc/readme.cache)
+  workers/sendmail/      hands outgoing mail to the local MTA on a
+                         worker; the reference for a provider whose work
+                         is a program rather than a socket
+                         (doc/readme.mail)
+  services/identity/     what answers whether a password is right and
+                         whose nickname is whose: the provider behind
+                         umode +r, and the reference for a module that
+                         owns SQL migrations and for cache-then-database
+                         reading (doc/readme.sasl)
+  services/history/      what was said, kept: CHATHISTORY, SEARCH, EDIT,
+                         REDACT and MARKREAD over PostgreSQL; the
+                         reference for HOOK_MESSAGE_DELIVERED and for
+                         keeping every statement a module sends in one
+                         file (doc/readme.history)
+  services/filehost/     files, over the server's own HTTP listener; the
+                         reference for claiming routes, for answering a
+                         request later, and for a signed ticket standing
+                         in for a session (doc/readme.files)
 
 All paths are under modules/.
 

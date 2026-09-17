@@ -29,6 +29,31 @@ REQUIREMENTS
     pkg install cmake bison
 
 
+OPTIONAL DEPENDENCIES (MODULES)
+
+None of these is needed to build or run the server.  Each is needed by
+one module, and a module whose library is missing is simply not built --
+the configure step says which and why, and nothing else is affected:
+
+  libpq + jansson   modules/workers/postgres, the database driver
+  jansson           modules/services/identity, which answers for accounts
+  hiredis           modules/workers/redis, the cache driver
+
+Everything built on the database therefore needs the first two: the
+identity model (accounts, SASL, NickServ), the history, and the file
+host.  The cache is optional even where it is built, because the cache
+is never the truth.
+
+  On Debian or Ubuntu:
+    apt-get install libpq-dev libjansson-dev libhiredis-dev
+
+  On Red Hat or Fedora:
+    dnf install libpq-devel jansson-devel hiredis-devel
+
+Modules are installed into IRCU_MPATH and loaded by name, never by path;
+see doc/readme.modules.
+
+
 BUILDING
 
 Configure a build directory, build it, and run the unit tests:
@@ -133,6 +158,28 @@ remembered in the build directory, so later builds do not need to repeat them.
   CMAKE_BUILD_TYPE selects the optimisation level: Debug (-g), Release (-O3),
   RelWithDebInfo (-O2 -g, the default) or MinSizeRel.  It does not affect
   assertions; use IRCU_ENABLE_ASSERTS for those.
+
+
+TESTS
+
+Two suites, and they are independent.
+
+The unit tests are C, run by ctest, and need nothing but the build:
+
+    ctest --test-dir build --output-on-failure
+
+The integration tests are Python over Docker, and bring their own
+containers up: a hub and leaves, a PostgreSQL, TLS, and so on.
+
+    cd tests && uv sync
+    uv run pytest
+
+See tests/README.md for the topologies and what each directory covers.
+Anything that touches ircd/worker.c should also be run under the tsan
+preset:
+
+    cmake --preset tsan && cmake --build --preset tsan
+    ctest --preset tsan
 
 
 AFTER INSTALLING

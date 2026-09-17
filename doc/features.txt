@@ -214,3 +214,84 @@ Target limiting:
   ERR_TARGETTOOFAST 349
 
 
+
+
+WHAT THIS FORK ADDS
+===================
+
+Everything below is this server (see README), not u2.10.12, and all of it
+is behind an IRCv3 capability or a command that did not exist before: a
+client that negotiates nothing sees the same bytes it always did.  Each
+entry says where the whole story is.
+
+IRCv3 capabilities:
+
+ message-tags, server-time, batch, labeled-response, echo-message,
+ away-notify, chghost, invite-notify, userhost-in-names,
+ standard-replies, sasl, draft/multiline, draft/multiline-concat,
+ draft/languages, draft/chathistory, draft/read-marker,
+ draft/message-redaction, blacknode/richtext, blacknode/search,
+ blacknode/message-edit
+
+ The ones the core brings have a CAP_* feature apiece that turns the
+ advertisement off (doc/readme.features).  The rest come from modules --
+ chathistory, the read marker, redaction, richtext, search and editing
+ are the history and richtext modules' -- and are advertised while their
+ module is loaded and withdrawn with CAP DEL when it is not, so what a
+ server offers is what it can actually answer.
+
+Identity: AUTHENTICATE, ACCOUNT
+ An account *is* a nickname; umode +r means "identified to the nickname
+ in use", and there are no account names to keep beside it.  ACCOUNT
+ LOGIN/LOGOUT/LIST/VERIFY is the same thing for a client that does not
+ speak IRCv3.  See doc/readme.accounting and doc/readme.sasl.
+
+ Additional Numerics:
+  RPL_LOGGEDIN          900
+  RPL_LOGGEDOUT         901
+  ERR_NICKLOCKED        902
+  RPL_SASLSUCCESS       903
+  ERR_SASLFAIL          904
+  ERR_SASLTOOLONG       905
+  ERR_SASLABORTED       906
+  ERR_SASLALREADY       907
+  RPL_SASLMECHS         908
+  ERR_ACCOUNTFAIL       983
+  RPL_ACCOUNTLIST       984
+  RPL_ENDOFACCOUNTLIST  985
+  ERR_NOTAUTHENTICATED  986
+  ERR_FROZEN            987
+  RPL_VERIFYSENT        988
+  RPL_VERIFIED          989
+  RPL_WHOISEMAIL        691   (to that user alone, never to an operator)
+  RPL_WHOISFROZEN       692
+
+History: CHATHISTORY, SEARCH, EDIT, REDACT, MARKREAD
+ What was said, kept and read back; searched over a full-text index;
+ corrected by its author; taken back; and marked as read per account
+ rather than per connection.  Refusals are FAIL, not numerics -- that is
+ what standard-replies is for.  See doc/readme.history.
+
+Files: FILE UPLOAD|LIST|DELETE
+ The server mints a signed ticket and says where to PUT the file; an
+ ordinary HTTP client sends it.  Nothing travels over IRC but the link.
+ See doc/readme.files.
+
+Languages: LANGUAGE
+ A per-connection language preference, answered from PO files the server
+ reads itself.  See doc/readme.translations.
+
+ Additional Numerics:
+  RPL_YOURLANGUAGESARE  687
+  RPL_WHOISLANGUAGE     690
+  ERR_TOOMANYLANGUAGES  981
+  ERR_NOLANGUAGE        982
+
+Modules: MODULE LOAD|UNLOAD|RELOAD|LIST|MIGRATION
+ Operator commands for the module system, behind the module_admin
+ privilege.  See doc/readme.modules and doc/readme.migrations.
+
+Operators: HISTORY STATUS|PURGE|EXPORT|FORGET
+ Behind a privilege of its own, history_admin, because it is the
+ difference between an operator and somebody who can read every
+ conversation on the network.

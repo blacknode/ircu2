@@ -216,10 +216,11 @@ WHAT IS NOT HERE YET
 
   - No SVSNICK and no channel modes set by a service: a service sets
     channel modes the way any operator's bot would, through the
-    ModeBuf, and irc_services does not yet do it.  User modes it can
-    set: bot_set_user_mode() lets a service bot put +r on (or take it
-    off) any user but an operator -- see readme.accounting -- and
-    irc_services does not yet call it either.
+    ModeBuf, and irc_services does not do it.  User modes it does:
+    bot_set_user_mode() lets a service bot put +r on (or take it off)
+    any user but an operator -- see readme.accounting -- and NickServ
+    uses it to freeze a client wearing a registered nickname it has not
+    proved is its own (nick_policy.c, doc/readme.sasl).
 
   - One server runs a given service.  Two servers with the same
     Service{} block will each try to introduce the same nick; the

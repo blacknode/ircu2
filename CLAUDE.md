@@ -340,8 +340,7 @@ starts new work), so `account.c`, `cache.c`, `hooks.c` and `nick_policy.c`
 all `timer_init()` once and `timer_add()` the same struct thereafter, the
 way `check_pings()` does.
 
-**Identity, in progress** (proposal 007). Two pieces of core state are in
-place ahead of the protocol that will drive them. `cli_user()->email` is the
+**Identity: two pieces of core state** (proposal 007). `cli_user()->email` is the
 address a client authenticated with: **local and only local** — it never
 crosses P10 (a remote user has `NULL`, which is this server saying it does not
 know), `WHOIS` reports it with 691 **only to the user themselves**, not even to
@@ -1073,13 +1072,20 @@ configuration from the environment (004) and translations with PO files (005,
 in Spanish);
 read the relevant one before changing either subsystem.  `006` (in Spanish) is
 not a subsystem design but the roadmap for turning this into a unified
-communications server (rich text, history, voice/video/screen share): read it
-before starting anything that belongs to one of its phases; its phase 0 is
-done.  `007` (in Spanish, revision 2) is that roadmap's phase 1, the identity model —
+communications server: read it before starting anything that belongs to one of
+its phases, and **read what it says about a phase against what is in the tree**
+— each finished phase has been written back into it, including where the
+implementation decided otherwise. Phases 0 (foundations), 1 (identity),
+2 (history), 3–4 (conversation and rich text), 5 (HTTP and files) and 7
+(module isolation, which is `modhost`) are done. What is left is 6 — web and
+mobile clients, of which the SDK is the half that lives here — and §7.5,
+voice and video, deferred on purpose and with no dependencies in either
+direction.  `007` (in Spanish,
+revision 2) is that roadmap's phase 1, the identity model —
 SASL, `ACCOUNT`, an account that *is* a nickname, the `guest-*` rename, the
 freeze, Redis in front of PostgreSQL, and the split between the `identity`
-module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
-`User::email` and `+f` are its first two slices; §11 has the rest in order. Other useful docs:
+module (the mechanism) and `nickserv` (the policy and the voice); §11 has its
+slices in order. Other useful docs:
 `doc/p10.html` (protocol), `doc/readme.accounting` (the identity model),
 `doc/readme.sasl` (how a user earns `+r`: AUTHENTICATE, `ACCOUNT`, NickServ
 and the provider behind all three), `doc/readme.modules`,

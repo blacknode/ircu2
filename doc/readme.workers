@@ -280,8 +280,8 @@ module asks with module_stop_worker().  The module's copy of the pointer is
 stale from then on.  module_stop_worker() checks the handle against the
 list of live workers before it reads anything through it, so calling it on
 a worker the server already stopped returns zero and does nothing -- a
-module that stops its thread from mi_fini, as worker_ticker.c does, is
-always doing exactly that, because the unload stops the thread first.
+module that stops its thread from mi_fini is always doing exactly that,
+because the unload stops the thread first.
 Nothing else in the API accepts a stale handle: worker_name() and
 worker_owner() on one read freed memory.
 
@@ -363,18 +363,37 @@ than "no", it is a bug, whether or not it has caused one yet.
 THE EXAMPLES
 ============
 
-  modules/workers/worker_demo.c
-                            adds /HASHPASS, which derives a key with
-                            PBKDF2-HMAC-SHA1 in a pool thread; the
-                            reference for worker_submit() and for the
-                            client reference.  Ask it for a few million
-                            rounds and watch the server keep answering.
+  modules/workers/sendmail/ hands a message to the local MTA -- fork,
+                            exec, write and wait, every one of which
+                            blocks -- and answers with an exit status;
+                            the reference for module_submit_work(), and
+                            the smallest example of the rule that what
+                            crosses is bytes and nothing else.
 
-  modules/workers/worker_ticker.c
-                            starts a thread of its own that waits on its
-                            stop descriptor and posts back every ten
-                            seconds; the reference for worker_spawn(),
-                            worker_post() and worker_stop_fd().
+  modules/services/identity/
+                            verifies a password with Argon2 in a pool
+                            thread; the reference for referring to a
+                            client by numnick rather than by pointer,
+                            because the answer comes back long after the
+                            question and the client may be gone.  With
+                            WORKER_THREADS at zero it refuses and says
+                            so, rather than hashing on the main thread
+                            and stopping the server for a quarter of a
+                            second per login.
+
+  modules/workers/postgres/ one dedicated worker per pooled connection,
+                            each with a loop of its own; the reference
+                            for module_spawn_worker(), worker_post() and
+                            worker_stop_fd(), and for workers that
+                            outlive any one task.
+
+  ircd/http_server.c        the core's own: a thread that owns a socket
+                            and answers from the main thread.  Worth
+                            reading for the one case this API does not
+                            cover -- the answer goes back through
+                            Mongoose's mg_wakeup() rather than
+                            worker_post(), because the library already
+                            has a pipe and a second one would be two.
 
 
 WHAT THIS IS NOT

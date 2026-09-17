@@ -746,7 +746,7 @@ alta, porque condiciona el modelo de negocio.
 
 ## 7. Fases 2 a 7 — El producto
 
-### 7.1 Fase 2 — Historial, sobre PostgreSQL
+### 7.1 Fase 2 — Historial, sobre PostgreSQL — **implementado**
 
 **Decisión tomada: MongoDB descartado.** El historial va sobre PostgreSQL y
 sólo sobre PostgreSQL. Queda anotado por qué, para no volver a discutirlo
@@ -882,7 +882,7 @@ dentro de un año:
   ha escrito; no hay cursor abierto, porque `db.h` no tiene transacciones y
   una conexión del *pool* no es de quien la pide.
 
-### 7.2 Fase 3 — Semántica de conversación moderna
+### 7.2 Fase 3 — Semántica de conversación moderna — **implementado**
 
 Todo esto son tags sobre `msgid`, y cabe en módulos una vez existe la fase 0:
 
@@ -1022,10 +1022,19 @@ El tag `+blacknode/format` **no acompaña al cuerpo plano**: dice «este
 cuerpo es Markdown», que es verdad de uno de los dos y mentira del otro, y
 un tag que miente es peor que ningún tag (`msg_tag_suppress()`).
 
-### 7.4 Fase 5 — HTTP como módulo, y ficheros
+### 7.4 Fase 5 — HTTP y ficheros — **implementado**
 
 **Decisión tomada: HTTP es un módulo**, y un módulo que quiera usarlo debe
 comprobar que está disponible.
+
+**Y esa decisión se revocó al implementarla.** HTTP no es algo que un
+servidor tenga o no tenga: el listener es un puerto suyo, tiene que estar
+levantado antes de que se cargue ningún módulo y seguir levantado a través
+de un rehash que descargue uno, y su TLS es configuración. Así que **lo
+sirve el core y lo que es enchufable son las rutas** —que es lo que de
+verdad traían los módulos—; la segunda mitad del párrafo de arriba, la de
+comprobar la disponibilidad y degradar, sí se quedó tal cual
+(`http_available()`).
 
 **El registro del core está implementado** (`include/http.h`, `ircd/http.c`,
 `doc/readme.http`, `http_t`). La interfaz quedó como estaba escrita aquí,
@@ -1046,8 +1055,9 @@ con tres cosas que el diseño no decía y hubo que decidir:
   acordar.
 - **`HTTP_BODY_MAX` no limita lo que HTTP puede transferir**, limita lo
   que entra en el hilo principal. Una subida grande la va guardando el
-  proveedor y a su manejador le llegan los metadatos, porque cien
-  megabytes almacenados aquí son cien megabytes que el resto de los
+  *worker* del listener y a su manejador le llega la ruta del fichero,
+  que se lleva con `http_request_save()` sin leer un solo byte aquí,
+  porque cien megabytes almacenados aquí son cien megabytes que el resto de los
   clientes esperan.
 
 **Decisión revisada: el servidor HTTP va en el core y es Mongoose**
@@ -1192,7 +1202,7 @@ de sus justificaciones — el sellado de tokens de sala. Las otras tres (hash de
 contraseñas, 2FA, tokens de subida de ficheros) siguen en pie y la fase 0 no se
 toca.
 
-### 7.6 Fase 6 — Clientes web y móvil. **Obligatorios**
+### 7.6 Fase 6 — Clientes web y móvil. **Obligatorios** — *el SDK, hecho*
 
 **Decisión tomada: entran en el roadmap, no son «trabajo de otro equipo».**
 Ningún cliente IRC existente sirve para esto, y un servidor sin cliente no es
@@ -1224,7 +1234,7 @@ Con los clientes llega el resto del producto: integraciones y bots (`bot.c` y
 está en esa lista: es `SEARCH` (§7.1), y el SDK la trae, así que lo que falta
 por ese lado es la caja donde se escribe.
 
-### 7.7 Fase 7 — Aislamiento de módulos
+### 7.7 Fase 7 — Aislamiento de módulos — **implementado**
 
 **Decisión tomada: hay que considerarlo.** El planteamiento es correcto: hoy un
 módulo con un fallo de memoria corrompe el estado del core, y por el efecto de
@@ -1309,20 +1319,20 @@ existen), y la regla de que ningún módulo de terceros entra en `native`.
 ## 8. Orden, dependencias y esfuerzo
 
 ```
-  F0 Cimientos (core, ABI 8)
+  F0 Cimientos (core) ✅
    │   capacidades dinámicas ✅ · hooks de comando ✅ · msgid ✅
    │   batch + labeled-response ✅ · multiline ✅ · cripto ircd_* ✅
-   │   hooks async
+   │   hooks async ✅
    │
-   ├──► F1 Identidad (SASL + ACCOUNT en core, email → hasta 3 nicks)
+   ├──► F1 Identidad ✅ (SASL + ACCOUNT en core; una cuenta *es* un nick)
    │     │
-   │     ├──► F2 Historial (PostgreSQL) ──► F3 Conversación ──┐
+   │     ├──► F2 Historial ✅ ──► F3 Conversación ✅ ──────────┐
    │     │                                                     │
    │     └──► F5 HTTP ✅ + ficheros ✅ ─────────────────────────┤
    │                                                            ├──► F6 Clientes
-   ├──► F4 Texto enriquecido ───────────────────────────────────┘     web y móvil
-   │
-   └──► (F0 §5.5) ──► F7 Aislamiento de módulos
+   ├──► F4 Texto enriquecido ✅ ────────────────────────────────┘     web y móvil
+   │                                                                  (SDK ✅)
+   └──► (F0 §5.5) ──► F7 Aislamiento de módulos ✅
 
   Aplazado, sin dependencias en ningún sentido: voz, vídeo y pantalla
   compartida (§7.5).
@@ -1406,6 +1416,36 @@ mientras no estaba. Es lo mínimo que distingue esto de un IRC con buena pinta.
 
 ## 11. Estado y siguiente paso
 
+**Estado, al día de hoy.** Están hechas las fases 0, 1, 2, 3, 4, 5 y 7;
+queda la 6 —clientes web y móvil— de la que el SDK (§7.6) es la mitad que
+vive en este repositorio, y queda §7.5, voz y vídeo, aplazada a propósito
+y sin dependencias en ninguna dirección. Cada sección de §7 dice lo que se
+implementó y, donde la implementación decidió otra cosa, cuál y por qué:
+ese contraste es el valor que le queda a este documento ahora que casi
+todo él es pasado.
+
+Lo que trajo cada fase, en una línea:
+
+- **F1, identidad** (propuesta 007): `AUTHENTICATE`, `ACCOUNT`, una cuenta
+  que *es* un nickname, el renombrado a `guest-*`, la congelación `+f`, el
+  módulo `identity` sobre PostgreSQL con Redis delante, NickServ, y el
+  correo que verifica la dirección (doc/readme.mail).
+- **F2, historial**: `CHATHISTORY`, `SEARCH`, `EDIT`, `REDACT`, `MARKREAD`
+  y la retención, en `modules/services/history/`.
+- **F3, conversación**: hilos y reacciones sobre el `msgid` que ya
+  existía, sin inventar nada nuevo.
+- **F4, texto enriquecido**: Markdown negociado, con el texto plano que
+  genera el servidor para todos los demás.
+- **F5, HTTP y ficheros**: Mongoose en el core con las rutas de los
+  módulos, y `modules/services/filehost/` encima.
+- **F7, aislamiento**: `ircu-modhost`, un módulo por proceso cuando se le
+  pide (doc/readme.isolation).
+
+**Lo que sigue** es la fase 6: el cliente. El SDK ya está
+(`sdk/`, doc/readme.sdk), así que lo que falta es la interfaz —y, con
+ella, lo que la fase 6 destape sobre el protocolo, que es exactamente para
+lo que el SDK vive en este repositorio.
+
 **Hecho** — la fase 0 está cerrada:
 
 - **§5.1, capacidades dinámicas.** Mapa de bits de 128 posiciones, registro en
@@ -1430,12 +1470,13 @@ Queda pendiente de §5.6 el resto de puntos de extensión —
 `module_add_numeric()`—, que no bloquean la fase 1 y se pagan cuando el primer
 módulo los necesite.
 
-**Siguiente paso: la identidad (§6).** Es lo que consume lo que la fase 0 dejó
-puesto: `ircd_pwhash_*` en un *worker* para verificar sin parar el servidor,
-`HOOK_PENDING` para retener el registro mientras esa verificación ocurre, y
-`msgid`/`batch` para lo que venga después. Tendrá su propia propuesta, con el
-modelo de correo → hasta tres cuentas-nickname y el regreso de SASL y del
-comando `ACCOUNT` como piezas de core.
+**La identidad (§6)** fue lo siguiente, y consumió exactamente lo que la
+fase 0 dejó puesto: `ircd_pwhash_*` en un *worker* para verificar sin parar
+el servidor, `HOOK_PENDING` para retener el registro mientras esa
+verificación ocurre, y `msgid`/`batch` para lo que vino después. Tiene su
+propia propuesta (007), y el modelo que allí se decidió no es el que este
+párrafo anticipaba: no hay «cuentas-nickname» separadas de la cuenta, una
+cuenta **es** un nickname.
 
 Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
 necesitan: el modelo de identidad (§6), el aislamiento de módulos (§7.7) y,

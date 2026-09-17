@@ -110,6 +110,30 @@ TAGMSG) cannot hide tag stuffing.  Exceeding this limit disconnects the
 client with the same "Excess flood" error.  Feature-only — there is no
 per-class override.  A value of 0 disables the tag ceiling.
 
+MULTILINE_MAX_BYTES
+ * Type: integer
+ * Default: 4096
+
+The largest message a client may send as a draft/multiline batch, in
+bytes, counting every piece.  It is advertised in the capability's own
+value, so a client knows before it starts; a batch that goes past it is
+refused as a whole rather than truncated.
+
+Two things follow from the number rather than from the feature.  A piece
+of a multiline batch is charged its bytes but not the flat per-command
+flood penalty -- at two seconds a line, a client sending the pieces it
+was promised would be throttled off the server for sending one message
+-- and the Excess Flood ceiling is raised to match for a client that
+negotiated the capability, because the receive queue is measured before
+anything is parsed and an advertised limit you are killed for using is a
+trap.
+
+MULTILINE_MAX_LINES
+ * Type: integer
+ * Default: 24
+
+How many pieces one of those batches may have, advertised the same way.
+
 SERVER_PORT
  * Type: integer
  * Default: 4400
@@ -612,6 +636,22 @@ Channel operators are not bounded by it, because moderating is not
 undoing and a moderator who had to be quick about it would not be one.
 Neither are operators with history_admin.  See doc/readme.history.
 
+HISTORY_EDIT_WINDOW
+ * Type: integer
+ * Default: 900
+
+How long, in seconds, somebody may rewrite their own message with EDIT.
+Shorter than the redaction window on purpose: taking a message back
+leaves a hole everybody can see, while changing it leaves a sentence
+nobody can tell was ever different, so the time in which that can happen
+is the time in which somebody is fixing a typo rather than revising what
+they said.  0 is for ever.
+
+Nobody but the author may edit at all -- not a channel operator, not an
+operator with history_admin.  Moderating is taking something out of a
+room, and making somebody's message say what they did not say is not a
+version of that.  See doc/readme.history.
+
 HTTP_TIMEOUT
  * Type: integer
  * Default: 5000
@@ -622,6 +662,124 @@ enough that a client is not holding a socket open for a module that
 forgot; clamped to 30 seconds, past which the client has given up
 anyway.  A handler that answers after the deadline is ignored rather than
 refused: it has been slow, not wrong.  See doc/readme.http.
+
+HTTP_PORT
+ * Type: integer
+ * Default: 0
+
+Where the server's HTTP listener listens.  0, the default, means nothing
+listens: a server does not open a second port because a feature exists,
+an operator says where.
+
+The listener follows the configuration.  It is reconciled once the file
+has been read in full -- at start-up and after every rehash, never in
+the middle of a parse -- and a rehash that changed none of the settings
+here does nothing at all, because restarting a listener drops every
+connection on it.
+
+This is also the answer http_available() gives a module: the feature and
+not the socket, because a consumer is asking whether its route will ever
+be reached and a listener that is down for the length of a rehash is not
+a module's business.  See doc/readme.http.
+
+HTTP_BIND
+ * Type: string
+ * Default: (empty)
+
+Which address the HTTP listener binds to.  Empty is every address; a
+server behind a proxy on the same host usually wants 127.0.0.1.
+
+HTTP_MAX_CLIENTS
+ * Type: integer
+ * Default: 64
+
+How many HTTP connections at once.  Past this a new one is closed rather
+than queued: a queue of connections nobody is reading is a polite way of
+running the server out of descriptors.
+
+HTTP_TLS_CERT
+ * Type: string
+ * Default: (none)
+
+HTTP_TLS_KEY
+ * Type: string
+ * Default: (none)
+
+PEM files for TLS on the HTTP port.  Set both or neither; one alone is
+half a configuration and is read as "no TLS".
+
+This TLS is Mongoose's and not the ircd's -- IRCU_TLS picks what the IRC
+ports speak and may be gnutls or none -- so it reads its own files.
+Which library it is depends on the build, and so does what certificate
+it will take: an openssl build gives Mongoose OpenSSL and it accepts
+what OpenSSL accepts, while every other build uses Mongoose's own, which
+is TLS 1.3 and ECDSA only.  The same PEM files that work on one are
+refused at the handshake on the other, and from the client that looks
+like the connection being dropped.
+
+HTTP_UPLOAD_MAX
+ * Type: integer
+ * Default: 0
+
+The largest request body, in bytes, that will be streamed to disk
+instead of refused.  0, the default, takes no uploads at all: a body
+over 64 KiB (HTTP_BODY_MAX, which is not a feature) is answered 413 as
+it always was.
+
+Nothing over that size ever crosses into the main thread.  The HTTP
+worker takes the request at its headers -- the one moment a body can be
+sent anywhere but into memory -- and writes it to HTTP_SPOOL_DIR as it
+arrives; what a handler is given is the path of a file and its length.
+
+HTTP_SPOOL_DIR
+ * Type: string
+ * Default: (none)
+
+Where those bodies are written while they arrive.  Keep it on the same
+filesystem as whatever a module puts the finished file on (for the file
+host, FILEHOST_DIR): the move out of the spool is then a link and an
+unlink, and a copy would read and write the whole file in the main
+thread, which is the one thing that may not happen there.
+
+A file left in the spool by a server that died is deleted at start-up;
+one whose request has been answered is deleted then.
+
+FILEHOST_DIR
+ * Type: string
+ * Default: (none)
+
+Where the file host keeps the files themselves.  Empty, the default, is
+a server that hosts no files: the module says so in the log and claims
+no routes.  The directory is created if it is missing and is the
+server's alone -- what goes in it is other people's files.  See
+doc/readme.files.
+
+FILEHOST_BASE_URL
+ * Type: string
+ * Default: (none)
+
+What a link to a file looks like from outside, without a trailing
+slash -- "https://files.example.net".  Only the operator knows this: a
+server behind a proxy cannot work out from its own port what the world
+calls it.  Without it there is no link to give anybody, and the module
+says so rather than guessing.
+
+FILEHOST_RETENTION
+ * Type: integer
+ * Default: 30
+
+How many days a file is kept, or 0 to keep it until somebody deletes it.
+A sweep every five minutes deletes what is past its date, the row and
+the object together.
+
+FILEHOST_QUOTA
+ * Type: integer
+ * Default: 67108864
+
+How many bytes one account may hold at once, or 0 for no limit.  It is
+checked before the upload ticket is minted, because telling somebody
+where to send a file and refusing it when it arrives wastes their upload
+and their time.
 
 DEFAULT_LANGUAGE
  * Type: string
@@ -635,6 +793,108 @@ client's own LANGUAGE preference is consulted before this, and "en"
 anywhere in it wins over this.  The value is per server, so servers
 in different countries can share one po/ and differ here; it can be
 changed with /SET.  See doc/readme.translations.
+
+The CAP_* features below are advertisement switches, one per IRCv3
+capability the server implements.  TRUE, the default for all of them,
+means the capability appears in CAP LS and may be requested; FALSE means
+it is not offered, and a client that asks for it by name is refused.
+They exist so that one extension can be turned off on one server --
+because a client behaves badly with it, or because an operator wants to
+see the network without it -- without rebuilding anything.  Turning one
+off never changes what a client that did not negotiate it receives:
+that is the whole design of these extensions and it is what makes them
+safe to switch.
+
+CAP_AWAYNOTIFY
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "away-notify": tell a client when somebody on a shared channel
+goes away or comes back, instead of it finding out by WHOing everybody.
+
+CAP_CHGHOST
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "chghost": tell a client when somebody's user@host changes,
+instead of the change being invisible until they part and rejoin.
+
+CAP_ECHOMESSAGE
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "echo-message": send a client its own PRIVMSG, NOTICE and
+TAGMSG back as the server relayed them.  It is how a client learns the
+msgid its message was given, which everything that refers back to a
+message needs.
+
+CAP_INVITENOTIFY
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "invite-notify": tell the channel's operators about an INVITE,
+rather than only the two people involved.
+
+CAP_UHNAMES
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "userhost-in-names": put nick!user@host in the NAMES reply, so
+that a client joining a large channel does not need a WHO to follow it.
+
+CAP_MESSAGE_TAGS
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "message-tags", which is the one the rest are built on: a
+message may carry named values, and a client that did not ask for this
+sees lines with no tags on them at all.  msgid, batch, label, the
+client-only tags and server-time all ride on it, so turning it off turns
+off far more than itself.
+
+CAP_SERVER_TIME
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "server-time": every message carries when it happened, which
+is what makes a replayed message from CHATHISTORY show when it was
+*sent* rather than when it was handed over.
+
+CAP_BATCH
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "batch": a set of messages that belong together, so that a
+client can tell a hundred messages scrolling in from a hundred things
+happening.  CHATHISTORY and SEARCH answer in one, and multiline needs
+it.
+
+CAP_LABELEDRESPONSE
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "labeled-response": a client names its request and the server
+names the answer, so two requests in flight cannot be confused.  It
+needs "batch" as well -- the specification builds one on the other -- and
+a client that has only one of the two is treated as having neither.
+
+CAP_MULTILINE
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "draft/multiline" and "draft/multiline-concat": a message
+longer than a line, sent as a batch of pieces and relayed as the
+separate messages a traditional client has always seen.  The value
+carries the limits below.
+
+CAP_SASL
+ * Type: boolean
+ * Default: TRUE
+
+Advertise "sasl", whose value is the mechanism list.  It is withdrawn
+anyway when no identity provider is loaded, because a server that
+cannot answer a credential should not offer to take one; this switch is
+for turning it off on a server that could.  See doc/readme.sasl.
 
 CAP_LANGUAGES
  * Type: boolean
@@ -654,6 +914,43 @@ an answer a client can switch on rather than a numeric it has to know.
 A client that did not ask for it is sent a NOTICE with the same words
 instead, so nothing is ever refused in silence; turning this off means
 every client gets the notice.
+
+DISABLE_GLINES
+ * Type: boolean
+ * Default: FALSE
+
+Switch G-lines off entirely: none is accepted from another server, none
+is applied to a connecting client, and the command refuses to make one.
+For a network that bans by another mechanism, and for the moment during
+an incident when the ban list itself is the problem.  Existing G-lines
+are not deleted, so turning this back off restores them.
+
+DISABLE_SLINES
+ * Type: boolean
+ * Default: FALSE
+
+The same for S-lines (spoofhost authorisations): with this on, no client
+is granted a spoofed host by one.  See doc/readme.asll and the Spoofhost
+blocks in ircd.conf.
+
+JOIN_TARGET
+ * Type: boolean
+ * Default: FALSE
+
+What a client that has joined too many channels too quickly is told.
+FALSE, the default, gives it a delayed target: the join is allowed and
+the channel counts against its target limit, which is the behaviour the
+target-limiting code was written for.  TRUE refuses the join outright.
+
+LOG
+ * Type: special
+ * Default: (none)
+
+Where each of the server's subsystems logs, and how much of it.  Not one
+value but a family -- "LOG" = "<subsystem>" "FILE" "<path>", "SNOMASK",
+"LEVEL" and so on -- read at configuration time and settable at run time
+by an operator.  It is the one feature with a shape of its own; all of
+it is in doc/readme.log.
 
 CONFIG_OPERCMDS
  * Type: boolean
@@ -733,6 +1030,16 @@ HIS_STATS_c
  * Default: TRUE
 
 As per UnderNet CFV-165, this removes /STATS c from users.
+
+HIS_STATS_C
+ * Type: boolean
+ * Default: TRUE
+
+As per UnderNet CFV-165, this removes /STATS C -- the Connect blocks, and
+with them the shape of the network -- from users.  The upper case letter
+is a different statistic from the lower case one and has a switch of its
+own; /STATS netconf is the same thing under another name and is governed
+by this too.
 
 HIS_STATS_d
  * Type: boolean

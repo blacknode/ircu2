@@ -209,6 +209,23 @@ The image carries every module the build produced under
 inert until a `Module{}` block or `/MODULE LOAD` names it, so this costs
 the other topologies nothing.
 
+### Known gaps
+
+Two things do not pass here and are not the suite's doing:
+
+* `secure_path/test_review_findings.py::test_z_channel_keeps_z_when_only_plaintext_members_remain`
+  hangs and is killed by the 120s per-test timeout, reproducibly and on
+  its own.  The other fifteen tests in that file pass; this one sets up a
+  TLS gateway and SQUITs the leaf first, and that is where it stops.
+* The NETWORK_FEATURES compat topology below builds the upstream
+  u2.10.12.19 release from source inside its image, and that build fails
+  on a current base image.  The release tarball itself still downloads,
+  so it is the twenty-year-old `configure && make` that does not survive
+  the toolchain, not the fetch.
+
+Everything else in `tests/` passes; when one of these is fixed, take it
+off this list.
+
 ### NETWORK_FEATURES compat topology (`pr_network_features_compat/`)
 
 Rolling-upgrade guard tests use a dedicated A—B—C chain.  **A** is built from

@@ -292,6 +292,17 @@ static char replay_tags[512];
  */
 static char suppress_key[CAPVALUELEN];
 
+/** A server tag the replay in force carries, or "".
+ *
+ * What the store says about the message rather than what the message
+ * said: that it has been edited since.  Nobody claimed it when the
+ * message was sent and no client may claim it about somebody else's
+ * message, so it is the server's to state -- which also means
+ * CLIENTTAGDENY has no say in it, the way it has none over @c batch.
+ */
+static char replay_note_key[CAPVALUELEN];
+static char replay_note_value[128];
+
 int
 msg_tag_needs_msgid(const char *tok)
 {
@@ -381,6 +392,8 @@ msg_tag_line_replay(const char *tok, const char *msgid, const char *when,
   replay_open = 0;
   replay_time[0] = '\0';
   replay_tags[0] = '\0';
+  replay_note_key[0] = '\0';
+  replay_note_value[0] = '\0';
 
   if (!tok)
     return;
@@ -413,11 +426,32 @@ msg_tag_line_replay(const char *tok, const char *msgid, const char *when,
 }
 
 void
+msg_tag_line_replay_server_tag(const char *key, const char *value)
+{
+  replay_note_key[0] = '\0';
+  replay_note_value[0] = '\0';
+
+  if (!key || !*key)
+    return;
+
+  replay_open = 1;
+  ircd_strncpy(replay_note_key, key, sizeof(replay_note_key) - 1);
+  replay_note_key[sizeof(replay_note_key) - 1] = '\0';
+
+  if (value && *value) {
+    ircd_strncpy(replay_note_value, value, sizeof(replay_note_value) - 1);
+    replay_note_value[sizeof(replay_note_value) - 1] = '\0';
+  }
+}
+
+void
 msg_tag_line_replay_end(void)
 {
   replay_open = 0;
   replay_time[0] = '\0';
   replay_tags[0] = '\0';
+  replay_note_key[0] = '\0';
+  replay_note_value[0] = '\0';
   msg_tag_line_end();
 }
 
@@ -871,6 +905,17 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
    */
   if (CapHas(cli_active(to), CAP_MESSAGE_TAGS) && multiline_concat_for(to)) {
     pos = msg_tag_append(pos, end, &wrote, "draft/multiline-concat", 0);
+    if (!pos)
+      return 0;
+  }
+
+  /* What the store has to say about a replayed message, which is not
+   * something the message carried: a server tag, so CLIENTTAGDENY has no
+   * say in it for the reason it has none over batch above. */
+  if (CapHas(cli_active(to), CAP_MESSAGE_TAGS) && replay_open
+      && replay_note_key[0]) {
+    pos = msg_tag_append(pos, end, &wrote, replay_note_key,
+                         replay_note_value[0] ? replay_note_value : 0);
     if (!pos)
       return 0;
   }

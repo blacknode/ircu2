@@ -117,6 +117,24 @@ void msg_tag_line_force_msgid(const char *tok);
 void msg_tag_line_replay(const char *tok, const char *msgid,
                          const char *when, const char *tags);
 
+/** Put one server tag on the replay in force.
+ *
+ * For what the *store* has to say about a message rather than what the
+ * message carried: that it has been edited since, which is not a claim
+ * anybody made when it was sent and not something a client may assert
+ * about somebody else's message either.  So it is a server tag --
+ * @c CLIENTTAGDENY has no say in it, the way it has none over @c batch --
+ * and it lasts until msg_tag_line_replay_end() like the rest of the
+ * replay.
+ *
+ * One at a time: a second call replaces the first.  It reaches only a
+ * client that asked for @c message-tags.
+ *
+ * @param[in] key The tag name, without a leading '+'.
+ * @param[in] value Its value, or NULL for a tag with none.
+ */
+void msg_tag_line_replay_server_tag(const char *key, const char *value);
+
 /** End a replay begun with msg_tag_line_replay(). */
 void msg_tag_line_replay_end(void);
 

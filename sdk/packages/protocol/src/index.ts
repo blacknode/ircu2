@@ -59,8 +59,12 @@ export {
   TAG_TYPING,
   TAG_FORMAT,
   FORMAT_MARKDOWN,
+  TAG_EDITED,
   type StandardReply,
   parseStandardReply,
   type ChatHistorySelector,
   chatHistoryCommand,
+  type SearchOptions,
+  searchCommand,
+  editCommand,
 } from './conversation.js';

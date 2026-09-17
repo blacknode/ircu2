@@ -200,9 +200,12 @@ static unsigned int hist_limit_parse(const char* word)
  * Everything else carries nothing: the tags a message had that were not
  * part of it -- a typing indicator, a label -- were not stored and are
  * not invented here.
+ *
+ * Whether the message has been edited since is not one of these.  That is
+ * the store's statement rather than the message's, so it goes out as a
+ * server tag; hist_replay_begin() is what puts it there.
  */
-static void hist_replay_tags(char* buf, size_t buflen,
-                             const struct HistRow* row)
+void hist_replay_tags(char* buf, size_t buflen, const struct HistRow* row)
 {
   buf[0] = '\0';
 
@@ -212,6 +215,29 @@ static void hist_replay_tags(char* buf, size_t buflen,
                   (row->hr_reply && row->hr_reply[0]) ? row->hr_reply : "");
   else if (row->hr_reply && row->hr_reply[0])
     ircd_snprintf(0, buf, buflen, "%s=%s", HIST_TAG_REPLY, row->hr_reply);
+}
+
+/** Open the replay of one stored row, tags and all.
+ *
+ * One place where a row becomes a line, shared with the search, so that
+ * the two cannot come to disagree about what a replayed message carries.
+ *
+ * @param[in] tok The command it will go out as.
+ * @param[in] row The row.
+ */
+void hist_replay_begin(const char* tok, const struct HistRow* row)
+{
+  char tags[512];
+
+  hist_replay_tags(tags, sizeof(tags), row);
+
+  /* Under the name and the time it already had: that is what makes it the
+   * same message everybody else saw, and what lets a client put it in
+   * order against what it has. */
+  msg_tag_line_replay(tok, row->hr_msgid, row->hr_time, tags);
+
+  if (row->hr_edited && row->hr_edited[0])
+    msg_tag_line_replay_server_tag(HIST_TAG_EDITED, row->hr_edited);
 }
 
 /** Send the messages a read came back with.
@@ -231,7 +257,6 @@ static void hist_send_messages(struct Client* cptr, const struct HistAsk* ask,
   for (i = 0; i < count; i++) {
     const char* cmd;
     const char* tok;
-    char tags[512];
 
     switch (rows[i].hr_kind) {
     case HIST_NOTICE: cmd = MSG_NOTICE;  tok = TOK_NOTICE;  break;
@@ -239,13 +264,7 @@ static void hist_send_messages(struct Client* cptr, const struct HistAsk* ask,
     default:          cmd = MSG_PRIVATE; tok = TOK_PRIVATE; break;
     }
 
-    hist_replay_tags(tags, sizeof(tags), &rows[i]);
-
-    /* The message goes back out under the name and the time it already
-     * had: that is what makes it the same message everybody else saw,
-     * and what lets a client put it in order against what it has.
-     */
-    msg_tag_line_replay(tok, rows[i].hr_msgid, rows[i].hr_time, tags);
+    hist_replay_begin(tok, &rows[i]);
 
     /* The prefix is the one stored with the message, not one built from
      * whoever holds that nickname now, so the tags have to be rendered by

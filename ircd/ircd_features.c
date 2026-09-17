@@ -435,6 +435,14 @@ static struct FeatureDesc {
    * network saying a message belongs to whoever sent it.  Channel
    * operators are not bounded by it -- moderating is not undoing. */
   F_I(HISTORY_REDACT_WINDOW, FEAT_OPER, 3600, 0),
+  /* And how long they may rewrite one.  Shorter than the redaction
+   * window on purpose: taking a message back leaves a hole everybody can
+   * see, while changing it leaves a sentence nobody can tell was ever
+   * different -- so the time in which that can happen is the time in
+   * which somebody is fixing a typo, not the time in which they are
+   * revising what they said.  0 is for ever; nobody but the author may
+   * do it at all. */
+  F_I(HISTORY_EDIT_WINDOW, FEAT_OPER, 900, 0),
 
   /* How long a route's handler has to answer, in milliseconds.  Five
    * seconds: long enough for a database and a worker, short enough that a

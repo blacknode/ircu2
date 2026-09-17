@@ -383,7 +383,9 @@ int hist_store_forget(const char* account,
   "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, " \
   "msgid, kind, target, body, " \
   "coalesce(sender_prefix, sender_nick) AS prefix, " \
-  "coalesce(reply_to, '') AS reply_to"
+  "coalesce(reply_to, '') AS reply_to" \
+  ", coalesce(to_char(edited_at AT TIME ZONE 'UTC', " \
+  "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), '') AS edited_at"
 
 /** One read, from the moment it is accepted until its rows are handed on.
  *
@@ -419,6 +421,7 @@ struct HistCell {
   char hc_from[NICKLEN + 1];
   char hc_to[NICKLEN + 1];
   char hc_reply[MSGIDLEN + 1];
+  char hc_edited[40];
 };
 
 /** What came back from a read. */
@@ -469,6 +472,8 @@ static void hist_read_done(const struct DbResult* res, void* user)
                  sizeof(cells[i].hc_body) - 1);
     ircd_strncpy(cells[i].hc_reply, db_row_str(res->data, from, "reply_to"),
                  sizeof(cells[i].hc_reply) - 1);
+    ircd_strncpy(cells[i].hc_edited, db_row_str(res->data, from, "edited_at"),
+                 sizeof(cells[i].hc_edited) - 1);
 
     rows[i].hr_time = cells[i].hc_time;
     rows[i].hr_msgid = cells[i].hc_msgid;
@@ -477,6 +482,7 @@ static void hist_read_done(const struct DbResult* res, void* user)
     rows[i].hr_prefix = cells[i].hc_prefix;
     rows[i].hr_body = cells[i].hc_body;
     rows[i].hr_reply = cells[i].hc_reply;
+    rows[i].hr_edited = cells[i].hc_edited;
   }
 
   if (rd->hr_cb)
@@ -646,7 +652,7 @@ static void hist_read_run(struct HistRead* rd)
                   "to_char(max(sent_at) AT TIME ZONE 'UTC', "
                   "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, "
                   "'' AS msgid, 0 AS kind, '' AS body, '' AS prefix, "
-                  "'' AS reply_to "
+                  "'' AS reply_to, '' AS edited_at "
                   "FROM (SELECT CASE WHEN sender_account = $1 "
                   "THEN recipient_account ELSE sender_account END AS peer, "
                   "sent_at FROM message WHERE NOT is_channel "
@@ -815,7 +821,9 @@ static const char* hist_sql_export =
   "target, coalesce(sender_prefix, sender_nick) AS prefix, "
   "coalesce(sender_account, '') AS from_account, "
   "coalesce(recipient_account, '') AS to_account, body, "
-  "coalesce(reply_to, '') AS reply_to "
+  "coalesce(reply_to, '') AS reply_to, "
+  "coalesce(to_char(edited_at AT TIME ZONE 'UTC', "
+  "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), '') AS edited_at "
   "FROM message "
   "WHERE (sender_account = $1 OR recipient_account = $1) "
   "AND (sent_at, msgid) > ($2, $3) "
@@ -881,6 +889,8 @@ static void hist_export_done(const struct DbResult* res, void* user)
     ircd_strncpy(cells[i].hc_to, to, sizeof(cells[i].hc_to) - 1);
     ircd_strncpy(cells[i].hc_reply, db_row_str(res->data, i, "reply_to"),
                  sizeof(cells[i].hc_reply) - 1);
+    ircd_strncpy(cells[i].hc_edited, db_row_str(res->data, i, "edited_at"),
+                 sizeof(cells[i].hc_edited) - 1);
 
     rows[i].he_time = cells[i].hc_time;
     rows[i].he_msgid = cells[i].hc_msgid;
@@ -893,6 +903,7 @@ static void hist_export_done(const struct DbResult* res, void* user)
     rows[i].he_to = cells[i].hc_to;
     rows[i].he_body = cells[i].hc_body;
     rows[i].he_reply = cells[i].hc_reply;
+    rows[i].he_edited = cells[i].hc_edited;
   }
 
   /* A short page is the last one: there was nothing else to fill it. */
@@ -1084,6 +1095,7 @@ static void hist_find_done(const struct DbResult* res, void* user)
                sizeof(found.hf_account) - 1);
   found.hf_channel =
     !ircd_strcmp(db_row_str(res->data, 0, "is_channel"), "true");
+  found.hf_kind = (enum HistKind) db_row_int(res->data, 0, "kind");
 
   if (hf->hf_cb)
     (hf->hf_cb)(&found, hf->hf_user);
@@ -1103,7 +1115,7 @@ int hist_store_find(const char* msgid, HistFindFn cb, void* user)
 
   query.sql = "SELECT to_char(sent_at AT TIME ZONE 'UTC', "
               "'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS sent_at, "
-              "target, target_canon, is_channel, "
+              "target, target_canon, is_channel, kind, "
               "coalesce(sender_account, '') AS account "
               "FROM message WHERE msgid = $1 LIMIT 1";
 
@@ -1176,6 +1188,225 @@ int hist_store_redact(const char* msgid,
   if (err != DB_OK) {
     hist_complain("redact", 0, err);
     MyFree(hf);
+    return 0;
+  }
+
+  return 1;
+}
+
+/* ------------------------------------------------------------------- *
+ * Searching                                                           *
+ * ------------------------------------------------------------------- */
+
+/** Change what one message says. */
+static void hist_edit_done(const struct DbResult* res, void* user)
+{
+  struct HistForget* hf = (struct HistForget*) user;
+  long long rows = -1;
+
+  if (res->err.dberr_code != DB_OK)
+    hist_complain("edit", res, DB_OK);
+  else
+    rows = (long long) res->rows;
+
+  if (hf->hf_cb)
+    (hf->hf_cb)(rows, hf->hf_user);
+
+  MyFree(hf);
+}
+
+int hist_store_edit(const char* msgid, const char* sent_at, const char* body,
+                    void (*cb)(long long rows, void* user), void* user)
+{
+  struct DbParam p[3];
+  struct DbParam* params[4];
+  struct DbQuery query;
+  struct HistForget* hf;
+  enum DbError err;
+  unsigned int i;
+
+  assert(0 != msgid);
+  assert(0 != sent_at);
+  assert(0 != body);
+
+  /* The timestamp as well as the identifier: the table is partitioned by
+   * it, so naming both is the difference between touching one partition
+   * and visiting every one there has ever been.  body_search is a
+   * generated column and follows the body without being named here.
+   */
+  query.sql = "UPDATE message SET body = $3, edited_at = now() "
+              "WHERE sent_at = $1 AND msgid = $2";
+
+  memset(p, 0, sizeof(p));
+  p[0].type = DB_TYPE_TIMESTAMPTZ; p[0].value = sent_at;
+  p[1].type = DB_TYPE_TEXT;        p[1].value = msgid;
+  p[2].type = DB_TYPE_TEXT;        p[2].value = body;
+
+  for (i = 0; i < 3; i++)
+    params[i] = &p[i];
+  params[3] = NULL;
+  query.params = params;
+
+  hf = (struct HistForget*) MyCalloc(1, sizeof(*hf));
+  hf->hf_cb = cb;
+  hf->hf_user = user;
+
+  err = db_exec(hist_mod, &query, hist_edit_done, hf);
+
+  if (err != DB_OK) {
+    hist_complain("edit", 0, err);
+    MyFree(hf);
+    return 0;
+  }
+
+  return 1;
+}
+
+/** One search in flight.
+ *
+ * It borrows #HistRead so that the rows come back through the one place
+ * that turns a #DbResult into #HistRow -- which is also what keeps the
+ * two from drifting apart the next time a column is added.  The shape is
+ * #HIST_LATEST because that is what the reversal is keyed on: newest
+ * first out of the database, oldest first to the client.
+ */
+int hist_store_search(const struct HistSearch* s, HistReadFn cb, void* user)
+{
+  struct HistRead* rd;
+  struct DbParam p[8];
+  struct DbParam* params[9];
+  struct DbQuery query;
+  char sql[2048];
+  char scope[512];
+  char limit[16];
+  enum DbError err;
+  int n = 0;
+  unsigned int i;
+  size_t at = 0;
+
+  assert(0 != s);
+
+  /* The text first, always.  It is the only condition the GIN index can
+   * answer, and a query that narrowed by channel first would read every
+   * message that channel has ever had and test each one.
+   */
+  ircd_snprintf(0, limit, sizeof(limit), "%u", s->hs_limit);
+
+  memset(p, 0, sizeof(p));
+  p[n].type = DB_TYPE_TEXT; p[n].value = s->hs_text;
+  p[n].format = DB_FORMAT_TEXT; n++;
+
+  /* What this client may see, which was decided before this was called.
+   * A channel it is on, a conversation it is in, or both -- and never
+   * nothing: a search with no scope would be a search of the network.
+   */
+  scope[0] = '\0';
+
+  if (s->hs_channels && *s->hs_channels) {
+    at += ircd_snprintf(0, scope + at, sizeof(scope) - at,
+                        "(is_channel AND target_canon = ANY($%d::text[]))",
+                        n + 1);
+    p[n].type = DB_TYPE_TEXT; p[n].value = s->hs_channels;
+    p[n].format = DB_FORMAT_TEXT; n++;
+
+    /* ircd_snprintf() answers with what it *would* have written, so every
+     * step is checked against the room left rather than added to a cursor
+     * that could walk off the end. */
+    if (at >= sizeof(scope))
+      return 0;
+  }
+
+  if (s->hs_self[0]) {
+    const char* join = at ? " OR " : "";
+
+    if (s->hs_peer[0]) {
+      at += ircd_snprintf(0, scope + at, sizeof(scope) - at,
+                          "%s(NOT is_channel AND ((sender_account = $%d AND "
+                          "recipient_account = $%d) OR (sender_account = $%d "
+                          "AND recipient_account = $%d)))",
+                          join, n + 1, n + 2, n + 2, n + 1);
+      p[n].type = DB_TYPE_TEXT; p[n].value = s->hs_self;
+      p[n].format = DB_FORMAT_TEXT; n++;
+      p[n].type = DB_TYPE_TEXT; p[n].value = s->hs_peer;
+      p[n].format = DB_FORMAT_TEXT; n++;
+    } else {
+      at += ircd_snprintf(0, scope + at, sizeof(scope) - at,
+                          "%s(NOT is_channel AND (sender_account = $%d OR "
+                          "recipient_account = $%d))", join, n + 1, n + 1);
+      p[n].type = DB_TYPE_TEXT; p[n].value = s->hs_self;
+      p[n].format = DB_FORMAT_TEXT; n++;
+    }
+
+    if (at >= sizeof(scope))
+      return 0;
+  }
+
+  if (!at)
+    return 0;
+
+  at = ircd_snprintf(0, sql, sizeof(sql),
+                     "SELECT " HIST_COLUMNS " FROM message "
+                     "WHERE body_search @@ websearch_to_tsquery('simple', $1) "
+                     "AND (%s)", scope);
+
+  if (at >= sizeof(sql))
+    return 0;
+
+  if (s->hs_from[0]) {
+    at += ircd_snprintf(0, sql + at, sizeof(sql) - at,
+                        " AND sender_account = $%d", n + 1);
+    p[n].type = DB_TYPE_TEXT; p[n].value = s->hs_from;
+    p[n].format = DB_FORMAT_TEXT; n++;
+
+    if (at >= sizeof(sql))
+      return 0;
+  }
+
+  if (s->hs_after[0]) {
+    at += ircd_snprintf(0, sql + at, sizeof(sql) - at,
+                        " AND sent_at >= $%d", n + 1);
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = s->hs_after;
+    p[n].format = DB_FORMAT_TEXT; n++;
+
+    if (at >= sizeof(sql))
+      return 0;
+  }
+
+  if (s->hs_before[0]) {
+    at += ircd_snprintf(0, sql + at, sizeof(sql) - at,
+                        " AND sent_at < $%d", n + 1);
+    p[n].type = DB_TYPE_TIMESTAMPTZ; p[n].value = s->hs_before;
+    p[n].format = DB_FORMAT_TEXT; n++;
+
+    if (at >= sizeof(sql))
+      return 0;
+  }
+
+  at += ircd_snprintf(0, sql + at, sizeof(sql) - at,
+                      " ORDER BY sent_at DESC, msgid DESC LIMIT $%d", n + 1);
+  p[n].type = DB_TYPE_INT; p[n].value = limit;
+  p[n].format = DB_FORMAT_TEXT; n++;
+
+  if (at >= sizeof(sql))
+    return 0;
+
+  for (i = 0; i < (unsigned int) n; i++)
+    params[i] = &p[i];
+  params[n] = NULL;
+
+  query.sql = sql;
+  query.params = params;
+
+  rd = (struct HistRead*) MyCalloc(1, sizeof(*rd));
+  rd->hr_q.hq_shape = HIST_LATEST;      /* newest first: reverse on the way out */
+  rd->hr_cb = cb;
+  rd->hr_user = user;
+
+  err = db_query(hist_mod, &query, hist_read_done, rd);
+
+  if (err != DB_OK) {
+    hist_complain("search", 0, err);
+    MyFree(rd);
     return 0;
   }
 

@@ -44,6 +44,13 @@ export const WANTED_CAPS = [
   'draft/read-marker',
   'draft/message-redaction',
 
+  // Searching what was said, and changing it.  Neither is an IRCv3
+  // specification -- the protocol has never had a word for either -- so
+  // both are this server's, and a client without them is simply never
+  // sent an EDIT.
+  'blacknode/search',
+  'blacknode/message-edit',
+
   // Rich text (§7.3).  The server sends plain text to anyone who did not
   // ask for this, so not having it is not a downgrade in content.
   'blacknode/richtext',

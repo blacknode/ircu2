@@ -64,8 +64,63 @@ struct Client;
 /** The capability that says a client keeps read markers. */
 #define HIST_MARKER_CAP "draft/read-marker"
 
+/** Searching what is stored.
+ *
+ * No P10 token, for CHATHISTORY's reason: a client asks its own server,
+ * which reads the store every server reads.
+ */
+#define MSG_SEARCH "SEARCH"
+#define TOK_SEARCH "SEARCH"
+
+/** The capability that says a client understands the answer.
+ *
+ * Vendored, because IRCv3 has no search specification -- searching is not
+ * something the protocol has ever had a word for.  The answer is an
+ * ordinary batch of ordinary messages, so a client needs nothing new to
+ * read it; what the capability says is that the command is there at all.
+ */
+#define HIST_SEARCH_CAP "blacknode/search"
+
+/** The batch a search comes back in. */
+#define HIST_SEARCH_BATCH "blacknode/search"
+
+/** Changing what a message says.
+ *
+ * A P10 token, like REDACT and for the same reason: every server's
+ * clients were shown the message, so every server's clients have to be
+ * told it changed.  ED was free.
+ */
+#define MSG_EDIT "EDIT"
+#define TOK_EDIT "ED"
+
+/** The capability that says a client understands EDIT.
+ *
+ * Vendored too: IRCv3 has message-redaction and nothing for editing.  A
+ * client without it is never sent one, and what it keeps is what it was
+ * shown -- which is the honest outcome, and the same one REDACT gives.
+ */
+#define HIST_EDIT_CAP "blacknode/message-edit"
+
+/** The tag a replayed message carries when it has been changed.
+ *
+ * On the way out of the store only: live, the change is an EDIT command.
+ * A client that has the message already needs to be told the version it
+ * is being handed is not the one that was sent.
+ *
+ * A **server** tag, with no leading '+': it is what the store says about
+ * the message and not something the message carried, nobody claimed it
+ * when it was sent, and no client may claim it about somebody else's
+ * message.  So CLIENTTAGDENY has no say in it, the way it has none over
+ * batch -- msg_tag_line_replay_server_tag() is how it goes out.
+ */
+#define HIST_TAG_EDITED "blacknode/edited"
+
 /** Its position, or -1. */
 extern int hist_marker_cap;
+
+/** The positions the two vendored capabilities got, or -1. */
+extern int hist_search_cap;
+extern int hist_edit_cap;
 
 /** Its position, handed out by the server; -1 when not registered. */
 extern int hist_redact_cap;
@@ -116,6 +171,21 @@ extern void hist_canon(char* buf, size_t buflen, const char* name);
  * Reading (hist_read.c).
  */
 
+/** Render the client tags a stored message is replayed with.
+ *
+ * Shared with the search, which replays rows the same way: one place
+ * where a stored message becomes a line, so the two cannot drift.
+ */
+extern void hist_replay_tags(char* buf, size_t buflen,
+                             const struct HistRow* row);
+
+/** Open the replay of one stored row, tags and all.
+ *
+ * Shared with the search, which replays rows the same way: one place
+ * where a row becomes a line, so the two cannot drift.
+ */
+extern void hist_replay_begin(const char* tok, const struct HistRow* row);
+
 /** CHATHISTORY, from a client. */
 extern int hist_m_chathistory(struct Client* cptr, struct Client* sptr,
                               int parc, char* parv[]);
@@ -145,6 +215,26 @@ extern int hist_ms_redact(struct Client* cptr, struct Client* sptr,
 
 /** An ISO 8601 timestamp \a seconds in the past, into \a buf. */
 extern void hist_time_ago(char* buf, size_t buflen, int seconds);
+
+/*
+ * Searching (hist_search.c).
+ */
+
+/** SEARCH, from a client. */
+extern int hist_m_search(struct Client* cptr, struct Client* sptr,
+                         int parc, char* parv[]);
+
+/*
+ * Editing (hist_edit.c).
+ */
+
+/** EDIT, from a client. */
+extern int hist_m_edit(struct Client* cptr, struct Client* sptr,
+                       int parc, char* parv[]);
+
+/** EDIT, from another server. */
+extern int hist_ms_edit(struct Client* cptr, struct Client* sptr,
+                        int parc, char* parv[]);
 
 /*
  * Read markers (hist_marker.c).

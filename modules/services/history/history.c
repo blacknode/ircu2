@@ -88,6 +88,10 @@ int hist_redact_cap = -1;
 /** The position draft/read-marker got, or -1. */
 int hist_marker_cap = -1;
 
+/** The positions the two vendored capabilities got, or -1. */
+int hist_search_cap = -1;
+int hist_edit_cap = -1;
+
 /** How many months ahead partitions are created. */
 #define HIST_MONTHS_AHEAD 1
 
@@ -238,6 +242,27 @@ static MessageHandler marker_handlers[] = {
   0                   /* service */
 };
 
+/** SEARCH, which stays here: the store is the same one every server
+ * reads, so asking a peer would be asking it to run the same query. */
+static MessageHandler search_handlers[] = {
+  0,                /* unregistered */
+  hist_m_search,    /* client */
+  0,                /* server */
+  hist_m_search,    /* oper */
+  0                 /* service */
+};
+
+/** And /EDIT, which crosses a link for REDACT's reason: every server's
+ * clients were shown the message, so every server's clients have to be
+ * told it now says something else. */
+static MessageHandler edit_handlers[] = {
+  0,                /* unregistered */
+  hist_m_edit,      /* client */
+  hist_ms_edit,     /* server */
+  hist_m_edit,      /* oper */
+  hist_ms_edit      /* service */
+};
+
 /** And /REDACT, which is the one of these that crosses a link. */
 static MessageHandler redact_handlers[] = {
   0,                 /* unregistered */
@@ -287,6 +312,18 @@ static int history_init(struct ModuleHandle* mod)
     return -1;
   }
 
+  if (!module_add_command(mod, MSG_SEARCH, TOK_SEARCH, MAXPARA,
+                          0, search_handlers)) {
+    hist_mod = NULL;
+    return -1;
+  }
+
+  if (!module_add_command(mod, MSG_EDIT, TOK_EDIT, MAXPARA,
+                          0, edit_handlers)) {
+    hist_mod = NULL;
+    return -1;
+  }
+
   /* The capability last, and only if the command is really there: its
    * value is a promise about an answer, and advertising one the server
    * cannot give is worse than not advertising at all.
@@ -299,6 +336,14 @@ static int history_init(struct ModuleHandle* mod)
    * not an improvement on a message they still have. */
   module_add_cap(mod, HIST_REDACT_CAP, 0, &hist_redact_cap);
   module_add_cap(mod, HIST_MARKER_CAP, 0, &hist_marker_cap);
+
+  /* Vendored, because IRCv3 has neither: nothing in the specifications
+   * says how to search a history or how to change what a message says.
+   * EDIT reaches only a client that asked for it, the way REDACT does;
+   * SEARCH's capability says the command exists, since its answer is an
+   * ordinary batch that needs nothing new to read. */
+  module_add_cap(mod, HIST_SEARCH_CAP, 0, &hist_search_cap);
+  module_add_cap(mod, HIST_EDIT_CAP, 0, &hist_edit_cap);
 
   /* Everything that depends on the configuration waits for
    * HOOK_CONFIG_LOADED.  mi_init runs in the middle of the parse: a
@@ -332,6 +377,8 @@ static void history_fini(struct ModuleHandle* mod)
   hist_cap = -1;
   hist_redact_cap = -1;
   hist_marker_cap = -1;
+  hist_search_cap = -1;
+  hist_edit_cap = -1;
   hist_i18n = NULL;
 
   /* An export writes to a file this module holds open, and the pages it

@@ -72,7 +72,10 @@ export interface StoredMessage {
   readonly id: string | undefined;
   readonly target: string;
   readonly from: string;
-  readonly text: string;
+  /** Not readonly: an edit changes what a message says without changing
+   * which message it is -- the identifier stays, because the replies and
+   * the reactions point at it. */
+  text: string;
   readonly at: Date;
   readonly notice: boolean;
   /** An action (`/me`), which arrives as CTCP ACTION. */
@@ -97,6 +100,14 @@ export interface StoredMessage {
    * redacts, because a reply is somebody else's message.
    */
   redacted?: boolean;
+  /** When the author last changed it, if they did.
+   *
+   * Live, that arrives as an `EDIT`; on a message replayed out of the
+   * store it is the `blacknode/edited` server tag, because a client being
+   * handed the text a second time has no other way to know it is not the
+   * text that was sent.
+   */
+  edited?: Date;
 }
 
 /** Everything one connection knows. */
@@ -292,6 +303,21 @@ export class NetworkState {
       if (msg.id !== id) continue;
 
       msg.redacted = true;
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Change what a message says, keeping which message it is.
+   * @returns Whether it was found.
+   */
+  edit(target: string, id: string, text: string, at: Date): boolean {
+    for (const msg of this.messages.get(NetworkState.fold(target)) ?? []) {
+      if (msg.id !== id) continue;
+
+      msg.text = text;
+      msg.edited = at;
       return true;
     }
 

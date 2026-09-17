@@ -18,8 +18,11 @@ import {
   TAG_REACT,
   TAG_REPLY,
   TAG_TYPING,
+  TAG_EDITED,
   FORMAT_MARKDOWN,
   chatHistoryCommand,
+  editCommand,
+  searchCommand,
   formatMessage,
   joinMultiline,
   parseMessage,
@@ -27,6 +30,7 @@ import {
   splitForLine,
   splitMultiline,
   type ChatHistorySelector,
+  type SearchOptions,
   type Credential,
   type Message,
   type OpenBatch,
@@ -410,6 +414,57 @@ export class Client {
   }
 
   /**
+   * Change what one of your own messages says.
+   *
+   * Only its author, and only inside the server's window: a channel
+   * operator may {@link redact} a message, because taking something out
+   * of a room is not the same as making it say something its author did
+   * not.  The identifier does not change -- the replies and the reactions
+   * point at it -- and nothing is relayed until the store has been
+   * changed, so a refusal comes back as a standard reply rather than as
+   * text changing here and staying as it was everywhere else.
+   */
+  edit(target: string, messageId: string, text: string): void {
+    this.sendRaw(editCommand(target, messageId, text));
+  }
+
+  /**
+   * Search what was said.
+   *
+   * The answer is a batch of the messages themselves, so it arrives the
+   * way history does and each one carries the target it was sent to --
+   * a search of `*` answers with messages from several places at once.
+   * What may be searched is what this connection may read, asked at the
+   * moment it asks: the channels it is on and its own conversations.
+   */
+  async search(
+    target: string,
+    text: string,
+    opts: SearchOptions = {},
+  ): Promise<readonly StoredMessage[]> {
+    const batch = await this.withLabel(searchCommand(target, text, opts));
+
+    if (!batch) return [];
+
+    const out: StoredMessage[] = [];
+
+    for (const msg of batch.messages) {
+      const stored = this.messageFrom(msg, true);
+
+      if (!stored) continue;
+
+      // Stored like any other replayed message: a search result is a
+      // message this client now has, not a separate kind of thing.
+      this.state.store(stored.target, stored);
+      out.push(stored);
+    }
+
+    this.emitter.emit({ type: 'search', target, messages: out });
+
+    return out;
+  }
+
+  /**
    * Send a line and wait for the answer it produces.
    *
    * IRCv3 `labeled-response`: the client names its request and the
@@ -636,6 +691,10 @@ export class Client {
       case 'MODE':
         this.onMode(msg);
         return;
+      case 'EDIT':
+        this.onEdit(msg);
+        break;
+
       case 'REDACT':
         this.onRedact(msg);
         return;
@@ -909,6 +968,23 @@ export class Client {
     this.emitter.emit({ type: 'redacted', target, id, by: msg.prefix?.nick ?? '' });
   }
 
+  private onEdit(msg: Message): void {
+    const target = msg.params[0] ?? '';
+    const id = msg.params[1] ?? '';
+    const text = msg.params[2] ?? '';
+
+    if (!target || !id) return;
+
+    // The conversation this belongs to, not the target as written: a
+    // direct message is filed under the other end either way round.
+    const mine = NetworkState.fold(target) === NetworkState.fold(this.state.nick);
+    const by = msg.prefix?.nick ?? '';
+    const where = NetworkState.isChannel(target) ? target : mine ? by : target;
+
+    this.state.edit(where, id, text, new Date());
+    this.emitter.emit({ type: 'edited', target: where, id, text, by });
+  }
+
   private onMarkRead(msg: Message): void {
     const target = msg.params[0] ?? '';
     const spec = msg.params[1] ?? '';
@@ -952,6 +1028,12 @@ export class Client {
     const replyTo = msg.tags[TAG_REPLY];
     const format = msg.tags[TAG_FORMAT];
 
+    // Only a replayed message carries this: live, a change arrives as an
+    // EDIT.  It is the server's own tag, so nothing a client sent can put
+    // it here.
+    const editedTag = msg.tags[TAG_EDITED];
+    const edited = editedTag ? new Date(editedTag) : undefined;
+
     return {
       id: msg.tags['msgid'] ?? undefined,
       target: conversation,
@@ -964,6 +1046,7 @@ export class Client {
       ...(react !== undefined ? { react } : {}),
       ...(format === FORMAT_MARKDOWN ? { markdown: true } : {}),
       ...(replayed ? { replayed: true } : {}),
+      ...(edited && !Number.isNaN(edited.getTime()) ? { edited } : {}),
     };
   }
 }

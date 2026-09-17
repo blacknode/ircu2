@@ -777,7 +777,21 @@ dentro de un año:
 `doc/readme.history`):
 
 - Tabla **particionada por mes**, índice **BRIN** sobre el tiempo, **GIN**
-  sobre el texto para la búsqueda. **Implementado.** Una corrección sobre lo
+  sobre el texto para la búsqueda. **Implementado**, el GIN incluido: lo
+  usa `SEARCH` (`hist_search.c`), que no es una especificación de IRCv3
+  —el protocolo nunca ha tenido una palabra para buscar— y por tanto es
+  nuestra, con su capacidad `blacknode/search`. Lo que contesta es un
+  batch de mensajes corrientes, así que un cliente que sabe leer
+  `CHATHISTORY` sabe leer esto. Tres decisiones que no estaban aquí y
+  hacían falta: **lo que se puede buscar es lo que se puede leer,
+  preguntado en el momento de preguntar** (los canales en los que el
+  cliente está *ahora* y sus propias conversaciones, y no hay ningún
+  ámbito que signifique "la red"); **el texto va primero en el WHERE**,
+  porque es la única condición que el índice puede contestar y filtrar
+  antes por canal sería leer el canal entero; y es
+  `websearch_to_tsquery` y no `to_tsquery`, que da error ante un
+  apóstrofo o un paréntesis suelto —una caja de búsqueda que se puede
+  hacer fallar es una que va a fallar—. Una corrección sobre lo
   que decía este punto: la clave no puede ser `msgid` a secas, porque
   PostgreSQL no acepta en una tabla particionada una restricción de unicidad
   que no incluya la clave de partición. Es `(sent_at, msgid)`, y eso no es un
@@ -893,8 +907,24 @@ Todo esto son tags sobre `msgid`, y cabe en módulos una vez existe la fase 0:
   guarda — un tag que la red se niega a transportar no es uno que haya que
   anotar.
 - **Edición y borrado:** `draft/message-redaction` (`REDACT`), con política de
-  quién y durante cuánto tiempo. **`REDACT` implementado** (la edición no:
-  un mensaje editado es un mensaje distinto y eso es otra conversación).
+  quién y durante cuánto tiempo. **Los dos implementados.**
+
+  Sobre la edición, que este punto dejaba abierta diciendo que un mensaje
+  editado es un mensaje distinto: no lo es, y esa es justamente la
+  decisión. **El identificador no cambia** (`EDIT <target> <msgid>
+  :<texto>`, `hist_edit.c`), porque las respuestas y las reacciones
+  apuntan a él y un mensaje reescrito sigue siendo aquel del que hablan;
+  modelarlo como un mensaje nuevo obligaría a arrastrar todo eso al
+  siguiente. **Sólo el autor, nunca nadie más**: un operador de canal
+  puede retractar —moderar es sacar algo de la sala— pero nadie puede
+  hacer que el mensaje de otro diga algo que su autor no dijo, y no hay
+  ninguna versión de eso que sea moderación. La ventana
+  (`HISTORY_EDIT_WINDOW`) es más corta que la de retractación a
+  propósito: una retractación deja un hueco que se ve, una edición deja
+  una frase que nadie puede saber que fue otra. Al releerlo, el mensaje
+  lleva `blacknode/edited` como **tag de servidor** —no lo dijo el
+  mensaje, lo dice el almacén— así que `CLIENTTAGDENY` no opina, igual
+  que no opina sobre `batch`.
 
   Vive en el módulo `history` y no en el core por una razón: **no se puede
   retractar lo que nadie ha guardado**. Un servidor sin historial no tiene
@@ -1188,9 +1218,11 @@ un producto.
 - **El equipo de cliente puede empezar en la fase 0** contra un servidor de
   pruebas: el SDK y la UI no necesitan esperar al historial.
 
-Con los clientes llega el resto del producto: búsqueda sobre el historial,
-integraciones y bots (`bot.c` y `Service{}` ya son la base correcta), consola de
-administración, auditoría (sobre §5.7), retención y exportación.
+Con los clientes llega el resto del producto: integraciones y bots (`bot.c` y
+`Service{}` ya son la base correcta), consola de administración, auditoría
+(sobre §5.7), retención y exportación. La búsqueda sobre el historial ya no
+está en esa lista: es `SEARCH` (§7.1), y el SDK la trae, así que lo que falta
+por ese lado es la caja donde se escribe.
 
 ### 7.7 Fase 7 — Aislamiento de módulos
 

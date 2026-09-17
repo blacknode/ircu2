@@ -4,7 +4,7 @@ The protocol SDK
 Phase 6 of doc/proposals/006-comunicaciones-unificadas.md (§7.6).  It
 lives in sdk/, it is TypeScript, and it is the client half of everything
 the server grew: message tags, batches, labeled responses, SASL, multiline,
-history, read markers, redaction, rich text.
+history, read markers, redaction, editing, search, rich text.
 
 The point of writing it at all is that this server's additions are only
 worth having if a client can use them without reading twelve

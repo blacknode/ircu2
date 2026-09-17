@@ -64,6 +64,21 @@ export type ClientEvent =
   | { readonly type: 'typing'; readonly target: string; readonly from: string; readonly state: string }
   /** A message was taken back.  The row stays; its text is gone. */
   | { readonly type: 'redacted'; readonly target: string; readonly id: string; readonly by: string }
+  /** A message now says something else.  Only its author can do this, and
+   * the identifier is the one it always had. */
+  | {
+      readonly type: 'edited';
+      readonly target: string;
+      readonly id: string;
+      readonly text: string;
+      readonly by: string;
+    }
+  /** A SEARCH answer finished arriving. */
+  | {
+      readonly type: 'search';
+      readonly target: string;
+      readonly messages: readonly StoredMessage[];
+    }
   /** The read marker moved, here or on another of this person's clients. */
   | { readonly type: 'read-marker'; readonly target: string; readonly at: Date }
   /** A CHATHISTORY answer finished arriving. */

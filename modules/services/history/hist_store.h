@@ -138,6 +138,7 @@ struct HistRow {
   const char*   hr_prefix;   /**< nick!user@host, or the bare nickname. */
   const char*   hr_body;     /**< The text, or a reaction for a TAGMSG. */
   const char*   hr_reply;    /**< Message replied to or reacted to, or "". */
+  const char*   hr_edited;   /**< When it was last changed, or "". */
 };
 
 /** Receives the answer to hist_store_read().  Runs in the main thread.
@@ -183,8 +184,9 @@ struct HistExportRow {
   const char* he_prefix;     /**< nick!user@host at the time. */
   const char* he_from;       /**< Sender's account, or "". */
   const char* he_to;         /**< Recipient's account, or "". */
-  const char* he_body;       /**< The text. */
+  const char* he_body;       /**< The text, as it stands now. */
   const char* he_reply;      /**< Message replied to or reacted to, or "". */
+  const char* he_edited;     /**< When it was last changed, or "". */
 };
 
 /** Receives one page of an export.  Runs in the main thread.
@@ -249,6 +251,7 @@ struct HistFound {
   char hf_canon[CHANNELLEN + 1];   /**< Its canonical form. */
   char hf_account[NICKLEN + 1];    /**< Who wrote it, or "". */
   int  hf_channel;                 /**< Whether the target is a channel. */
+  enum HistKind hf_kind;           /**< What it arrived as. */
 };
 
 /** Receives the answer to hist_store_find().  Runs in the main thread.
@@ -317,6 +320,66 @@ extern int hist_store_marker_set(const char* account, const char* target,
  */
 extern int hist_store_marker_get(const char* account, const char* target,
                                  HistMarkerFn cb, void* user);
+
+/** What a search is looking for.
+ *
+ * Who is asking has already been resolved and what they may see has
+ * already been decided: #hs_canon is the list of channels this client is
+ * on, #hs_self its account, and neither is checked again here.  The store
+ * does not do permissions -- it would be the second place they were
+ * decided.
+ */
+struct HistSearch {
+  char hs_self[NICKLEN + 1];    /**< The asker's account, canonical. */
+  char hs_peer[NICKLEN + 1];    /**< One conversation, or "". */
+  char hs_from[NICKLEN + 1];    /**< Only from this account, or "". */
+  const char* hs_channels;      /**< Channels, as a PostgreSQL array
+                                     literal, or NULL for none. */
+  char hs_text[BUFSIZE];        /**< What to look for, as a person wrote it. */
+  char hs_after[40];            /**< Nothing before this, or "". */
+  char hs_before[40];           /**< Nothing after this, or "". */
+  unsigned int hs_limit;        /**< Most rows to return. */
+};
+
+/** Search the store.
+ *
+ * One GIN lookup over @c body_search and then a filter, which is why the
+ * text is the first thing in the WHERE clause: a query that narrowed by
+ * channel first would read every message that channel ever had.
+ *
+ * The rows come back newest first -- what a person searching wants is
+ * what was said most recently -- and are handed to \a cb oldest first,
+ * the way every other read is.
+ *
+ * @param[in] s What to look for.  Copied before this returns.
+ * @param[in] cb Called in the main thread with the rows.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted and \a cb will run.
+ */
+extern int hist_store_search(const struct HistSearch* s, HistReadFn cb,
+                             void* user);
+
+/** Change what one message says.
+ *
+ * The identifier does not change, which is the whole reason an edit is
+ * not simply another message: the replies and the reactions point at it,
+ * and a message that was edited is still the message they are about.
+ *
+ * The timestamp is taken as well as the identifier because the table is
+ * partitioned by it: an UPDATE that named only the identifier would visit
+ * every partition there is.
+ *
+ * @param[in] msgid The identifier.
+ * @param[in] sent_at When it was sent, ISO 8601, from hist_store_find().
+ * @param[in] body What it says now.
+ * @param[in] cb Called with how many rows changed, or -1; may be NULL.
+ * @param[in] user Passed through.
+ * @return Non-zero if the request was accepted.
+ */
+extern int hist_store_edit(const char* msgid, const char* sent_at,
+                           const char* body,
+                           void (*cb)(long long rows, void* user),
+                           void* user);
 
 /** Store one message.
  *

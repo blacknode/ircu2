@@ -434,6 +434,34 @@ link (token `RD`), because every server's clients saw the message; what
 arrives from a peer is an announcement, since every server reads the same
 store.
 
+**SEARCH and EDIT** (`hist_search.c`, `hist_edit.c`, §§7.1-7.2). Neither is
+an IRCv3 specification — the protocol has never had a word for either — so
+both are vendored (`blacknode/search`, `blacknode/message-edit`), and both
+live in the history module for REDACT's reason: **you cannot search or
+edit what nobody stored**. SEARCH is what finally uses the GIN index v1 of
+the schema created: `SEARCH <target|*> [from=|after=|before=|limit=]
+:<words>`, answered as an ordinary batch of replayed messages, each
+carrying **the target it was sent to** rather than the one searched. **What
+may be searched is what may be read, asked when it is asked** — the
+channels the client is on now and its own conversations, never a scope
+meaning the network — and **the text is the first condition in the WHERE
+clause**, because it is the only one the index can answer. It is
+`websearch_to_tsquery`, not `to_tsquery`, which errors on an apostrophe or
+a stray bracket: a search box that can be made to error is one that will
+be. What to look for is the **last** parameter, where IRC has put the
+free-form argument since PRIVMSG. EDIT changes what a message says
+**without changing its identifier** — the replies and the reactions point
+at it — and **only the author, ever**: an op may REDACT, because moderating
+is taking something out of a room, not making it say something its author
+did not. `FEAT_HISTORY_EDIT_WINDOW` is shorter than the redaction one
+because a redaction leaves a hole and an edit leaves a sentence nobody can
+tell was ever different. An empty edit and a TAGMSG are refused, not
+treated as deletions. It crosses a link (`ED`) like REDACT; read back, the
+row carries **`blacknode/edited`** — a *server* tag
+(`msg_tag_line_replay_server_tag()`), because it is the store's statement
+and not the message's, so `CLIENTTAGDENY` has no say in it, the way it has
+none over `batch`.
+
 **MARKREAD** (`hist_marker.c`, IRCv3 `draft/read-marker`, §7.2). What turns
 a history into an inbox. **Per account, not per connection** — a person
 reads on their phone and expects their laptop to know, so moving the marker

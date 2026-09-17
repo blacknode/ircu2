@@ -127,6 +127,7 @@ enum Feature {
   FEAT_HISTORY_MAX_LIMIT,
   FEAT_HISTORY_EXPORT_DIR,
   FEAT_HISTORY_REDACT_WINDOW,
+  FEAT_HISTORY_EDIT_WINDOW,
 
   /* HTTP (see include/http.h, doc/readme.http) */
   FEAT_HTTP_TIMEOUT,

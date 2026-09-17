@@ -46,6 +46,17 @@ export const TAG_FORMAT = '+blacknode/format';
 /** The one value {@link TAG_FORMAT} takes today. */
 export const FORMAT_MARKDOWN = 'markdown';
 
+/**
+ * "This is not the text that was sent."
+ *
+ * A **server** tag -- no leading `+` -- and it appears only on a message
+ * replayed out of the store: live, a change arrives as an `EDIT`.  It is
+ * the store's statement rather than the message's, which is why no client
+ * can send it and why `CLIENTTAGDENY` has no say in it.  Its value is
+ * when the message was last changed.
+ */
+export const TAG_EDITED = 'blacknode/edited';
+
 /** A FAIL, WARN or NOTE (IRCv3 `standard-replies`). */
 export interface StandardReply {
   readonly kind: 'FAIL' | 'WARN' | 'NOTE';
@@ -156,4 +167,58 @@ export function chatHistoryCommand(target: string, sel: ChatHistorySelector): st
         params: ['TARGETS', point(sel.from), point(sel.to), String(sel.limit)],
       });
   }
+}
+
+/** What to narrow a search to, beyond the words themselves. */
+export interface SearchOptions {
+  /** Only messages from this account (which is a nickname). */
+  readonly from?: string;
+  /** Nothing sent before this. */
+  readonly after?: Date;
+  /** Nothing sent at or after this. */
+  readonly before?: Date;
+  /** At most this many, clamped by the server to its own limit. */
+  readonly limit?: number;
+}
+
+/**
+ * Build a SEARCH line.
+ *
+ * There is no IRCv3 specification for searching, so this is the server's
+ * own command (`blacknode/search`); what comes back is an ordinary batch
+ * of ordinary messages, which is why a client needs nothing new to read
+ * the answer.
+ *
+ * @param target A channel, the other end of a conversation, or `*` for
+ *   everywhere this connection may look -- the channels it is on and its
+ *   own conversations.
+ * @param text What to look for.  It is the last parameter on the wire
+ *   precisely so that it may be a sentence: quotes make a phrase, `or`
+ *   is a choice and a leading `-` excludes, and nothing a person types
+ *   into a box can make it fail.
+ */
+export function searchCommand(target: string, text: string, opts: SearchOptions = {}): string {
+  const params: string[] = [target];
+
+  if (opts.from) params.push(`from=${opts.from}`);
+  if (opts.after) params.push(`after=${opts.after.toISOString()}`);
+  if (opts.before) params.push(`before=${opts.before.toISOString()}`);
+  if (opts.limit !== undefined) params.push(`limit=${opts.limit}`);
+
+  params.push(text);
+
+  return formatMessage({ command: 'SEARCH', params });
+}
+
+/**
+ * Build an EDIT line.
+ *
+ * The identifier does not change, which is the whole reason an edit is
+ * not simply another message: the replies and the reactions point at it.
+ * Only the author may, and only inside the server's window -- a channel
+ * operator may redact, because taking something out of a room is not the
+ * same as putting words in somebody's mouth.
+ */
+export function editCommand(target: string, messageId: string, text: string): string {
+  return formatMessage({ command: 'EDIT', params: [target, messageId, text] });
 }

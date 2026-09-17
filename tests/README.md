@@ -108,6 +108,10 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
                              # shapes, a replayed message keeping its msgid and
                              # its time, who may read a channel and who may read
                              # a conversation
+    test_edit_search.py      # SEARCH over the GIN index -- one channel, one
+                             # conversation, everywhere at once -- and EDIT:
+                             # only the author, the identifier unchanged, and
+                             # the replay saying it was edited
   conversation/
     test_conversation.py     # phases 3 and 4: +draft/reply threads, reactions as
                              # TAGMSGs, typing that is not kept, REDACT and who

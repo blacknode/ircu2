@@ -121,6 +121,7 @@ servers only agree on the key if they agree on the timestamp.
   recipient_account  for a direct message; NULL for a channel
   body               the text, or the reaction for a kind-2 row
   reply_to           the message this one answers, or NULL
+  edited_at          when the author last rewrote it, or NULL
   body_search        tsvector over body, maintained by the database
 
 Three indexes do the reading: BRIN over sent_at (the rows inside one
@@ -241,6 +242,107 @@ later, so a client that labelled the command (IRCv3 labeled-response)
 gets its ACK straight away and the batch afterwards, outside the label.
 That is the honest shape of an asynchronous answer; the batch names its
 target and identifies itself well enough to be matched without one.
+
+
+FINDING SOMETHING: SEARCH
+=========================
+
+  SEARCH <target|*> [from=<nick>] [after=<time>] [before=<time>]
+                    [limit=<n>] :<what to look for>
+
+The GIN index has been in the schema since v1 and this is what uses it.
+There is no IRCv3 specification for searching -- the protocol has never
+had a word for it -- so the command and its capability are this server's
+own (blacknode/search).  What comes back is an ordinary batch of ordinary
+messages, replayed exactly the way CHATHISTORY replays them, so a client
+that can read one can read this; the capability says the command exists,
+not that the answer needs anything new.
+
+**What may be searched is what may be read, asked at the moment it is
+asked.**  A channel this connection is on now, a conversation it is in,
+or `*` for both at once.  There is no scope that means the network, and a
+client with no channels and no account is told there is nowhere to look
+rather than handed an empty answer that reads as "nothing matched".  A
+channel somebody is not on is refused in words; a `*` search simply does
+not reach it, which is the same answer for the same reason a stranger is
+not told what is in a channel they cannot see.
+
+Each result carries the target it was *sent* to and not the one that was
+searched: a `*` search answers with messages from several places, and a
+client has to be able to tell which is which.  They arrive oldest first,
+inside a `blacknode/search` batch, under the names and times they always
+had.
+
+**What to look for is the last parameter**, not a `key=value` like the
+rest, because it is the one thing here that is a sentence -- as the
+trailing parameter it may hold spaces, quotes and anything else somebody
+types, which is where IRC has put the free-form argument since PRIVMSG.
+
+It is `websearch_to_tsquery` underneath and not `to_tsquery`: quotes make
+a phrase, `or` is a choice, a leading `-` excludes, and nothing a person
+can type into a box makes it fail.  `to_tsquery` raises an error on an
+apostrophe, a stray bracket or two words with no operator between them,
+and a search box that can be made to error is a search box that will be.
+
+The text is the first condition in the WHERE clause, always.  It is the
+only one the index can answer; narrowing by channel first would read
+every message that channel has ever had and test each one, which is the
+difference between a search and a table scan.
+
+
+CHANGING A MESSAGE: EDIT
+========================
+
+  EDIT <target> <msgid> :<new text>
+
+The other half of REDACT, here for the same reason: **you cannot edit
+what nobody stored**.  A server with no history has no copy to change and
+no way to know who wrote the message being pointed at.  Nothing is
+relayed until the row has been updated -- a client showing the new text
+while the store still holds the old one is the one outcome worse than not
+having this.
+
+**The identifier does not change**, which is the whole reason an edit is
+not simply another message.  The replies and the reactions point at it,
+the read markers are ordered against it, and a message that was edited is
+still the message they are about.
+
+**Only the author, ever.**  A channel operator may REDACT, because
+moderating is taking something out of a room; nobody may EDIT somebody
+else's message, because that is putting words in their mouth under their
+own prefix, and there is no version of that which is moderation.  Not an
+operator with history_admin either -- they can delete the message, which
+leaves a hole everybody can see.
+
+HISTORY_EDIT_WINDOW is how long the author has, and it is shorter than
+the redaction window on purpose: a redaction leaves a hole, while a
+change leaves a sentence nobody can tell was ever different, so the time
+in which that can happen is the time in which somebody is fixing a typo.
+0 is for ever.
+
+An empty new text is refused rather than treated as a deletion.  There is
+a command for that and this is not it -- and an edit that emptied a
+message would be a redaction that left the reactions and the replies
+pointing at nothing.  A TAGMSG is refused too: what a reaction carries
+*is* the reaction, so there is no text in it to rewrite; taking one back
+and adding another is what changing a reaction is.
+
+The target named has to be the one the message was sent to, for the
+reason REDACT checks the same thing.  The refusals are FAIL EDIT with
+UNKNOWN_TARGET, UNKNOWN_MSGID, EDIT_FORBIDDEN and EDIT_FAILED.
+
+Live, a change reaches only clients that asked for
+blacknode/message-edit, the way a redaction does.  It crosses a link --
+P10 token ED -- because every server's clients were shown the message;
+what arrives from a peer is an announcement, since the store it would
+have checked is the same one.
+
+Read back afterwards, the message carries **blacknode/edited** with the
+time it was last changed.  That is a *server* tag, with no leading `+`:
+it is what the store says about the message rather than something the
+message carried, nobody claimed it when it was sent, and no client may
+claim it about somebody else's message -- so CLIENTTAGDENY has no say in
+it, the way it has none over batch.
 
 
 TAKING A MESSAGE BACK: REDACT
@@ -407,6 +509,7 @@ FEATURES
   HISTORY_MAX_LIMIT   cap on one CHATHISTORY request   (default 100)
   HISTORY_EXPORT_DIR  where HISTORY EXPORT writes      (default none)
   HISTORY_REDACT_WINDOW  seconds to take back your own (default 3600)
+  HISTORY_EDIT_WINDOW    seconds to rewrite your own    (default 900)
 
 See doc/readme.features.
 
@@ -424,6 +527,9 @@ HOW IT IS PUT TOGETHER
                    how the answer goes on the wire
   hist_redact.c    REDACT: who may take a message back, and what goes
                    with it
+  hist_edit.c      EDIT: who may change one, which is only ever its author
+  hist_search.c    SEARCH: what may be looked through, and how a person's
+                   words become a query
   hist_marker.c    MARKREAD: how far somebody has read
   hist_store.c     every statement this module sends, and nothing else
   hist_store.h     the store as the rest of the module sees it

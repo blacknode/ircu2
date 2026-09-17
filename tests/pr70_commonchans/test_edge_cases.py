@@ -34,8 +34,14 @@ async def make_client_on(server, nick):
 
 
 async def set_umode_c(client, nick):
-    await client.send(f"MODE {nick} +c")
-    await client.wait_for("MODE")
+    """Set +c on a client and wait for the echo that says so.
+
+    set_umode() rather than the next MODE: every client is sent
+    `MODE <nick> :+x` of its own after registration, and taking that as
+    the answer is how these tests used to fail with "missing +c: '+x'".
+    """
+    await client.set_umode("+c", nick)
+    # Give the umode a moment to propagate across servers
     await asyncio.sleep(0.5)
 
 

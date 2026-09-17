@@ -405,6 +405,25 @@ class IRCClient:
         await self.send(line)
         return await self.wait_for(command, timeout=timeout)
 
+    async def wait_for_mode(self, target: str, timeout: float = 5.0) -> Message:
+        """Wait for a MODE change on `target` (a channel or a nickname).
+
+        Not simply the next MODE: a client is sent `MODE <nick> :+x` of
+        its own after registration, and an operator gets its own modes
+        after OPER, so "the next MODE" is often somebody else's answer.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError(f"no MODE on {target}")
+
+            msg = await self.wait_for("MODE", timeout=remaining)
+            if msg.params and msg.params[0].lower() == target.lower():
+                return msg
+
     async def set_umode(self, modes: str, nick: str | None = None) -> Message:
         """Send MODE <nick> <modes>, wait for the echo, and verify it applied.
 

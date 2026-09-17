@@ -202,14 +202,23 @@ async def test_sticky_cap_notify_cannot_be_removed_after_302(ircd_hub):
 
 
 async def test_removed_caps_are_not_offered_and_nak(ircd_hub):
-    """sasl, invite-notify, account-tag and extended-join are gone
-    (doc/readme.accounting): not in LS, and a REQ for one NAKs."""
+    """account-notify, account-tag and extended-join are gone
+    (doc/readme.accounting): not in LS, and a REQ for one NAKs.
+
+    With an account that *is* the nickname all three of them repeat the
+    prefix, which is why they went.  `invite-notify` is not on this list
+    -- it never went anywhere, and tests/invite_notify/ is about it --
+    and `sasl` came back with proposal 007, advertised on a server where
+    a provider is registered.  This hub has no identity module, so it is
+    not advertised here; that is a different statement from "gone", and
+    the suite that makes it is identity_db/.
+    """
     client = IRCClient()
     await client.connect(ircd_hub["host"], ircd_hub["port"])
     try:
         await client.send("CAP LS 302")
         names = _cap_names(await _collect_cap_ls(client))
-        for gone in ("sasl", "invite-notify", "account-tag", "extended-join"):
+        for gone in ("account-notify", "account-tag", "extended-join"):
             assert gone not in names, f"{gone} still advertised: {names}"
             await client.send(f"CAP REQ :{gone}")
             nak = await client.wait_for("CAP", timeout=5.0)

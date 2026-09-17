@@ -175,7 +175,11 @@ async def test_ws_unprefixed_client_tag_stripped(ircd_network):
         await sender.send("@msgid=abc PRIVMSG #wsstrip :no relay")
         msg = await observer.wait_for("PRIVMSG", timeout=5.0)
         assert msg.params[-1] == "no relay", msg.raw
-        assert "msgid" not in msg.tags, msg.raw
+        # The server mints a msgid of its own for every PRIVMSG now
+        # (proposal 006 §5.4), so the question is not whether there is one
+        # -- it is whether the client's was taken at its word.  It never
+        # is: a client could name somebody else's message.
+        assert "msgid=abc" not in msg.tags, msg.raw
     finally:
         await _cleanup(sender, observer)
 

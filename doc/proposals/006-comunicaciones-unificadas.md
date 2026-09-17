@@ -1171,7 +1171,11 @@ un producto.
 
 - **SDK de protocolo (TypeScript)** sobre el WebSocket que ya existe, hablando
   IRCv3 con las extensiones de las fases anteriores. Es la pieza común a web y
-  móvil y la primera que se escribe.
+  móvil y la primera que se escribe. — **implementado**: `sdk/`,
+  `doc/readme.sdk`. Dos paquetes (`@blacknode/irc-protocol`, el cable y nada
+  más; `@blacknode/irc-client`, la conexión y su estado), sin DOM ni `Buffer`
+  ni `window`, de modo que web, React Native y Wails son el mismo código; el
+  `WorkerHub` hace que diez pestañas sean una conexión y una notificación.
 - **Cliente web.** Canales, hilos, reacciones, historial con scroll infinito,
   adjuntos, llamadas, pantalla compartida.
 - **Cliente móvil** (iOS y Android). Aquí aparecen dos cosas que el web no

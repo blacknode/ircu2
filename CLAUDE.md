@@ -794,7 +794,18 @@ keeping them out is what lets the labeled-response logic stay unit-testable.
 **The pieces go out through the ordinary relay, one at a time**, which is the
 whole compatibility story: a traditional client sees the separate messages it
 always saw, a `draft/multiline` client sees the same series inside a fan-out
-batch (`multiline_batch_for()`, which `batch_current()` consults). The whole
+batch (`multiline_batch_for()`, which `batch_current()` consults). A line is
+**re-split on the way out** (`multiline_line_budget()`/`multiline_cut()`):
+`draft/multiline-concat` joins the pieces into one line that does not fit on
+the wire, and a relay that sent it as one PRIVMSG had the send layer drop the
+tail without saying so. Every piece after the first carries the concat tag
+back out — only to a client that negotiated the capability
+(`multiline_concat_for()`, which `msg_tag_format()` consults the way it
+consults `batch_current()`, with a profile bit of its own so the prefix cache
+cannot hand one recipient's bytes to another) — so it joins the line back
+exactly, while everybody else still sees separate messages. The tag is the
+server's own statement about its framing, like `batch`, so `CLIENTTAGDENY`
+has no say in it. The whole
 message carries **one** `msgid`, on the `BATCH +` line
 (`msg_tag_line_force_msgid()`; NULL disarms it so the closing line, a mere
 delimiter, carries none) and the pieces carry none. `draft/multiline-concat`
@@ -808,6 +819,30 @@ throttled off the server for sending one message. `batch` and
 (`msg_tag_client_may_send()`), and `msg_tag_format_s2s()` drops `batch`
 explicitly — a batch is between one server and one client, and long messages
 cross P10 as the separate messages they are made of.
+
+**The protocol SDK** (`sdk/`, `doc/readme.sdk`, proposal 006 §7.6).
+TypeScript, in this repository because the wire is one thing: a change to
+`msg_tag.c` and a change to `sdk/packages/protocol` are the same change.
+Two packages, split the way `sasl.c` is split from `m_authenticate.c` —
+`@blacknode/irc-protocol` is the wire and nothing else (no sockets, no
+timers, no globals, no dependencies, so it can be tested exhaustively)
+and `@blacknode/irc-client` is a connection, the state it carries and the
+conversation on top. **What it needs from a runtime is declared in one
+file** (`packages/protocol/src/globals.d.ts`: `TextEncoder`,
+`TextDecoder`, `setTimeout`, `clearTimeout`) and the tsconfig has no DOM
+library, which is the portability contract that makes web (Next.js on
+Bun), React Native and Wails the same code — and why base64 is twenty
+lines of our own rather than `btoa` or `Buffer`. **A WebSocket frame is a
+message, not a stream**: `text.ircv3.net` is one IRC message per frame
+with no CR LF, so the transport holds nothing between frames. An account
+**is** a nickname, so `User` has `identified` and `frozen` and there is no
+`account` field to keep beside the nick. The browser connection lives in
+a `WorkerHub` (many tabs, one connection; a snapshot and not a replay for
+a tab that just opened; one notification, in one tab, preferring a hidden
+one) which knows nothing about `self` and is therefore tested with a fake
+port. `bun test` needs no server; `packages/client/test/live.ts` needs
+one and is not part of it — it is what found both halves of the multiline
+bug, which no fake transport could have.
 
 **SASL** (`include/sasl.h`, `ircd/sasl.c`, proposal 007). The *shape* of an
 authentication, never the answer: it turns the AUTHENTICATE lines a client
@@ -936,7 +971,7 @@ and the provider behind all three), `doc/readme.modules`,
 `doc/readme.workers`,
 `doc/readme.database`, `doc/readme.http`, `doc/readme.isolation`,
 `doc/readme.migrations`, `doc/readme.history`,
-`doc/readme.richtext`, `doc/readme.translations`,
+`doc/readme.richtext`, `doc/readme.translations`, `doc/readme.sdk`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
 generates reference docs).
 

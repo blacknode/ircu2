@@ -102,6 +102,7 @@ static struct {
   char id[BATCHIDLEN + 1];
   int  open;
   int  emitting;
+  int  concat;   /**< The piece going out continues the one before it. */
 } fanout_ctx;
 
 /** The batch \a to is inside as part of a fan-out, or NULL.
@@ -115,6 +116,19 @@ const char* multiline_batch_for(const struct Client* to)
     return 0;
 
   return fanout_ctx.id;
+}
+
+/** Does the piece being relayed continue the one before it?  See batch.h.
+ * @param[in] to Recipient.
+ */
+int multiline_concat_for(const struct Client* to)
+{
+  if (!fanout_ctx.concat || fanout_ctx.emitting)
+    return 0;
+  if (!to || IsServer(to) || !CapHas(cli_active(to), CAP_MULTILINE))
+    return 0;
+
+  return 1;
 }
 
 /** Advertise the multiline limits in the capability's value.
@@ -362,7 +376,89 @@ static void batch_fanout_close(struct Client* sptr, struct InBatch* batch)
 
   fanout_ctx.emitting = 0;
   fanout_ctx.open = 0;
+  fanout_ctx.concat = 0;
   fanout_ctx.id[0] = '\0';
+}
+
+/** How much text one relayed line can carry.
+ *
+ * A long message is a long *line*, and a line that does not fit on the
+ * wire is not sent short -- it is sent truncated, because the send layer
+ * builds it into a buffer of BUFSIZE and drops what is left over without
+ * saying so.  That is how a message of fifteen hundred bytes used to
+ * arrive as four hundred and seventy-one of them, on every client.
+ *
+ * So the budget is computed from the line that will actually go out:
+ *
+ *   :nick!user@host PRIVMSG target :text\r\n
+ *
+ * Tags are not in it.  They are budgeted separately by the message-tags
+ * specification, and the send layer renders them outside this.
+ *
+ * @param[in] sptr Who sent the message.
+ * @param[in] target Channel or nickname it is addressed to.
+ * @param[in] notice Non-zero if the pieces are NOTICEs.
+ */
+static size_t multiline_line_budget(struct Client* sptr, const char* target,
+                                    int notice)
+{
+  size_t overhead = 1 + strlen(cli_name(sptr));       /* ":nick"          */
+
+  if (cli_user(sptr))
+    overhead += 1 + strlen(visible_username(sptr))    /* "!user"          */
+              + 1 + strlen(cli_user(sptr)->host);     /* "@host"          */
+
+  overhead += 1 + strlen(notice ? MSG_NOTICE : MSG_PRIVATE);
+  overhead += 1 + strlen(target);
+  overhead += 2;                                      /* " :"             */
+  overhead += 2;                                      /* CR LF            */
+
+  /* A prefix long enough to leave no room is not a thing this server can
+   * produce -- a nickname, a username and a hostname together are far
+   * shorter than a line -- but a floor costs one comparison and turns a
+   * wrapped subtraction into a short message.
+   */
+  return overhead + 32 < BUFSIZE ? BUFSIZE - overhead : 32;
+}
+
+/** How many bytes of \a text to put on one line, at most \a budget.
+ *
+ * Two rules, both about not making the split visible:
+ *
+ * - never in the middle of a UTF-8 character, which would put half of one
+ *   at the end of a line and half at the start of the next, and
+ * - after a space when there is one near the end, so that a client which
+ *   did not ask for draft/multiline sees whole words.
+ *
+ * The space stays on the earlier piece, so what a client that *did* ask
+ * joins back together is byte for byte what was sent.
+ */
+static size_t multiline_cut(const char* text, size_t budget)
+{
+  size_t len = strlen(text);
+  size_t take;
+  size_t i;
+
+  if (len <= budget)
+    return len;
+
+  take = budget;
+
+  /* Back off a partial UTF-8 sequence: continuation bytes are 10xxxxxx. */
+  while (take > 0 && ((unsigned char) text[take] & 0xC0) == 0x80)
+    take--;
+
+  /* And prefer a word boundary, if one is close enough that looking for
+   * it does not cost most of the line.
+   */
+  for (i = take; i > 0 && take - i < 32; i--) {
+    if (text[i - 1] == ' ') {
+      take = i;
+      break;
+    }
+  }
+
+  return take > 0 ? take : budget;
 }
 
 /** Relay everything an inbound batch collected, then free it.
@@ -372,6 +468,7 @@ static void batch_fanout_close(struct Client* sptr, struct InBatch* batch)
 void batch_in_deliver(struct Client* cptr, struct InBatch* batch)
 {
   struct BatchPart* part;
+  size_t budget;
   int is_channel;
 
   assert(0 != batch);
@@ -393,21 +490,52 @@ void batch_in_deliver(struct Client* cptr, struct InBatch* batch)
    * series of separate messages.  The ones that did ask see the same
    * series, wrapped in the batch opened above.
    */
+  budget = multiline_line_budget(cptr, batch->ib_target, batch->ib_notice);
+
   for (part = batch->ib_parts; part; part = part->bp_next) {
+    const char* text = part->bp_text;
+
+    /* A part is one line of the message, and one line may still be longer
+     * than the wire allows -- a client sends such a line as several
+     * pieces marked draft/multiline-concat, which were joined back into
+     * one on the way in.  It goes out as however many lines it takes,
+     * every one after the first marked the same way, so that a client
+     * which asked for draft/multiline sees the line and one that did not
+     * sees the series of messages it has always seen.
+     */
+    fanout_ctx.concat = 0;
+
+    do {
+      char piece[BUFSIZE];
+      size_t take;
+
+      if (IsDead(cptr))
+        break;
+
+      take = multiline_cut(text, budget);
+      memcpy(piece, text, take);
+      piece[take] = '\0';
+
+      if (is_channel) {
+        if (batch->ib_notice)
+          relay_channel_notice(cptr, batch->ib_target, piece);
+        else
+          relay_channel_message(cptr, batch->ib_target, piece);
+      } else {
+        if (batch->ib_notice)
+          relay_private_notice(cptr, batch->ib_target, piece);
+        else
+          relay_private_message(cptr, batch->ib_target, piece);
+      }
+
+      text += take;
+      fanout_ctx.concat = 1;
+    } while (*text);
+
+    fanout_ctx.concat = 0;
+
     if (IsDead(cptr))
       break;
-
-    if (is_channel) {
-      if (batch->ib_notice)
-        relay_channel_notice(cptr, batch->ib_target, part->bp_text);
-      else
-        relay_channel_message(cptr, batch->ib_target, part->bp_text);
-    } else {
-      if (batch->ib_notice)
-        relay_private_notice(cptr, batch->ib_target, part->bp_text);
-      else
-        relay_private_message(cptr, batch->ib_target, part->bp_text);
-    }
   }
 
   batch_fanout_close(cptr, batch);

@@ -25,3 +25,7 @@ tests/debug-output/failures/
 .cache/
 bin/
 lib/
+
+# The SDK's dependencies (sdk/, see doc/readme.sdk).  bun.lock is
+# committed; what it installs is not.
+node_modules/

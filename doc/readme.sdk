@@ -1,0 +1,165 @@
+The protocol SDK
+================
+
+Phase 6 of doc/proposals/006-comunicaciones-unificadas.md (§7.6).  It
+lives in sdk/, it is TypeScript, and it is the client half of everything
+the server grew: message tags, batches, labeled responses, SASL, multiline,
+history, read markers, redaction, rich text.
+
+The point of writing it at all is that this server's additions are only
+worth having if a client can use them without reading twelve
+specifications and this file's worth of decisions.  The point of writing
+it *here*, in the same repository, is that the wire is one thing: a
+change to ircd/msg_tag.c and a change to sdk/packages/protocol are the
+same change, and when they are not, the live test below says so.
+
+
+WHAT IS IN IT
+=============
+
+Two packages, and the split between them is the one the server makes
+between ircd/sasl.c and ircd/m_authenticate.c, or ircd/migration.c and
+ircd/migration_run.c:
+
+  @blacknode/irc-protocol   The wire, and nothing else.  Parse a line,
+                            build a line, and the state machines that sit
+                            on top of it: capability negotiation, SASL,
+                            batches, the conversation tags.  No sockets,
+                            no timers, no globals, no dependencies.
+
+  @blacknode/irc-client     A connection, the state it carries and the
+                            conversation on top: `Client`, `NetworkState`,
+                            the transport interface, and the worker that
+                            makes many tabs one connection.
+
+The half that decides things can then be tested exhaustively, and it is
+the half where being wrong is expensive.
+
+
+WHAT IT RUNS ON
+===============
+
+Three targets, named in the roadmap, and one transport interface with
+four methods between them and everything else:
+
+  web        Next.js on Bun.  `WebSocketTransport`, normally inside the
+             SharedWorker (below), so that ten tabs are one connection.
+  mobile     React Native.  `WebSocketTransport` directly: there is one
+             JavaScript context, so there is nothing to share between.
+  desktop    Wails.  The frontend is a webview, so it is the browser's
+             WebSocket and the web code runs unchanged.
+
+Nothing in either package imports `window`, `document`, `process`,
+`Buffer` or the DOM types.  What it needs from the runtime is declared,
+in one file -- packages/protocol/src/globals.d.ts -- and it is
+`TextEncoder`, `TextDecoder`, `setTimeout` and `clearTimeout`.  That file
+is the portability contract: anything that would have to be added to it
+is a decision, not a convenience.  It is why base64 is twenty lines of
+our own rather than `btoa` (Latin-1 only) or `Buffer` (not in a browser),
+and why the tsconfig does not include the DOM library.
+
+
+A FRAME IS NOT A STREAM
+=======================
+
+The one thing IRC over WebSocket changes about reading the protocol.
+The `text.ircv3.net` subprotocol -- which ircd/websocket.c speaks -- puts
+**one IRC message in one frame, with no trailing CR LF**, and a
+fragmented WebSocket message is reassembled before the client sees it.
+So a transport that buffers until it sees a newline, which is the right
+thing over TCP, never delivers a single line and looks exactly like a
+server that never answered.  `WebSocketTransport` treats a frame as a
+message, splits it on newlines anyway (a server is allowed to put several
+in one frame, and some send the terminator), and holds nothing between
+frames.
+
+
+THE CONNECTION, AND HOW MANY OF THEM
+====================================
+
+    import { Client, WebSocketTransport } from '@blacknode/irc-client';
+
+    const client = new Client({
+      transport: new WebSocketTransport({ url: 'wss://irc.example.net/' }),
+      nick: 'maria',
+      credential: { mechanism: 'PLAIN', address: 'maria@example.com',
+                    password: '...' },
+    });
+
+    client.on((event) => { /* a closed union of events */ });
+    client.connect();
+
+Registration is CAP first, SASL before CAP END, and the client waits for
+903 before ending negotiation because the server sends it at once for
+exactly that reason (doc/readme.sasl).
+
+In a browser that connection belongs in a worker:
+
+    // app/irc.worker.ts
+    import '@blacknode/irc-client/worker/shared-worker';
+
+    // in a tab
+    const worker = new SharedWorker(new URL('./irc.worker.ts',
+                                            import.meta.url),
+                                    { type: 'module' });
+    worker.port.start();
+
+`WorkerHub` is all of the decisions and none of the platform, which is
+what lets it be tested with a fake port.  Three of those decisions are
+worth stating:
+
+  - A tab that just opened is sent a **snapshot, not a replay**.  Three
+    hours of events is not what a tab opening into a conversation wants;
+    what is on the screen is.
+  - Closing one tab does not close the connection.  A person who closed
+    one of eight has not gone offline.
+  - A message that deserves a notification raises **one**, in one tab,
+    preferring a hidden one.  Eight tabs each raising the same
+    notification is eight notifications for one message.
+
+Mentions are matched by hand rather than with a regular expression,
+because a nickname may contain [ ] \ ^ { } | -- several of which are
+regular-expression syntax -- and folded with the server's casemapping,
+where [ ] \ are the capitals of { } |.
+
+
+AN ACCOUNT IS A NICKNAME
+========================
+
+Modelled the way proposal 007 defines it, which means there is no
+`account` field anywhere in this SDK.  A `User` has `identified` (umode
++r: this person proved the nickname they are wearing) and `frozen` (umode
++f: they have not, yet, and the clock is running).  An SDK that carried
+an account name beside the nickname would be modelling a server that does
+not exist, and every consumer would have to decide which of the two to
+show.
+
+So: the authcid in a PLAIN credential is the **address**, the authzid is
+**which of that address's nicknames** is being claimed, and what comes
+back is the nickname.
+
+
+TESTS
+=====
+
+    cd sdk && bun install
+    bun test              # everything; no server, no network
+    bun run typecheck     # strict, exactOptionalPropertyTypes,
+                          # noUncheckedIndexedAccess
+
+and, against a real server:
+
+    bun packages/client/test/live.ts ws://127.0.0.1:7799/
+
+The live test is not part of `bun test` on purpose: it needs an ircd with
+a WebSocket port.  Run it when the wire changes, which is the only time a
+fake transport cannot tell you anything -- it is what found both halves
+of the multiline bug (a client that never delivered a line, and a server
+that truncated one), neither of which any unit test could have seen.
+
+A server for it is three lines in a config:
+
+    Port { port = 7799; websocket = yes; };
+
+plus NETWORK_FEATURES and NETWORK_TIME on, which is what carries msgid
+and the message's time.

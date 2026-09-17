@@ -239,6 +239,24 @@ extern int batch_in_capture(struct Client* cptr, int notice,
  */
 extern const char* multiline_batch_for(const struct Client* to);
 
+/** Return non-zero if the piece being relayed continues the one before it.
+ *
+ * A long message is one *line* however many pieces it was sent in, and a
+ * line does not fit on the wire: what goes out is as many PRIVMSGs as it
+ * takes, and every one after the first carries @c draft/multiline-concat
+ * so that a client which asked for draft/multiline puts the line back
+ * together exactly as it was typed.  Without it the pieces are a message
+ * with line breaks the sender never wrote -- and without the split the
+ * tail of the line is simply dropped by the send layer.
+ *
+ * Only a client that negotiated the capability is told: to everybody else
+ * the pieces are the series of separate messages they have always been.
+ *
+ * Asked by msg_tag_format(), the way multiline_batch_for() is asked by
+ * batch_current().
+ */
+extern int multiline_concat_for(const struct Client* to);
+
 /** Return non-zero if \a cptr has a batch open.
  *
  * Asked by the parser before it charges a line against the client's flood

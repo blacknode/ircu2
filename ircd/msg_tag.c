@@ -774,6 +774,14 @@ msg_tag_profile(struct Client *to, const char *msgid)
       && (batch_current(to) || batch_label_tag(to)))
     profile |= TAGP_BATCH;
 
+  /* And for a client being sent the continuation of a line it is putting
+   * back together: the ones that did not ask for draft/multiline are sent
+   * the same piece without the tag, and the cache must not hand them one
+   * recipient's bytes for the other's.
+   */
+  if (CapHas(cli_active(to), CAP_MESSAGE_TAGS) && multiline_concat_for(to))
+    profile |= TAGP_CONCAT;
+
   return profile;
 }
 
@@ -851,6 +859,20 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
       if (!pos)
         return 0;
     }
+  }
+
+  /* draft/multiline-concat: this piece continues the line before it.
+   *
+   * The server's own statement about how it framed the message, like
+   * batch above, so CLIENTTAGDENY has no say in it -- that policy is
+   * about what one client may relay to another.  It reaches only a client
+   * that negotiated draft/multiline; everybody else is sent the pieces as
+   * the separate messages they have always been.
+   */
+  if (CapHas(cli_active(to), CAP_MESSAGE_TAGS) && multiline_concat_for(to)) {
+    pos = msg_tag_append(pos, end, &wrote, "draft/multiline-concat", 0);
+    if (!pos)
+      return 0;
   }
 
   /* client-only tags */

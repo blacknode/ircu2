@@ -140,3 +140,32 @@ jobs:
             rm -f "$allowed"
           done
           test "$missing" -eq 0
+
+  sdk:
+    name: sdk
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: sdk
+        run: bun install --frozen-lockfile
+
+      # Strict, with exactOptionalPropertyTypes and noUncheckedIndexedAccess:
+      # the SDK's portability contract is a type-level one (no DOM library,
+      # one file declaring what it needs from the runtime), so a build that
+      # only ran the tests would not check it.
+      - name: Typecheck
+        working-directory: sdk
+        run: bun run typecheck
+
+      # The live test is deliberately not here: it needs an ircd with a
+      # WebSocket port.  See doc/readme.sdk.
+      - name: Run unit tests
+        working-directory: sdk
+        run: bun test

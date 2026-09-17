@@ -44,6 +44,10 @@ async def labeled_client(ircd_hub):
     await cli.connect(ircd_hub["host"], ircd_hub["port"])
     await cli.negotiate_cap(["message-tags", "batch", "labeled-response"])
     await cli.register("labuser", "testuser", "Labeled")
+    # Everything these tests assert on is "the next line after the
+    # command", so whatever the server is still saying about the
+    # connection has to be out of the way first.
+    await cli.drain()
     yield cli
     await cli.disconnect()
 
@@ -62,7 +66,7 @@ async def test_capabilities_are_advertised(ircd_hub):
 
 async def test_several_replies_are_wrapped_in_a_batch(labeled_client):
     """A command that answers more than once answers inside one batch."""
-    await labeled_client.send_raw(b"@label=abc123 LUSERS\r\n")
+    await labeled_client.send_raw(b"@label=abc123 LUSERS")
 
     opened = await labeled_client._recv_from_stream(timeout=5.0)
     assert opened.command == "BATCH"
@@ -96,7 +100,7 @@ async def test_a_command_that_answers_nothing_gets_an_ack(labeled_client):
     Without this a client would be left waiting for an answer that was
     never going to come, which is the thing the label exists to prevent.
     """
-    await labeled_client.send_raw(b"@label=quiet PONG :nothing\r\n")
+    await labeled_client.send_raw(b"@label=quiet PONG :nothing")
 
     msg = await labeled_client._recv_from_stream(timeout=5.0)
     assert msg.command == "ACK"
@@ -105,7 +109,7 @@ async def test_a_command_that_answers_nothing_gets_an_ack(labeled_client):
 
 async def test_an_error_is_the_answer_too(labeled_client):
     """A command that fails is still answered under its label."""
-    await labeled_client.send_raw(b"@label=err WHOIS nosuchnickhere\r\n")
+    await labeled_client.send_raw(b"@label=err WHOIS nosuchnickhere")
 
     opened = await labeled_client._recv_from_stream(timeout=5.0)
     assert opened.command == "BATCH"
@@ -125,7 +129,7 @@ async def test_an_error_is_the_answer_too(labeled_client):
 
 async def test_an_unlabeled_command_is_untouched(labeled_client):
     """The capability changes nothing until a label is actually sent."""
-    await labeled_client.send_raw(b"LUSERS\r\n")
+    await labeled_client.send_raw(b"LUSERS")
 
     msg = await labeled_client._recv_from_stream(timeout=5.0)
     assert msg.command != "BATCH"
@@ -147,7 +151,7 @@ async def test_labeled_response_without_batch_is_ignored(ircd_hub):
     await cli.register("nobatch", "testuser", "No Batch")
 
     try:
-        await cli.send_raw(b"@label=abc LUSERS\r\n")
+        await cli.send_raw(b"@label=abc LUSERS")
         msg = await cli._recv_from_stream(timeout=5.0)
         assert msg.command != "BATCH"
         assert label_of(msg) is None
@@ -168,7 +172,7 @@ async def test_a_traditional_client_sees_nothing(ircd_hub):
     await cli.register("plainlab", "testuser", "Plain")
 
     try:
-        await cli.send_raw(b"@label=abc LUSERS\r\n")
+        await cli.send_raw(b"@label=abc LUSERS")
         for _ in range(3):
             msg = await cli._recv_from_stream(timeout=5.0)
             assert msg.command != "BATCH"
@@ -183,7 +187,7 @@ async def test_two_labeled_commands_do_not_share_a_batch(labeled_client):
     seen = []
 
     for label in ("one", "two"):
-        await labeled_client.send_raw(f"@label={label} LUSERS\r\n".encode())
+        await labeled_client.send_raw(f"@label={label} LUSERS".encode())
         opened = await labeled_client._recv_from_stream(timeout=5.0)
         assert opened.command == "BATCH"
         assert label_of(opened) == label

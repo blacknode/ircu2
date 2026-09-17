@@ -118,6 +118,13 @@ do { \
  */
 cidr_root_node *cidr_new_tree();
 
+/** cidr_free_tree - free a tree made by cidr_new_tree()
+ *
+ * What each node points at is the caller's and is not touched.
+ * @param[in] root_tree Tree to free, or NULL.
+ */
+void cidr_free_tree(cidr_root_node *root_tree);
+
 /** cidr_add_node - add a new node to the CIDR tree
  * @param[in] root_tree Pointer to the root of the CIDR tree
  * @param[in] ip IP address (mask) to store

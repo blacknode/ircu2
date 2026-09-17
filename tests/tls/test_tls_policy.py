@@ -183,6 +183,52 @@ async def test_user_soft_port_records_selfsigned_fingerprint(ircd_tls_network):
         await client.disconnect()
 
 
+async def test_client_block_accepts_the_certificate_it_pins(ircd_tls_network):
+    """A Client block may pin a client certificate, and the pin lets it in.
+
+    The enforcement (and ERR_TLSCLIFINGERPRINT) has always been in
+    s_auth.c and doc/example.conf has always documented it; what was
+    missing was the one line of grammar that let a Client block say it.
+    """
+    hub = ircd_tls_network["hub"]
+    client = await _register_on_user_tls(
+        hub, "certfpok", cert="selfsigned", port_key="tls_port_certfp")
+    await _quit(client)
+
+
+@pytest.mark.parametrize("cert", [None, "rogue"], ids=["none", "wrong"])
+async def test_client_block_refuses_every_other_certificate(ircd_tls_network, cert):
+    """No certificate and the wrong certificate are the same answer."""
+    hub = ircd_tls_network["hub"]
+    port = hub["tls_port_certfp"]
+    ctx = client_ssl_context(cert=cert) if cert else None
+    client = IRCClient()
+
+    if ctx is None:
+        await client.connect_tls(hub["host"], port)
+    else:
+        await client.connect_tls(hub["host"], port, ssl_context=ctx)
+
+    try:
+        await client.send(f"NICK certfp{cert or 'none'}")
+        await client.send("USER testuser 0 * :pinned")
+
+        seen = []
+        while True:
+            try:
+                msg = await client._recv_from_stream(timeout=8.0)
+            except ConnectionError:
+                break  # the server closed it, which is the other half
+            seen.append(msg.command)
+            if msg.command in ("532", "ERROR"):
+                break
+            assert msg.command != "001", "a client without the pinned cert got in"
+
+        assert "532" in seen or "ERROR" in seen, f"no refusal: {seen}"
+    finally:
+        await client.disconnect()
+
+
 async def test_user_soft_port_records_ca_signed_fingerprint(ircd_tls_network):
     hub = ircd_tls_network["hub"]
     assert len(fingerprint("tlspeer-ca")) == 64

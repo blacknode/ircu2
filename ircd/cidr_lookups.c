@@ -106,6 +106,42 @@ cidr_root_node *cidr_new_tree()
     return root;
 }
 
+/** _cidr_free_subtree - free a node and everything under it
+ * The data a node points at belongs to whoever put it there and is not
+ * touched.  Depth is bounded by the address length (129 levels), so the
+ * recursion cannot run away.
+ * @param[in] node Node to free, or NULL.
+ */
+static void _cidr_free_subtree(cidr_node *node)
+{
+    if (!node)
+        return;
+    _cidr_free_subtree(node->l);
+    _cidr_free_subtree(node->r);
+    cidr_free(node);
+}
+
+/** cidr_free_tree - free a tree made by cidr_new_tree()
+ *
+ * The counterpart the API was missing.  The server makes one tree and
+ * keeps it for as long as it runs, so nothing there needed this -- but a
+ * test that cannot free what it made leaks by construction, and a leak
+ * checker cannot tell that kind from the kind that matters.
+ *
+ * What each node points at is the caller's: a tree does not know what its
+ * data is, so it does not get to free it.
+ *
+ * @param[in] root_tree Tree to free, or NULL.
+ */
+void cidr_free_tree(cidr_root_node *root_tree)
+{
+    if (!root_tree)
+        return;
+    _cidr_free_subtree(root_tree->ipv4);
+    _cidr_free_subtree(root_tree->ipv6);
+    cidr_free(root_tree);
+}
+
  /* cidr_add_node - add a new node to the CIDR tree */
 cidr_node *cidr_add_node(const cidr_root_node *root_tree, const struct irc_in_addr *ip, unsigned char bits, void *data)
 {

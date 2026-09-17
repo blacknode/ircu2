@@ -209,6 +209,26 @@ class IRCClient:
             if msg.command in ("376", "422"):  # End of MOTD or no MOTD
                 return msgs
 
+    async def drain(self, quiet: float = 0.7) -> list["Message"]:
+        """Read and discard whatever the server is still saying.
+
+        register() stops at the end of the MOTD, but this server has more
+        to say after it -- the connection-count notices, the hidden host,
+        the +x that goes with it -- and a test that reads the very next
+        line off the stream would get one of those instead of the answer
+        it asked for.  A real client does not care because it dispatches
+        on what arrives; a test that asserts on the *next* line does, so
+        it calls this first.
+
+        Returns what was discarded, for a test that wants to look.
+        """
+        seen = []
+        while True:
+            try:
+                seen.append(await self._recv_from_stream(timeout=quiet))
+            except asyncio.TimeoutError:
+                return seen
+
     async def negotiate_cap(self, caps: list[str], timeout: float = 5.0) -> list[str]:
         """Negotiate IRC capabilities before registration.
 

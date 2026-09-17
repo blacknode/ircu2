@@ -56,7 +56,7 @@ async def test_traditional_client_sees_no_tags(ircd_network):
 
     try:
         await join_synced("#msgid1", old, sender)
-        await sender.send_raw(b"PRIVMSG #msgid1 :plain please\r\n")
+        await sender.send_raw(b"PRIVMSG #msgid1 :plain please")
 
         msg = await old.wait_for_user_msg("PRIVMSG")
         assert msg.params[-1] == "plain please"
@@ -83,15 +83,15 @@ async def test_message_tags_client_gets_a_msgid(ircd_network):
     try:
         await join_synced("#msgid2", obs, sender)
 
-        await sender.send_raw(b"PRIVMSG #msgid2 :uno\r\n")
+        await sender.send_raw(b"PRIVMSG #msgid2 :uno")
         first = await obs.wait_for_user_msg("PRIVMSG")
         assert msgid_of(first), f"no msgid on {first.raw!r}"
 
-        await sender.send_raw(b"PRIVMSG #msgid2 :dos\r\n")
+        await sender.send_raw(b"PRIVMSG #msgid2 :dos")
         second = await obs.wait_for_user_msg("PRIVMSG")
         assert msgid_of(second) != msgid_of(first), "two messages, one name"
 
-        await sender.send_raw(b"NOTICE #msgid2 :aviso\r\n")
+        await sender.send_raw(b"NOTICE #msgid2 :aviso")
         notice = await obs.wait_for_user_msg("NOTICE")
         assert msgid_of(notice), f"no msgid on {notice.raw!r}"
     finally:
@@ -115,7 +115,7 @@ async def test_echo_carries_the_same_msgid(ircd_network):
 
     try:
         await join_synced("#msgid3", obs, sender)
-        await sender.send_raw(b"PRIVMSG #msgid3 :juntos\r\n")
+        await sender.send_raw(b"PRIVMSG #msgid3 :juntos")
 
         seen = await obs.wait_for_user_msg("PRIVMSG")
         echoed = await sender.wait_for_user_msg("PRIVMSG")
@@ -145,7 +145,7 @@ async def test_numeric_reply_has_no_msgid(ircd_network):
     await cli.register("msgidnum", "testuser", "Numerics")
 
     try:
-        await cli.send_raw(b"PRIVMSG #msgid-nope-nothing-here :x\r\n")
+        await cli.send_raw(b"PRIVMSG #msgid-nope-nothing-here :x")
         msg = await cli.wait_for("403")
         assert msgid_of(msg) is None, f"a numeric carried a msgid: {msg.raw!r}"
     finally:
@@ -172,7 +172,7 @@ async def test_client_cannot_choose_its_own_msgid(ircd_network):
 
     try:
         await join_synced("#msgid4", obs, sender)
-        await sender.send_raw(b"@msgid=FORGED PRIVMSG #msgid4 :spoof\r\n")
+        await sender.send_raw(b"@msgid=FORGED PRIVMSG #msgid4 :spoof")
 
         msg = await obs.wait_for_user_msg("PRIVMSG")
         got = msgid_of(msg)
@@ -205,7 +205,7 @@ async def test_msgid_crosses_the_link(ircd_network, services):
         await join_synced("#msgid5", obs, sender)
         await services.send_join(remote, "#msgid5")
 
-        await sender.send_raw(b"PRIVMSG #msgid5 :cruzando\r\n")
+        await sender.send_raw(b"PRIVMSG #msgid5 :cruzando")
 
         seen = await obs.wait_for_user_msg("PRIVMSG")
         local_id = msgid_of(seen)
@@ -239,7 +239,10 @@ async def test_msgid_from_a_server_is_kept(ircd_network, services):
         numnick = await services.wait_for_user("msgidob6")
         await services._send(f"@msgid=XY123abc {services._num} P {numnick} :de fuera")
 
-        msg = await obs.wait_for_user_msg("PRIVMSG")
+        # The message is from a *server*, so the user-message helper --
+        # which exists to skip the server's own notices -- would skip this
+        # one too.  Matching on the text is what tells them apart.
+        msg = await obs.wait_for_message_with_text("PRIVMSG", "de fuera")
         assert msg.params[-1] == "de fuera"
         assert msgid_of(msg) == "XY123abc", (
             f"upstream's identifier was not kept: {msg.raw!r}"

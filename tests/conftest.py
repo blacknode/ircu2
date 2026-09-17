@@ -30,6 +30,7 @@ TLS_HUB = {
     "tls_port": 16697,
     "tls_port_alt": 16698,
     "tls_port_ca": 16699,
+    "tls_port_certfp": 16702,
     "wss_port": 16700,
     "wss_cf_port": 16701,
     "server_port": 14440,
@@ -222,6 +223,7 @@ def _wait_tls_hub_ports():
     wait_for_port(TLS_HUB["host"], TLS_HUB["port"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["tls_port"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["tls_port_ca"])
+    wait_for_port(TLS_HUB["host"], TLS_HUB["tls_port_certfp"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["wss_port"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["server_port"])
 

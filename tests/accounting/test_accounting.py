@@ -17,7 +17,7 @@ import pytest
 
 from irc_client import IRCClient, parse_mode_string
 from p10_server import P10Server, strip_msg_tags
-from vhost import VIS_HOST_LOOPBACK, is_vhost, vhost
+from vhost import VIS_HOST_CLIENT, is_vhost, vhost
 
 pytestmark = pytest.mark.multi_server
 
@@ -50,6 +50,13 @@ async def _connect(hub, nick, username="testuser"):
     client = IRCClient()
     await client.connect(hub["host"], hub["port"])
     msgs = await client.register(nick, username, "Accounting Test")
+    # register() stops at the end of the MOTD, but registration is not
+    # over: the hidden host (396) and the `MODE <nick> :+x` that goes with
+    # it follow.  Several tests here assert that a mode change produced
+    # *no* MODE, so that one has to be out of the stream first -- it is
+    # returned rather than dropped, since what it says is the subject of
+    # the first test in this file.
+    msgs += await client.drain()
     return client, msgs
 
 
@@ -99,19 +106,20 @@ async def _wait_mode(client, letter, sign, timeout=5.0):
 async def test_every_user_is_plus_x_with_a_derived_host(ircd_network):
     """Registration gives +x and a host derived from the client's address."""
     hub = ircd_network["hub"]
-    user, _ = await _connect(hub, "acc01")
+    user, msgs = await _connect(hub, "acc01")
     observer, _ = await _connect(hub, "acc01o")
     try:
         # RPL_HOSTHIDDEN follows the MOTD: the host is hidden once the
         # client is registered, before the network is told about it.
-        hidden = await user.wait_for("396", timeout=5.0)
-        assert hidden.params[1] == VIS_HOST_LOOPBACK, hidden.raw
+        hidden = [m for m in msgs if m.command == "396"]
+        assert hidden, f"no RPL_HOSTHIDDEN in registration: {msgs}"
+        assert hidden[0].params[1] == VIS_HOST_CLIENT, hidden[0].raw
 
         assert "x" in await _umodes(user)
 
         whois = await _whois(observer, "acc01")
         userline = [m for m in whois if m.command == "311"]
-        assert userline and userline[0].params[3] == VIS_HOST_LOOPBACK, whois
+        assert userline and userline[0].params[3] == VIS_HOST_CLIENT, whois
         assert is_vhost(userline[0].params[3])
     finally:
         await _quit(user, observer)
@@ -156,7 +164,7 @@ async def test_same_user_hides_alike_on_every_server(ircd_network):
         from_hub = [m for m in await _whois(on_hub, "acc04") if m.command == "311"]
         from_leaf = [m for m in await _whois(on_leaf, "acc04") if m.command == "311"]
         assert from_hub and from_leaf
-        assert from_hub[0].params[3] == from_leaf[0].params[3] == VIS_HOST_LOOPBACK
+        assert from_hub[0].params[3] == from_leaf[0].params[3] == VIS_HOST_CLIENT
     finally:
         await _quit(user, on_leaf, on_hub)
 
@@ -338,6 +346,10 @@ async def test_service_bot_cannot_touch_an_operator(ircd_network, services):
     oper, _ = await _connect(hub, "acc21op")
     await oper.send("OPER testoper operpass")
     await oper.wait_for("381", timeout=5.0)
+    # OPER answers 381 and then sets the oper's own modes; this test
+    # asserts that a *later* change produces no MODE at all, so the one
+    # opering up produced has to be out of the way first.
+    await oper.drain()
     try:
         bot = await services.introduce_user("acc21bot", modes="+oikS")
         await services.wait_for_user("acc21op")

@@ -10,13 +10,13 @@ client's real identity is always ``~<user>@<ip>``.
 import asyncio
 
 from irc_client import IRCClient
-from vhost import vhost
+from vhost import CLIENT_IP, VIS_HOST_CLIENT
 
-# Hub clients connect from the loopback address and the hub does no DNS,
-# so this is both their real host and the address their hidden host is
-# derived from.
-REAL_HOST = "127.0.0.1"
-VIS_HOST = vhost(REAL_HOST)
+# The hub does no DNS, so the address a client arrives from is both its
+# real host and what its hidden host is derived from.  See vhost.py for
+# why that address is the compose network's gateway and not loopback.
+REAL_HOST = CLIENT_IP
+VIS_HOST = VIS_HOST_CLIENT
 
 
 def user_from_prefix(prefix: str | None) -> str | None:

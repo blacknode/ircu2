@@ -86,9 +86,19 @@ def vhost(ip: str, key: str = TEST_KEY) -> str:
     raise RuntimeError("no bracket-free host")
 
 
-# What a client connecting from the loopback address is hidden as, under
-# the test key; every tests/**/ircd*.conf carries that key.
-VIS_HOST_LOOPBACK = None  # filled in below, after vhost() exists
+# The address the ircd sees a test client arrive from.
+#
+# Not 127.0.0.1: the containers are on the compose bridge network
+# (10.55.0.0/24 in docker-compose.yml), so a connection to a published
+# port reaches the server from that network's gateway.  Every Connect
+# block in tests/docker/*.conf names the same address for the same
+# reason, and getting this wrong shows up as a hidden host that is the
+# cipher of somebody else's IP.
+CLIENT_IP = "10.55.0.1"
+
+# What a test client is hidden as, under the test key; every
+# tests/**/ircd*.conf carries that key.
+VIS_HOST_CLIENT = None  # filled in below, after vhost() exists
 
 
 def is_vhost(host: str) -> bool:
@@ -101,4 +111,4 @@ def is_vhost(host: str) -> bool:
     return all(c in _ALPHABET and c not in "[]" for c in body)
 
 
-VIS_HOST_LOOPBACK = vhost("127.0.0.1")
+VIS_HOST_CLIENT = vhost(CLIENT_IP)

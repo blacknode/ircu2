@@ -222,7 +222,13 @@ class IRCClient:
 
         Returns what was discarded, for a test that wants to look.
         """
-        seen = []
+        # Whatever a previous wait_for() stashed counts as "still being
+        # said": a MODE that arrived before the 381 somebody was waiting
+        # for is in the buffer, not on the socket, and leaving it there
+        # would hand it to the next question as if it were the answer.
+        seen = self._buffer
+        self._buffer = []
+
         while True:
             try:
                 seen.append(await self._recv_from_stream(timeout=quiet))
@@ -410,17 +416,48 @@ class IRCClient:
         change is expected.
         """
         nick = nick or self.nick
-        await self.send(f"MODE {nick} {modes}")
-        msg = await self.wait_for("MODE")
-        applied = parse_mode_string(msg.params[-1])
         requested = parse_mode_string(modes)
-        for ch, sign in requested.items():
-            if applied.get(ch) != sign:
+
+        await self.send(f"MODE {nick} {modes}")
+
+        # Not simply "the next MODE": every client is sent `MODE <nick>
+        # :+x` of its own shortly after registration (the hidden host, see
+        # doc/readme.accounting), and a mode change somebody else made can
+        # arrive at any time.  The answer to this request is the echo that
+        # carries what was asked for; anything else is somebody else's.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        seen = []
+
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 raise AssertionError(
-                    f"MODE {modes} not applied as expected: requested "
-                    f"{sign}{ch}, got {msg.params[-1]!r}"
+                    f"MODE {modes} was never echoed back; saw {seen}"
                 )
-        return msg
+
+            try:
+                msg = await self.wait_for("MODE", timeout=remaining)
+            except asyncio.TimeoutError:
+                raise AssertionError(
+                    f"MODE {modes} was never echoed back; saw {seen}"
+                )
+
+            applied = parse_mode_string(msg.params[-1])
+            if all(applied.get(ch) == sign for ch, sign in requested.items()):
+                return msg
+
+            # A different change: if it touches a mode we asked about and
+            # says the opposite, the request was refused and waiting for a
+            # better answer would only time out.
+            for ch, sign in requested.items():
+                if ch in applied and applied[ch] != sign:
+                    raise AssertionError(
+                        f"MODE {modes} not applied as expected: requested "
+                        f"{sign}{ch}, got {msg.params[-1]!r}"
+                    )
+
+            seen.append(msg.params[-1])
 
     async def silence(self, pattern: str, timeout: float = 5.0) -> Message:
         """Send SILENCE +<pattern>, waiting for the server's echo.

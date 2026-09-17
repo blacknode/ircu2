@@ -36,7 +36,11 @@ async def _silence_check(
 
     try:
         mask = silence_mask.format(real_host=REAL_HOST, vis_host=VIS_HOST)
-        await target.silence(f"+{mask}")
+        # silence() adds the "+" itself; passing another one asks the
+        # server to silence a mask that begins with a plus, which it
+        # cheerfully accepts and which matches nobody -- so every test
+        # here that expected silence got the message instead.
+        await target.silence(mask)
         await asyncio.sleep(0.3)
 
         await sender.send(f"PRIVMSG {nick_target} :hello there")

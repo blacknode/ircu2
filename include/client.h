@@ -241,6 +241,13 @@ struct Connection
   }                   ws_mode;       /**< WebSocket mode */
   HandlerType         con_handler;   /**< Message index into command table
                                         for parsing. */
+  /** Earliest time this connection may be sent another verification mail.
+   *
+   * Per connection and not per account: what is being rationed is this
+   * server mailing somebody, and the client asking has not necessarily
+   * proved anything about the address yet.
+   */
+  time_t              con_mail_next;
   time_t              con_nextnick;  /**< Next time a nick change is allowed */
   time_t              con_nexttarget;/**< Next time a target change is allowed */
   time_t              con_lasttime;  /**< Last time data read from socket */
@@ -353,6 +360,7 @@ struct Client {
 /** Get client numnick. */
 #define cli_yxx(cli)		((cli)->cli_yxx)
 /** Get time we last read data from the client socket. */
+#define cli_mail_next(cli)	con_mail_next(cli_connect(cli))
 #define cli_lasttime(cli)	con_lasttime(cli_connect(cli))
 /** Get time we last parsed something from the client. */
 #define cli_since(cli)		con_since(cli_connect(cli))
@@ -487,6 +495,7 @@ struct Client {
 /** Get next new target time for connection. */
 #define con_nexttarget(con)	((con)->con_nexttarget)
 /** Get last time we read from the connection. */
+#define con_mail_next(con)      ((con)->con_mail_next)
 #define con_lasttime(con)       ((con)->con_lasttime)
 /** Get last time we accepted a command from the connection. */
 #define con_since(con)          ((con)->con_since)

@@ -77,7 +77,15 @@ enum AccountResult {
 enum AccountWrite {
   ACCOUNT_WRITE_REGISTER,  /**< Take this nickname for this address. */
   ACCOUNT_WRITE_PASSWD,    /**< Replace this address's password. */
-  ACCOUNT_WRITE_DROP       /**< Give this nickname up. */
+  ACCOUNT_WRITE_DROP,      /**< Give this nickname up. */
+  /** Record that this address was read by whoever holds it.
+   *
+   * The odd one out, and deliberately: it carries no password, because
+   * the proof is not a password.  It is a token the core signed and the
+   * holder of the address sent back (mail.h), which is a proof of the
+   * same kind and checked before the provider is asked at all.
+   */
+  ACCOUNT_WRITE_VERIFY
 };
 
 /** What is being asked about a nickname. */
@@ -127,9 +135,10 @@ struct AccountRequest {
  * The core's, and it does not outlive the ap_change() call.  Every write
  * carries the current password, because every write is an act only the
  * holder of the address may perform and the provider is the only thing
- * that can tell whether this is the holder -- except for a registration
- * of an address nobody has yet, where the password given is the one being
- * set.
+ * that can tell whether this is the holder -- except for two: a
+ * registration of an address nobody has yet, where the password given is
+ * the one being set, and #ACCOUNT_WRITE_VERIFY, whose proof the core has
+ * already checked itself.
  */
 struct AccountChange {
   enum AccountWrite ach_what;      /**< Which change. */

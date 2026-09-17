@@ -75,6 +75,16 @@ static const char ident_sql_register[] =
 static const char ident_sql_drop[] =
   "SELECT status, account FROM account_drop($1, $2)";
 
+/** Record that an address was read by whoever holds it.
+ *
+ * COALESCE rather than a plain assignment: verifying twice is not an
+ * error and must not move the date, and no rows back then means one
+ * thing only -- there is no such address.
+ */
+static const char ident_sql_verify[] =
+  "UPDATE identity SET verified_at = COALESCE(verified_at, now())"
+  "  WHERE email = $1";
+
 /** Replace a password, guarded by the one it replaces. */
 static const char ident_sql_passwd[] =
   "UPDATE identity SET password_hash = $1"
@@ -157,6 +167,14 @@ static void ident_change_written(const struct DbResult* res, void* user)
     return;
   }
 
+  if (req->ir_what == ACCOUNT_WRITE_VERIFY) {
+    /* Also an UPDATE.  No rows is the address not being there at all --
+     * the token said it was reachable, not that anybody had registered
+     * it -- and that is the one thing to tell apart from success. */
+    ident_change_answer(req, res->rows ? ACCOUNT_OK : ACCOUNT_ERR_CREDENTIAL);
+    return;
+  }
+
   if (ident_rows(res) == 0) {
     log_write(LS_SYSTEM, L_ERROR, 0,
               "identity: a write returned nothing; are the migrations "
@@ -211,6 +229,12 @@ static void ident_change_write(struct IdentRequest* req, const char* hash)
     p[1].type = DB_TYPE_TEXT;   p[1].value = req->ir_canon;
     n = 2;
     query.sql = ident_sql_drop;
+    break;
+
+  case ACCOUNT_WRITE_VERIFY:
+    p[0].type = DB_TYPE_TEXT;   p[0].value = req->ir_email;
+    n = 1;
+    query.sql = ident_sql_verify;
     break;
 
   default:
@@ -467,6 +491,19 @@ void ident_change(account_id_t id, const struct AccountChange* creq)
 
   if (!*req->ir_email) {
     ident_fail(req, ACCOUNT_ERR_CREDENTIAL, NULL);
+    return;
+  }
+
+  /* Verifying is about the address, so there is no nickname to require
+   * and no password to check: the proof was a signed token and the core
+   * checked it before asking.  Straight to the one statement. */
+  if (req->ir_what == ACCOUNT_WRITE_VERIFY) {
+    if (!ident_db_ready("a change")) {
+      ident_fail(req, ACCOUNT_ERR_UNAVAILABLE, NULL);
+      return;
+    }
+
+    ident_change_write(req, NULL);
     return;
   }
 

@@ -2018,9 +2018,9 @@ static Numeric replyTable[] = {
 /* 987 */
   N(ERR_FROZEN, "987", "%s :You must identify to this nickname before you can use that"),
 /* 988 */
-  { 0 },
+  N(RPL_VERIFYSENT, "988", "%s :A message with a verification token is on its way"),
 /* 989 */
-  { 0 },
+  N(RPL_VERIFIED, "989", "%s :That address is verified"),
 /* 990 */
   { 0 },
 /* 991 */

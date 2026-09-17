@@ -519,7 +519,9 @@ extern const struct Numeric* get_error_numeric(int err);
 #define RPL_ENDOFACCOUNTLIST 985        /* proposal 007 */
 #define ERR_NOTAUTHENTICATED 986        /* proposal 007 */
 #define ERR_FROZEN           987        /* proposal 007; umode +f */
+#define RPL_VERIFYSENT       988        /* proposal 007; mail.h */
+#define RPL_VERIFIED         989        /* proposal 007; mail.h */
 
-#define ERR_LASTERROR        988
+#define ERR_LASTERROR        990
 
 #endif /* INCLUDED_numeric_h */

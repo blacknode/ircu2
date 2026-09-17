@@ -230,6 +230,32 @@ other order. The unique indexes stay, as what catches a hand-written
 `INSERT`. Every successful write `cache_del()`s the nickname rather than
 waiting for the TTL, because the store is shared.
 
+**Mail and verifying an address** (`include/mail.h`, `ircd/mail.c`,
+`doc/readme.mail`, proposal 007 §11.8). Two halves that are not the same
+thing. **Verifying is the core's**, because it is a proof like a password
+is a proof and the answer is the same on every server: the token carries
+what it asserts (`expiry:address`) and an HMAC over it, keyed by a
+derivation of the `Security{}` key with a label of its own — so **nothing
+is stored**, any server recognises what another minted, and there is no
+table of outstanding tokens to keep, expire or leak. The price is that a
+token cannot be revoked before it expires, which is why the window is
+short and why all it grants is "this address is real" — never `+r`.
+**Delivering is a module's**: the core holds the `Mail{}` block and the
+messages in flight and dispatches to one registered provider, the
+`db.h`/`cache.h` arrangement, with `modules/workers/sendmail/` the one
+that ships — it runs the local MTA **on a worker** (fork, exec, write and
+wait all block) and refuses when `FEAT_WORKER_THREADS` is 0, the way the
+identity module refuses to hash. The core applies `Mail{from}` itself so
+a provider cannot forget it, and refuses a newline in an address or a
+subject, which is what would otherwise write somebody else's headers.
+`mail.c` never dereferences a `struct Client` (`mail_t`); composing the
+message — translated, and rationed per connection by `resend_interval` —
+is `m_account.c`'s, which is also where `ACCOUNT VERIFY [<token>]` lives:
+`VERIFY` is a proof and not a policy, so it is the one thing `ACCOUNT`
+grew, and NickServ's `VERIFY` comes back through the same function.
+`ACCOUNT_WRITE_VERIFY` is the one write that carries no password, because
+the core checked the proof before asking.
+
 **The grace period** (`modules/services/irc_services/nick_policy.c`,
 proposal 007 §§5–7). What happens to a local client using a registered
 nickname it has not proved is its own: NickServ warns it, sets `+f`, and
@@ -978,6 +1004,7 @@ and the provider behind all three), `doc/readme.modules`,
 `doc/readme.database`, `doc/readme.http`, `doc/readme.isolation`,
 `doc/readme.migrations`, `doc/readme.history`,
 `doc/readme.richtext`, `doc/readme.translations`, `doc/readme.sdk`,
+`doc/readme.mail`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
 generates reference docs).
 

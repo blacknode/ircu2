@@ -742,21 +742,29 @@ Cada punto compila, pasa pruebas y se sube por separado.
    La política vive en `nick_policy.c` y la voz y los comandos en
    `svc_nickserv.c`, con sus opciones dentro del `Service{}` que ya lo
    declara. `REGISTER`, `PASSWORD` y `DROP` escriben por `ap_change()`, y
-   los cerrojos están en la migración v2 (§9.1). Queda la verificación del
-   correo, que no toca `struct Client` y puede ir cuando haga falta.
-9. **Documentación y pruebas** *(hecho)* — `doc/readme.accounting` reescrito,
+   los cerrojos están en la migración v2 (§9.1).
+9. **La verificación del correo** *(hecha; `doc/readme.mail`)* — en el
+   core, porque es una prueba y no una política: el token lleva lo que
+   afirma y una firma HMAC con clave derivada del bloque `Security{}`, de
+   modo que cualquier servidor de la red reconoce el que acuñó otro y no
+   hay nada que guardar. Enviar el correo sí es de un módulo — el core
+   tiene el bloque `Mail{}` y los mensajes en vuelo y despacha a un
+   proveedor registrado, igual que con `db.h` y `cache.h` —, y el que
+   viene de serie es `modules/workers/sendmail/`, que ejecuta el MTA local
+   **en un worker**. `ACCOUNT VERIFY [<token>]` es lo único que `ACCOUNT`
+   creció, y `ACCOUNT_WRITE_VERIFY` es la única escritura sin contraseña,
+   porque la prueba ya la comprobó el core.
+10. **Documentación y pruebas** *(hecho)* — `doc/readme.accounting` reescrito,
    `doc/readme.sasl` nuevo, y `tests/identity/`: el congelado y lo que le
    bloquea, el `+r` que lo levanta, el renombrado a `guest-*`, lo que
    `ACCOUNT` rechaza, la capacidad `sasl` sin proveedor que la conteste, y
    que ninguna dirección llega en un burst.
 
-   Lo que **no** cubre una prueba de integración es todo lo que necesita un
-   proveedor de verdad —un login de punta a punta, la dirección en el 691,
-   el listado de cuentas—, porque eso necesita un contenedor de PostgreSQL
-   que las topologías de prueba todavía no tienen. Eso está comprobado a
-   mano, contra un PostgreSQL y un Redis reales, y por debajo del protocolo
-   en `ircd/test/*_t.c`. Añadir esa topología es trabajo aparte, y se hace
-   cuando toque.
+   La topología con PostgreSQL ya existe (`tests/identity_db/`, marcador
+   `identity`), así que lo que necesita un proveedor de verdad —un login
+   de punta a punta, la dirección en el 691, el listado de cuentas, el
+   token de verificación y el correo que lo lleva— está cubierto por
+   pruebas y no a mano.
 
 ---
 

@@ -29,6 +29,7 @@
 #include "class.h"
 #include "batch.h"
 #include "cache.h"
+#include "mail.h"
 #include "client.h"
 #include "crule.h"
 #include "db.h"
@@ -1021,6 +1022,7 @@ int read_configuration_file(void)
   feature_unmark(); /* unmark all features for resetting later */
   db_conf_unmark(); /* the Database block is dropped if it is gone */
   cache_conf_unmark(); /* and the Redis block, the same way */
+  mail_conf_unmark(); /* and the Mail block */
   vhost_conf_unmark(); /* a new Security block replaces the key */
   clear_nameservers(); /* clear previous list of DNS servers */
   if (!init_lexer())
@@ -1030,6 +1032,7 @@ int read_configuration_file(void)
   feature_mark(); /* reset unmarked features */
   db_conf_sweep(); /* ... which is decided here, once the file is read */
   cache_conf_sweep();
+  mail_conf_sweep();
   /* The Security block is the one block the server cannot do without:
    * no key, no hidden hosts, no users.  A rehash that drops it keeps the
    * key already in force; the first read has none to fall back on and

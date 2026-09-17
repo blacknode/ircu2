@@ -131,6 +131,11 @@ RUN chown ircu:ircu /opt/ircu/lib/iauth-dns-stub.pl
 RUN touch /opt/ircu/lib/ircd.motd && chown ircu:ircu /opt/ircu/lib/ircd.motd
 
 COPY tests/docker/iauth-tilded.pl /opt/ircu/bin/iauth-tilded.pl
+
+# Stands in for the local MTA.  The sendmail module runs whatever the
+# Mail{} block names; this one keeps the message where a test can read it.
+COPY tests/docker/fake-sendmail.sh /opt/ircu/bin/fake-sendmail
+RUN chmod 755 /opt/ircu/bin/fake-sendmail
 RUN chmod +x /opt/ircu/bin/iauth-tilded.pl && chown ircu:ircu /opt/ircu/bin/iauth-tilded.pl
 
 COPY tests/docker/ircd-entrypoint.sh /opt/ircu/lib/ircd-entrypoint.sh

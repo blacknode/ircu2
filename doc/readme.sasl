@@ -312,3 +312,13 @@ there on purpose: the cache is never the truth, so a server without one
 answers exactly the same.  The schema is created by the tests themselves
 running /MODULE MIGRATION APPLY identity, which is how a deployment does
 it and therefore worth doing the same way.
+
+
+VERIFYING THE ADDRESS
+=====================
+
+Earning +r proves a credential.  It does not prove that the address the
+credential is filed under is real, and until somebody reads a message
+sent to it, it is a claim.  That is a separate proof with its own
+mechanism -- a signed token, ACCOUNT VERIFY, and a mail provider module
+-- and it is documented in doc/readme.mail.

@@ -29,6 +29,7 @@
 #include "batch.h"
 #include "account.h"
 #include "cache.h"
+#include "mail.h"
 #include "channel.h"
 #include "class.h"
 #include "client.h"
@@ -930,6 +931,7 @@ int main(int argc, char **argv) {
   migration_shutdown();
   db_shutdown();
   cache_shutdown();
+  mail_close();
   http_shutdown();
   i18n_close();
 

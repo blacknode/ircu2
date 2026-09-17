@@ -16,6 +16,7 @@ and therefore worth doing the same way here.
 """
 
 import asyncio
+import os
 import re
 
 import pytest
@@ -585,5 +586,160 @@ async def test_drop_gives_the_nickname_back(ircd_identity, address):
         await client.send("JOIN #free-again")
         joined = await _collect(client, {"JOIN", "987"}, timeout=20.0)
         assert _numeric(joined, "JOIN"), [m.raw for m in joined]
+    finally:
+        await _quit(client)
+
+
+# ---------------------------------------------------------------------------
+# Verifying an address: the token the core signs and the mail a module sends
+# ---------------------------------------------------------------------------
+
+#: Where tests/docker/fake-sendmail.sh keeps what the server handed it.
+MBOX = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "debug-output", "sendmail.mbox")
+
+#: "ACCOUNT VERIFY <token>" as the core writes it into the message when the
+#: Mail{} block names no verify_url.
+TOKEN_RE = re.compile(r"ACCOUNT VERIFY (\S+)")
+
+
+def _mbox_text():
+    """Everything the stand-in MTA has been fed so far."""
+    try:
+        with open(MBOX, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return ""
+
+
+async def _wait_for_mail(address, timeout=20.0):
+    """The token from the most recent message to ``address``.
+
+    Polls the file the stand-in MTA writes: the send is deliberately
+    nothing anybody waits for -- it goes to a worker and the client is
+    told only that the message was accepted -- so the arrival is watched
+    for rather than awaited.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+
+    while loop.time() < deadline:
+        for block in reversed(_mbox_text().split("--- message ")):
+            if address in block:
+                found = TOKEN_RE.search(block)
+                if found:
+                    return found.group(1)
+        await asyncio.sleep(0.5)
+
+    raise AssertionError(f"no message to {address} arrived")
+
+
+async def test_registering_sends_a_verification_message(ircd_identity, address):
+    """REGISTER hands the address to the provider and mails it a token.
+
+    The whole path, end to end: NickServ writes the account, the core
+    signs a token for the address, the sendmail module runs a program on a
+    worker thread and the program is handed a message with the token in
+    it.  Nothing here waits for the mail -- the client was told it was
+    accepted for delivery, which is all the server can honestly say.
+    """
+    token = await _wait_for_mail(address["email"])
+
+    assert token
+    assert token.startswith("1."), token
+    assert token.count(".") == 2, token
+
+
+async def test_a_token_marks_the_address_verified(ircd_identity, address):
+    """The token comes back and the provider writes it down.
+
+    989 and not a notice: the answer is the core's, because the proof is.
+    """
+    token = await _wait_for_mail(address["email"])
+
+    client = await _connect(ircd_identity, "vfy" + address["nick"][:9])
+    try:
+        await client.send(f"ACCOUNT VERIFY {token}")
+        msgs = await _collect(client, {"989", "983"})
+        answer = _numeric(msgs, "989")
+
+        assert answer is not None, [m.raw for m in msgs]
+        assert answer.params[1] == address["email"], answer.raw
+
+        # Twice is not an error: verifying an address that is already
+        # verified says the same thing, because it is the same fact.
+        await client.send(f"ACCOUNT VERIFY {token}")
+        msgs = await _collect(client, {"989", "983"})
+        assert _numeric(msgs, "989") is not None, [m.raw for m in msgs]
+    finally:
+        await _quit(client)
+
+
+async def test_a_token_from_nowhere_is_refused(ircd_identity, schema):
+    """A token this network never signed, and one that is not a token.
+
+    One answer for both: telling them apart tells whoever is trying which
+    half they got right.
+    """
+    client = await _connect(ircd_identity, "vfybad")
+    try:
+        for bad in ("1.YWJjZGVm.YWJjZGVmZ2hpamtsbW5vcA==", "nonsense", "1.a.b"):
+            await client.send(f"ACCOUNT VERIFY {bad}")
+            msgs = await _collect(client, {"983", "989"})
+
+            assert _numeric(msgs, "989") is None, f"{bad} was accepted"
+            assert "no good" in _numeric(msgs, "983").params[-1], bad
+    finally:
+        await _quit(client)
+
+
+async def test_verify_without_a_token_needs_an_address(ircd_identity, schema):
+    """With no token the server mails the address you authenticated with.
+
+    A client that has not authenticated has no address to be mailed, and
+    there is no form of this that takes one: that would be a way to have
+    the server post a message to anybody, signed by the network.
+    """
+    client = await _connect(ircd_identity, "vfynone")
+    try:
+        await client.send("ACCOUNT VERIFY")
+        msgs = await _collect(client, {"986", "988", "983"})
+
+        assert _numeric(msgs, "986") is not None, [m.raw for m in msgs]
+    finally:
+        await _quit(client)
+
+
+async def test_a_second_message_waits_for_the_interval(ircd_identity, address):
+    """Asking again is rationed, and the answer says so.
+
+    resend_interval is two seconds in the test configuration, so this can
+    show both halves: refused immediately, sent once the gap has passed.
+    """
+    client = await _connect(ircd_identity, "rsnd" + address["nick"][:8])
+    try:
+        # Identify, so that there is an address to send to.  900 is what
+        # says it worked; the rename to the account's nickname comes with
+        # it, because an account is a nickname.
+        msgs = await _ns(client,
+                         f"IDENTIFY {address['email']} {address['password']}",
+                         {"900"})
+        assert _numeric(msgs, "900") is not None, [m.raw for m in msgs]
+
+        await client.send("ACCOUNT VERIFY")
+        msgs = await _collect(client, {"988", "983"})
+        assert _numeric(msgs, "988") is not None, [m.raw for m in msgs]
+
+        await client.send("ACCOUNT VERIFY")
+        msgs = await _collect(client, {"988", "983"})
+        refused = _numeric(msgs, "983")
+        assert refused is not None, [m.raw for m in msgs]
+        assert "moment" in refused.params[-1], refused.raw
+
+        await asyncio.sleep(2.5)
+
+        await client.send("ACCOUNT VERIFY")
+        msgs = await _collect(client, {"988", "983"})
+        assert _numeric(msgs, "988") is not None, [m.raw for m in msgs]
     finally:
         await _quit(client)

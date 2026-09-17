@@ -157,6 +157,7 @@ set(IRCU_SOURCES
   ircd_vhost.c
   jupe.c
   list.c
+  mail.c
   listener.c
   m_account.c
   m_admin.c

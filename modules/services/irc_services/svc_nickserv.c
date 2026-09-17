@@ -50,6 +50,7 @@
 #include "ircd.h"
 #include "ircd_features.h"
 #include "ircd_string.h"
+#include "mail.h"
 #include "numnicks.h"
 #include "s_conf.h"
 #include "struct.h"
@@ -204,6 +205,13 @@ static void nick_write_done(struct Client* sptr, enum AccountResult result,
     if (nick && !account_login(sptr, nick, email))
       nick_tell(sptr, "Registered, but the nickname could not be taken; "
                       "identify when you can.");
+
+    /* Now that the address is on the account, offer to confirm it.  The
+     * message is sent by the core, in the user's language, and only if
+     * this server can send mail at all -- an offer to mail somebody from
+     * a server that cannot is worse than no offer. */
+    if (mail_available())
+      account_verify_request(sptr, NULL);
     break;
 
   case NICKW_PASSWORD:
@@ -367,6 +375,32 @@ static void cmd_status(struct ServiceCall* call)
                     "identify or are renamed.");
 }
 
+/** VERIFY [<token>]
+ *
+ * The bot's words for what ACCOUNT VERIFY does, and it is the same act:
+ * the token was signed by the core and is checked by the core, because it
+ * is a proof and not a policy (mail.h).  This exists because a person
+ * being told "confirm your address" by NickServ will answer NickServ.
+ */
+static void cmd_verify(struct ServiceCall* call)
+{
+  struct Client* sptr = call->sc_source;
+
+  if (!MyUser(sptr)) {
+    svc_reply(call, "Use the service on your own server.");
+    return;
+  }
+
+  /* A token is not a password, but it is a one-time proof, and a channel
+   * keeps what is said in it. */
+  if (call->sc_channel && call->sc_argc > 1) {
+    svc_reply(call, "Do not send a token to a channel.  Ask for another.");
+    return;
+  }
+
+  account_verify_request(sptr, call->sc_argc > 1 ? call->sc_argv[1] : NULL);
+}
+
 static const struct ServiceCommand commands[] = {
   { "IDENTIFY", N_("IDENTIFY <address> <password> [<account>]"),
     N_("Prove an account is yours."),
@@ -380,6 +414,9 @@ static const struct ServiceCommand commands[] = {
   { "DROP", N_("DROP <password>"),
     N_("Give up the nickname you are identified to."),
     1, 0, cmd_drop },
+  { "VERIFY", N_("VERIFY [<token>]"),
+    N_("Confirm the address you identified with, or ask for a new token."),
+    0, 0, cmd_verify },
   { "STATUS", N_("STATUS"), N_("Say whether you are identified."),
     0, 0, cmd_status },
   { "INFO", N_("INFO <nick>"), N_("Show what the network knows about a nick."),

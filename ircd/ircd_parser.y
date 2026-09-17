@@ -26,6 +26,7 @@
 #include "channel.h"
 #include "class.h"
 #include "cache.h"
+#include "mail.h"
 #include "client.h"
 #include "crule.h"
 #include "db.h"
@@ -123,6 +124,7 @@ enum ConfigBlock
   BLOCK_REDIS,
   BLOCK_SERVICE,
   BLOCK_SECURITY,
+  BLOCK_MAIL,
   BLOCK_LAST_BLOCK
 };
 
@@ -255,6 +257,10 @@ static void free_slist(struct SLink **link) {
 %token TIMEOUT_MS
 %token MIGRATION_TIMEOUT
 %token REDIS
+%token MAIL
+%token VERIFY_WINDOW
+%token VERIFY_URL
+%token RESEND_INTERVAL
 %token SOCKET
 %token PREFIX
 %token SECURITY
@@ -305,6 +311,7 @@ block: adminblock | generalblock | classblock | connectblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
        moduleblock | databaseblock | redisblock | serviceblock | securityblock |
+       mailblock |
        includeblock |
        error '}' ';' { yyerrok; };
 
@@ -1842,6 +1849,78 @@ redisprefix: PREFIX '=' QSTRING ';'
   cache_conf_set_prefix($3);
 };
 
+/* Mail {
+ *   from = "noreply@example.net";
+ *   program = "/usr/sbin/sendmail";
+ *   timeout = 30 seconds;
+ *   verify_window = 1 days;
+ *   resend_interval = 5 minutes;
+ *   verify_url = "https://example.net/verify?t=%s";
+ * };
+ *
+ * The block is the core's and the provider reads it, exactly as the
+ * Database{} and Redis{} blocks are: what a message is (a sender, a
+ * deadline, how long a token is good for) belongs to the server, and how
+ * it reaches a mail server belongs to whichever module was loaded to do
+ * it.  Without the block nothing is sent -- mail_available() is false --
+ * and a server that sends no mail is an ordinary server.
+ */
+mailblock: MAIL
+{
+  if (!permitted(BLOCK_MAIL)) YYERROR;
+  mail_conf_clear();
+} '{' mailitems '}' ';'
+{
+  const char *err = 0;
+
+  if (!mail_conf_commit(&err))
+    parse_error("%s", err ? err : "Mail: block is incomplete");
+};
+
+mailitems: mailitem mailitems | mailitem;
+mailitem: mailfrom | mailprogram | mailtimeout | mailwindow |
+  mailresend | mailurl;
+
+mailfrom: FROM '=' QSTRING ';'
+{
+  mail_conf_set_from($3);
+};
+/* Read by the provider, not by the core: modules/workers/sendmail/ hands
+ * the message to this program.  A provider that speaks SMTP itself will
+ * want other fields, and it can have them when it exists -- config nobody
+ * reads is config invented blind.
+ */
+mailprogram: PROGRAM '=' QSTRING ';'
+{
+  mail_conf_set_program($3);
+};
+mailtimeout: TIMEOUT '=' timespec ';'
+{
+  mail_conf_set_timeout($3);
+};
+/* How long a verification token is good for.  Short, because a token that
+ * cannot be revoked is a token whose window is the whole of its risk.
+ */
+mailwindow: VERIFY_WINDOW '=' timespec ';'
+{
+  mail_conf_set_window($3);
+};
+/* The shortest gap between two messages to one client, so that "send it
+ * again" is not a way to have this server mail somebody else repeatedly.
+ */
+mailresend: RESEND_INTERVAL '=' timespec ';'
+{
+  mail_conf_set_resend($3);
+};
+/* Where the token goes in a link, for a deployment that has somewhere to
+ * put one.  With no template the mail carries the token itself, which is
+ * what a network with no web side wants.
+ */
+mailurl: VERIFY_URL '=' QSTRING ';'
+{
+  mail_conf_set_verify_url($3);
+};
+
 /* Security { virtual_host_key = "AbCdEfGhIjKl"; };
  *
  * The block is mandatory: every user's visible host is a cipher of its
@@ -1902,6 +1981,7 @@ blocktype: ALL { $$ = ~0; }
   | IPCHECK { $$ = 1 << BLOCK_IPCHECK; }
   | DATABASE { $$ = 1 << BLOCK_DATABASE; }
   | REDIS { $$ = 1 << BLOCK_REDIS; }
+  | MAIL { $$ = 1 << BLOCK_MAIL; }
   | SERVICE { $$ = 1 << BLOCK_SERVICE; }
   | SECURITY { $$ = 1 << BLOCK_SECURITY; }
   ;

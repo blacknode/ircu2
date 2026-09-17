@@ -95,6 +95,17 @@ add_ircu_test(cache_t
 # depend on nothing -- no client, no allocator, no log -- which is what
 # lets the parser be tested on its own; and it is a parser reading bytes
 # from a process that lives somewhere else because it is not trusted.
+add_ircu_test(mail_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/ircd_vhost.c"
+  "${IRCU_IRCD_DIR}/mail.c"
+  "${IRCU_IRCD_DIR}/match.c"
+  "${IRCU_IRCD_DIR}/numnicks.c")
+
 add_ircu_test(modhost_t
   "${IRCU_IRCD_DIR}/modhost_frame.c")
 

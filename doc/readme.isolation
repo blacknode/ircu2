@@ -1,0 +1,222 @@
+Isolated modules: isolation = "process"
+=======================================
+
+Phase 7 of doc/proposals/006-comunicaciones-unificadas.md.  A module can
+be run in a process of its own, so that a fault in it is a dead host and
+not a dead network.
+
+  Module { name = "history";    isolation = "native";  };   # as always
+  Module { name = "partner_api"; isolation = "process"; };  # over there
+
+"native" is the default and is what every module did before this existed.
+
+
+WHAT IT BUYS, AND WHAT IT DOES NOT
+==================================
+
+A native module shares the server's address space and can write anywhere
+in it.  There is no barrier to put inside a process, and pretending
+otherwise would be the worst outcome available -- so the barrier is a
+process.
+
+What that buys:
+
+  a module that corrupts its heap      takes its host, not the server
+  a module that dereferences NULL      takes its host, not the server
+  a module that loops for ever         burns one core; the server keeps
+                                       serving, and the host is dropped
+  a module that leaks                  hits its own rlimit
+  a module that stops answering        is dropped, and registrations
+                                       start working again
+
+What it does not buy: an isolated module is not *harmless*.  It speaks
+the protocol in include/modhost.h and everything it asks for it still
+gets -- it can register commands, read features, look clients up and send
+them lines.  What it cannot do is reach past the protocol.
+
+**`isolation` is about failure, not about privilege.**  Do not read it as
+a sandbox for code you would not otherwise run.
+
+There is a second, quieter thing it buys: an isolated module can be
+written in a way that would be unacceptable inside the server.  It may
+block, it may take a second over a request, it may call a library that
+allocates in ways the core's free lists would not survive.  The server
+never waits on it.
+
+
+WHICH SIDE MAY WAIT
+===================
+
+The asymmetry is the whole design.  **The host may block; the server may
+not.**
+
+  host -> server      a synchronous request.  The host writes a frame and
+                      reads the reply; the server answers from state it
+                      already has, without waiting for anything.  That is
+                      why a module can call feature_int() or FindUser()
+                      over there and get an answer on the spot.
+  server -> host      never waited on.  A command is dispatched and
+                      forgotten.
+
+A hook that has to be *answered* -- a veto -- is the interesting case,
+and it is why HOOK_PENDING had to exist before this could (proposal 006
+§5.5).  The server suspends the hook, sends it, and resumes when the
+answer comes back.  If no answer comes, FEAT_HOOK_TIMEOUT refuses the
+operation, because failing open would be exactly what the veto existed to
+prevent.
+
+
+WHEN A HOST GOES WRONG
+======================
+
+  it dies                 the socket closes; the server logs it, reverts
+                          everything the module had registered -- its
+                          commands, its hooks -- and carries on
+  it stops reading        its socket fills; past 256 KiB owed the server
+                          gives up on it rather than growing a buffer for
+                          a process that is not listening
+  it sends nonsense       dropped.  There is no resynchronising a
+                          length-prefixed stream, and this is the failure
+                          the process boundary exists to contain
+  it stops answering      a veto that goes unanswered is refused by
+                          FEAT_HOOK_TIMEOUT -- but a module that has
+                          stopped answering refuses *every* registration,
+                          one deadline at a time, and an operator cannot
+                          connect to unload it.  So silence is measured
+                          too: a host that was asked something and has
+                          said nothing since, for twice FEAT_HOOK_TIMEOUT
+                          (never less than 30s), is dropped.
+  it will not exit        MODULE UNLOAD closes its socket, waits two
+                          seconds and then kills it.  A host that hangs
+                          in mi_fini does not get to hold the server.
+
+Every one of those ends with the module unloaded and the server running.
+That is the entire claim.
+
+
+WHAT A MODULE MAY CALL OVER THERE
+=================================
+
+Not all of the module API.  A faithful copy of every call would be the
+"duplicates the surface of the module API" that proposal 006 §7.7 says the
+cost is, so what ircd/modhost/modhost_api.c implements is the profile an
+*integration* needs -- which is what isolation is for:
+
+  commands            module_add_command(), module_del_command(),
+                      module_command_count()
+  hooks               module_add_hook(), module_del_hook(),
+                      module_hook_resume()
+  identity            module_dir(), module_loaded_by()
+  the log             log_write()
+  memory              MyMalloc(), MyCalloc(), MyFree(), MyRealloc()
+  strings             ircd_strncpy(), ircd_strcmp(), ircd_strncmp(),
+                      ircd_snprintf(), ircd_vsnprintf()
+  features            feature_int(), feature_bool(), feature_str()
+  clients             FindUser(), FindClient(), findNUser()
+  sending             sendcmdto_one(), sendrawto_one(),
+                      sendto_one_numeric()
+  the clock           CurrentTime, me
+
+Everything else -- user modes, channel modes, capabilities, bots, the
+database, the cache, HTTP routes, workers, migrations, translations,
+channels -- is **not** there.
+
+A module that calls one of them does not load isolated, and the failure
+is loud: dlopen() is RTLD_NOW, so the host fails at load and the operator
+is told which symbol.
+
+  /MODULE LOAD richtext process
+  -!- Could not load richtext: .../richtext.so: undefined symbol:
+      module_add_cap
+
+That is on purpose.  The dishonest alternative is a stub that silently
+does nothing and a module that believes it registered a user mode nobody
+has.  Each of the missing calls reaches deep into the server's own state
+and is a protocol design of its own rather than a line in a table; the
+profile grows when something needs it, and the rule does not change.
+
+**The module is compiled once.**  Nothing in its source says which side
+it runs on -- modules/commands/isolated_demo.c is the reference, and it
+has no idea.  What decides is the line in ircd.conf.
+
+
+CLIENTS ARE COPIES
+==================
+
+A handler over there is given a real struct Client, so cli_name(),
+IsAnOper() and MyConnect() work as its author expects.  It is a **copy**:
+it holds what was true when the frame was written, it belongs to the host
+process, and it is freed when the call returns.
+
+A module that stores the pointer is storing a pointer to freed memory --
+which is exactly the rule a native module already lives under, so there
+is nothing new to learn.
+
+What travels back is a numnick, which the server looks up again.  So a
+client that left in between is simply not found, rather than a pointer
+into freed memory, and a module cannot address anything it was not given.
+
+
+WHAT THE HOST IS GIVEN, AND WHAT IT IS NOT
+==========================================
+
+The host is fork()ed and exec()ed -- not merely forked, because a forked
+ircd would carry the whole server's memory and every descriptor it has
+open, and the point is that the module has neither.
+
+  it has        one socket (fd 3), the module's path, and rlimits
+  it has not    the server's memory, the server's descriptors, a terminal,
+                a core file, or the server's process group
+
+The rlimits are the cheap half of proposal 006 §7.7, and they are on from
+the first version: 512 MiB of address space, 3600 seconds of CPU, 64
+files, no core.  They protect nothing of the server's -- nothing inside a
+process does -- but a leak, a runaway loop or a descriptor flood ends at
+the host, and a host that the kernel stops is a host the server notices
+going.
+
+
+OPERATING IT
+============
+
+  /MODULE LIST                        says "isolated" or "in the server"
+  /MODULE LOAD <name> process         load it into a host
+  /MODULE LOAD <name> native          load it into the server (default)
+  /MODULE RELOAD <name>               keeps whichever it had
+
+A rehash that changes a module's `isolation` unloads and loads it, in
+that order: the old code stops before the new copy starts, whichever
+direction it is going.  A rehash that does not change it leaves the host
+alone.
+
+ircu-modhost is installed beside the ircd (IRCU_HOSTPATH, defaulting to
+the directory SPATH is in) and the two are one version: the handshake
+compares their ABI and refuses a mismatch, so they are upgraded together.
+Inside a chroot the host has to be below the new root, like every other
+path compiled into the server.
+
+
+WHEN TO USE IT
+==============
+
+Use "process" for what you did not write and do not review: integrations,
+third-party modules, anything that runs a client's logic.
+
+Use "native" for your own code on the critical path -- identity, history,
+the database driver -- both because those need the parts of the API that
+are not in the profile and because an extra process between the server
+and its own database buys nothing.
+
+The rule worth keeping: **no third-party module goes in native.**
+
+
+SEE ALSO
+========
+
+  include/modhost.h                       the protocol, and the frame
+  ircd/modhost.c                          the server's end
+  ircd/modhost/                           the host process
+  modules/commands/isolated_demo.c        the reference module
+  ircd/test/modhost_t.c                   the framing, tested on its own
+  doc/readme.modules                      writing a module at all
+  doc/proposals/006-comunicaciones-unificadas.md §7.7

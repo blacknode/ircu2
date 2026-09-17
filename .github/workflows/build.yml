@@ -87,6 +87,28 @@ jobs:
           test -f build/modules/services/history/history.so
           test -f build/modules/hooks/richtext.so
 
+          # The host an isolated module runs in, and the reference module
+          # that runs in it.  Neither needs anything beyond the core.
+          test -x build/ircd/ircu-modhost
+          test -f build/modules/commands/isolated_demo.so
+
+          # An isolated module resolves its symbols against ircu-modhost,
+          # exactly as a native one does against the ircd.  If the
+          # reference module cannot, the profile in
+          # ircd/modhost/modhost_api.c has lost something.
+          hostsyms=$(mktemp)
+          nm -D --defined-only build/ircd/ircu-modhost | awk '{print $NF}' \
+            | sed 's/@.*//' | sort -u > "$hostsyms"
+          for sym in $(nm -u build/modules/commands/isolated_demo.so \
+                       | awk '{print $NF}' | sed 's/@.*//' \
+                       | grep -v '^_' | grep -v GLIBC || true); do
+            if ! grep -qx "$sym" "$hostsyms"; then
+              echo "  isolated_demo needs $sym, which ircu-modhost does not have"
+              exit 1
+            fi
+          done
+          rm -f "$hostsyms"
+
           missing=0
           for so in $(find build/modules -mindepth 2 -name '*.so' | sort); do
             echo "== $so"

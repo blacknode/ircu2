@@ -68,6 +68,10 @@
 /* Path to executable for restarts */
 #define SPATH "@SPATH@"
 
+/** Path to ircu-modhost, the process an isolated module runs inside.
+ * See include/modhost.h and doc/readme.isolation. */
+#define HOST_PATH "@HOST_PATH@"
+
 /* Directory modules are loaded from; the server appends "<name>.so" */
 #define MOD_PATH "@MOD_PATH@"
 

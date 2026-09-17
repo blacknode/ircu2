@@ -784,6 +784,24 @@ like.  There is a deadline either way (HTTP_TIMEOUT), and answering after
 it is ignored rather than fatal.
 
 
+RUNNING A MODULE OUT OF PROCESS
+==============================
+
+A module can be run in a host process of its own:
+
+  Module { name = "partner_api"; isolation = "process"; };
+
+Nothing in the module's source says so, and nothing has to: it is the
+same shared object either way.  What changes is that a fault in it takes
+the host and not the server.
+
+The catch is that only part of this API is available over there --
+commands, hooks, the log, memory, strings, features, finding a client and
+sending to one.  A module that calls anything else does not load isolated,
+and says which symbol it wanted.  doc/readme.isolation has the list and
+the reasoning; modules/commands/isolated_demo.c is the reference.
+
+
 COMMAND HOOKS
 =============
 
@@ -1134,6 +1152,12 @@ THE EXAMPLES
   workers/worker_ticker.c
                          runs a thread with a loop of its own; the
                          reference for module_spawn_worker()
+  commands/isolated_demo.c
+                         registers a command and two hooks, and will
+                         crash or spin on request; the reference for
+                         isolation = "process" (doc/readme.isolation) and
+                         a demonstration that the same shared object runs
+                         either side of the boundary unchanged
   workers/postgres/      the database driver behind include/db.h; the
                          reference for a module with a connection pool,
                          for a module with libraries of its own

@@ -28,6 +28,7 @@
 #include "ircd_reply.h"
 #include "ircd_string.h"
 #include "migration.h"
+#include "modhost.h"
 #include "module.h"
 #include "msg.h"
 #include "numeric.h"
@@ -56,10 +57,16 @@ static void module_send_list(struct Client* sptr)
      * something to hand out over IRC, even to an operator.
      */
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               N_(":Module %s (%s %s, ABI %u): modules/%s -- %s [loaded by %s]"),
+               N_(":Module %s (%s %s, ABI %u): modules/%s -- %s "
+                  "[%s, loaded by %s]"),
                module_file(mod), module_name(mod), module_version(mod),
                (unsigned int) IRCU_MODULE_ABI, module_relpath(mod),
                module_description(mod),
+               /* Where it runs, because an operator looking at this list
+                * is usually asking exactly that -- and because a module
+                * that was isolated and came back native after a reload
+                * would otherwise look identical to one that never was. */
+               modhost_pid(mod) ? "isolated" : "in the server",
                module_loaded_by(mod) ? module_loaded_by(mod)
                                      : "the configuration file");
 
@@ -196,6 +203,8 @@ static int module_migration(struct Client* sptr, int parc, char* parv[])
  * parv[1] = subcommand: LIST, LOAD, UNLOAD, RELOAD or MIGRATION
  * parv[2] = module name; LOAD resolves it against the server's module
  *   directory, UNLOAD and RELOAD look it up among the loaded modules
+ * parv[3] = for LOAD, "native" (the default) or "process"; see
+ *   doc/readme.isolation.  RELOAD keeps whichever the module had.
  *
  * @param[in] cptr Client that sent us the message.
  * @param[in] sptr Original source of message.
@@ -209,6 +218,7 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   const char* err = 0;
   char* subcmd;
   char name[256];
+  int was_isolated = 0;
 
   if (!HasPriv(sptr, PRIV_MODULE))
     return send_reply(sptr, ERR_NOPRIVILEGES);
@@ -240,7 +250,23 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     return send_reply(sptr, ERR_NEEDMOREPARAMS, "MODULE");
 
   if (0 == ircd_strcmp(subcmd, "LOAD")) {
-    if (!module_load(parv[2], cli_name(sptr), &err)) {
+    enum ModuleIsolation iso = MODULE_NATIVE;
+
+    /* MODULE LOAD <name> [native|process].  An operator loading by hand
+     * says where it runs, because nothing else can: there is no Module{}
+     * block for a module the configuration does not mention. */
+    if (parc > 3) {
+      if (0 == ircd_strcmp(parv[3], "process"))
+        iso = MODULE_PROCESS;
+      else if (0 != ircd_strcmp(parv[3], "native")) {
+        sendcmdto_one(&me, CMD_NOTICE, sptr,
+                      _(sptr, "%C :Isolation must be native or process"),
+                      sptr);
+        return 0;
+      }
+    }
+
+    if (!module_load_isolation(parv[2], cli_name(sptr), iso, &err)) {
       sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not load %s: %s"),
                     sptr, parv[2], err ? err : "unknown error");
       return 0;
@@ -280,9 +306,13 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       return 0;
     }
 
-    /* module_unload() frees the handle, so keep the name before it goes. */
+    /* module_unload() frees the handle, so keep the name before it goes --
+     * and where it was running, because a reload that quietly brought an
+     * isolated module back inside the server would be the one change an
+     * operator would never think to check for. */
     ircd_strncpy(name, module_file(mod), sizeof(name) - 1);
     name[sizeof(name) - 1] = '\0';
+    was_isolated = modhost_isolated(mod);
 
     if (!module_unload(mod)) {
       sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not unload %s"),
@@ -290,7 +320,9 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       return 0;
     }
 
-    if (!module_load(name, cli_name(sptr), &err)) {
+    if (!module_load_isolation(name, cli_name(sptr),
+                               was_isolated ? MODULE_PROCESS : MODULE_NATIVE,
+                               &err)) {
       /* The old code is already gone; say so plainly rather than leaving
        * the operator to guess whether the module is still running.
        */

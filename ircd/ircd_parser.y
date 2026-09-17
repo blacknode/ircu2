@@ -230,6 +230,7 @@ static void free_slist(struct SLink **link) {
 %token USERMODE
 %token IAUTH
 %token MODULE
+%token ISOLATION
 %token FAST
 %token AUTOCONNECT
 %token PROGRAM
@@ -1428,15 +1429,17 @@ pseudoflags: FAST ';'
 
 moduleblock: MODULE {
   if (!permitted(BLOCK_MODULE)) YYERROR;
+  tping = 0;                    /* borrowed: 0 native, 1 isolated */
 } '{' moduleitems '}' ';' {
   if (pass != NULL)
-    conf_add_module(pass);
+    conf_add_module(pass, tping ? 1 : 0);
   MyFree(pass);
   pass = NULL;
+  tping = 0;
 };
 
 moduleitems: moduleitem moduleitems | moduleitem;
-moduleitem: modulename | modulefile;
+moduleitem: modulename | modulefile | moduleisolation;
 /* A module is named, not pathed: the server resolves the name against the
  * module directory it was built with (MOD_PATH).  "file" is accepted as a
  * spelling of the same thing.
@@ -1450,6 +1453,22 @@ modulefile: TFILE '=' QSTRING ';'
 {
   MyFree(pass);
   pass = $3;
+};
+/* Where the code runs.  "native" is what every module did before this
+ * existed and is the default; "process" puts it in a host of its own, so
+ * that a fault in it is a dead host and not a dead network.  See
+ * doc/readme.isolation.
+ */
+moduleisolation: ISOLATION '=' QSTRING ';'
+{
+  if (!strcmp($3, "process"))
+    tping = 1;
+  else if (!strcmp($3, "native"))
+    tping = 0;
+  else
+    parse_error("Unknown isolation \"%s\"; expected \"native\" or "
+                "\"process\"", $3);
+  MyFree($3);
 };
 
 /* A Service{} block describes one service bot of the network -- a

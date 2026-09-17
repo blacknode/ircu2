@@ -1206,6 +1206,46 @@ Las opciones reales son tres:
 | **Módulo fuera de proceso** | Todo: memoria, caídas, bucles. Un módulo que muere no se lleva nada | Alto: toda la API de módulos pasa a ser IPC |
 | **WebAssembly** (wasmtime, wasm3) | Memoria, en el mismo proceso | Alto: la API pasa a funciones anfitrionas, recompilar a wasm32, sin hilos, penalización de rendimiento |
 
+**Implementado** (`include/modhost.h`, `ircd/modhost.c`, `ircd/modhost/`,
+`modules/commands/isolated_demo.c`, `modhost_t`, `doc/readme.isolation`).
+Se eligió la segunda opción de la tabla —módulo fuera de proceso— y se
+dejó `seccomp-bpf` para cuando haga falta; los `RLIMIT_*` sí están, desde
+la primera versión.
+
+Cuatro cosas que el diseño no decía y hubo que decidir:
+
+- **El apretón de manos bloquea; nada más lo hace.** `module_load()` ya
+  bloquea lo que tarden `dlopen()` y el `mi_init` del módulo, así que el
+  arranque del anfitrión es síncrono y con plazo: `/MODULE LOAD` devuelve
+  un módulo cargado o el motivo, que es el mismo contrato de siempre.
+  Después el socket entra en el bucle de eventos y el servidor no vuelve
+  a esperar al anfitrión nunca.
+- **El anfitrión puede bloquearse; el servidor no.** Del anfitrión al
+  servidor la petición es **síncrona** (`feature_int()`, `FindUser()`):
+  el servidor contesta con estado que ya tiene, sin esperar a nadie. Del
+  servidor al anfitrión no se espera jamás; un veto usa `HOOK_PENDING` y
+  `hook_resume()`, que es exactamente para lo que §5.5 tenía que ir
+  antes.
+- **El silencio se mide, no sólo el plazo de cada veto.** Un módulo que
+  deja de contestar rechaza *todas* las conexiones, una por plazo, y
+  entonces ningún operador puede entrar a descargarlo. Un anfitrión al
+  que se le preguntó algo y lleva callado más del doble de
+  `HOOK_TIMEOUT` (nunca menos de 30s) se da por muerto. Eso convierte
+  «nadie entra hasta que alguien reinicie» en «se cayó el módulo y el
+  servidor siguió», que es la única razón de todo esto.
+- **La API disponible fuera de proceso es un *perfil*, no toda.**
+  Comandos, hooks, el log, memoria, cadenas, *features*, buscar un
+  cliente y mandarle una línea. Lo demás —modos, capacidades, bots, base
+  de datos, caché, rutas HTTP, *workers*, migraciones, traducciones— no
+  está, y un módulo que lo llame **no carga**: `RTLD_NOW`, y el error
+  nombra el símbolo. Lo deshonesto sería un *stub* mudo y un módulo
+  convencido de haber registrado un modo que no existe. El perfil crece
+  cuando algo lo necesite; la regla no cambia.
+
+**El módulo se compila una vez.** Nada en su fuente dice de qué lado
+corre: `modules/commands/isolated_demo.c` no lo sabe. Lo decide la línea
+del `ircd.conf`.
+
 **Propuesta: niveles de confianza declarados en la configuración.**
 
 ```

@@ -43,6 +43,24 @@ endif()
 set(_ircu_spath "${IRCU_SPATH}")
 
 # ---------------------------------------------------------------------------
+# The host an isolated module runs in
+# ---------------------------------------------------------------------------
+# Beside the server binary, because the two are one version: the handshake
+# compares their ABI and refuses a mismatch, so they are installed and
+# upgraded together.  It is a separate variable all the same, for the same
+# reason SPATH is one -- inside a chroot the server can only reach what is
+# below the new root.  See doc/readme.isolation.
+get_filename_component(_ircu_bindir "${_ircu_spath}" DIRECTORY)
+set(_ircu_hostpath_default "${_ircu_bindir}/ircu-modhost")
+
+set(IRCU_HOSTPATH "${_ircu_hostpath_default}" CACHE STRING
+  "Path to ircu-modhost, which an isolated module runs inside")
+string(REGEX REPLACE "/+$" "" IRCU_HOSTPATH "${IRCU_HOSTPATH}")
+if(NOT IRCU_HOSTPATH)
+  set(IRCU_HOSTPATH "${_ircu_hostpath_default}")
+endif()
+
+# ---------------------------------------------------------------------------
 # Module directory
 #
 # Both ends of a module's life come from here: `ircu_add_module()` installs
@@ -117,6 +135,7 @@ function(_ircu_strip_chroot out path what fatal)
 endfunction()
 
 _ircu_strip_chroot(SPATH "${_ircu_spath}" "Binary" FALSE)
+_ircu_strip_chroot(HOST_PATH "${IRCU_HOSTPATH}" "Module host" FALSE)
 _ircu_strip_chroot(DPATH "${IRCU_DPATH}"  "Data directory" TRUE)
 _ircu_strip_chroot(MOD_PATH "${IRCU_MPATH}" "Module directory" TRUE)
 _ircu_strip_chroot(PO_PATH "${IRCU_POPATH}" "Translation directory" TRUE)

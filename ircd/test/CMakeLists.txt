@@ -91,6 +91,13 @@ add_ircu_test(cache_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
+# The frames between the server and an out-of-process module host.  They
+# depend on nothing -- no client, no allocator, no log -- which is what
+# lets the parser be tested on its own; and it is a parser reading bytes
+# from a process that lives somewhere else because it is not trusted.
+add_ircu_test(modhost_t
+  "${IRCU_IRCD_DIR}/modhost_frame.c")
+
 add_ircu_test(http_t
   "${IRCU_IRCD_DIR}/http.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"

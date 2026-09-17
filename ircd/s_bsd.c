@@ -165,6 +165,23 @@ static void connect_dns_callback(void* vptr, const struct irc_in_addr *addrs, in
 /** Closes all file descriptors.
  * @param close_stderr If non-zero, also close stderr.
  */
+/** Close every descriptor above \a keep.
+ *
+ * For the far side of a fork(), between the fork and the exec: a child
+ * that cannot see the server's descriptors cannot write to a client by
+ * accident and cannot hold a listening socket open across a restart.
+ * Only close() is called, so it is safe in that window, where almost
+ * nothing else is.
+ * @param[in] keep Highest descriptor to leave alone.
+ */
+void close_connections_above(int keep)
+{
+  int i;
+
+  for (i = keep + 1; i < MAXCONNECTIONS; ++i)
+    close(i);
+}
+
 void close_connections(int close_stderr)
 {
   int i;

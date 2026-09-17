@@ -37,6 +37,7 @@
 #include "ircd_string.h"
 #include "ircd_i18n.h"
 #include "migration.h"
+#include "modhost.h"
 #include "module.h"
 #include "msg.h"
 #include "numeric.h"
@@ -105,6 +106,17 @@ struct ModuleHandle {
                                       configuration file.  A copy: the client
                                       may be long gone by the time anyone
                                       asks. */
+  void *mh_host;                 /**< struct ModHost when this module runs
+                                      in a process of its own, NULL when it
+                                      is dlopen()ed into the server.  The
+                                      two kinds differ here and almost
+                                      nowhere else, which is the point of
+                                      giving an isolated module a handle
+                                      like any other. */
+  struct ModuleInfo mh_owninfo;  /**< Storage for an isolated module's
+                                      description, which cannot live in a
+                                      shared object this process never
+                                      opened. */
 };
 
 /* A module manager */
@@ -124,6 +136,43 @@ struct ModuleManager *manager;
 static char errbuf[1024];
 
 static int module_unload_internal(struct ModuleHandle *mod, int quiet);
+
+/** The host process a module runs in, or NULL when it runs in the server.
+ *
+ * Opaque here on purpose: ircd/module.c knows an isolated module has a
+ * host and nothing else about it, which is what keeps the loader from
+ * depending on the protocol.
+ * @param[in] mod Module to query.
+ */
+void *module_host(const struct ModuleHandle *mod) {
+  return mod ? mod->mh_host : 0;
+}
+
+/** Record it.  ircd/modhost.c only.
+ * @param[in,out] mod Module being started.
+ * @param[in] host Its host.
+ */
+void module_set_host(struct ModuleHandle *mod, void *host) {
+  assert(0 != mod);
+  mod->mh_host = host;
+}
+
+/** Give an isolated module its description, copied from the handshake.
+ *
+ * A native module's ModuleInfo lives in its shared object; an isolated
+ * one's cannot, because this process never opened it.  The handle keeps a
+ * copy so that everything reading mh_info -- /MODULE LIST, /STATS M, the
+ * log -- carries on without a branch.
+ * @param[in,out] mod Module being started.
+ * @param[in] info What the host said it is.
+ */
+void module_set_info(struct ModuleHandle *mod, const struct ModuleInfo *info) {
+  assert(0 != mod);
+  assert(0 != info);
+
+  mod->mh_owninfo = *info;
+  mod->mh_info = &mod->mh_owninfo;
+}
 
 /** Get the name of a module.
  * @param[in] mod Module to query.
@@ -1160,13 +1209,20 @@ static int module_resolve(const char *name, char *path, size_t pathlen,
  */
 struct ModuleHandle *module_load(const char *name, const char *loaded_by,
                                  const char **errstr) {
+  return module_load_isolation(name, loaded_by, MODULE_NATIVE, errstr);
+}
+
+struct ModuleHandle *module_load_isolation(const char *name,
+                                           const char *loaded_by,
+                                           enum ModuleIsolation isolation,
+                                           const char **errstr) {
   struct ModuleHandle *mod;
-  struct ModuleInfo *info;
-  struct MigrationSet *migrations;
+  struct ModuleInfo *info = 0;
+  struct MigrationSet *migrations = 0;
   char path[1024];
   char relpath[256];
   char *slash;
-  void *dl;
+  void *dl = 0;
 
   assert(0 != name);
 
@@ -1188,6 +1244,17 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
       *errstr = "module is already loaded";
     return 0;
   }
+
+  /* An isolated module is not opened here at all: its dlopen(), its
+   * ircu_module symbol, its ABI check and its mi_init all happen in the
+   * host process, and what comes back over the handshake is either a
+   * loaded module or the reason it is not.  Everything between here and
+   * the handle being built is therefore skipped, including the
+   * migrations -- which are compiled into a shared object this process
+   * never maps.  See doc/readme.isolation.
+   */
+  if (isolation == MODULE_PROCESS)
+    goto build_handle;
 
   /* RTLD_NOW so that unresolved symbols surface here rather than at some
    * arbitrary later moment inside a hook.  RTLD_LOCAL keeps one module's
@@ -1276,6 +1343,7 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
     }
   }
 
+build_handle:
   mod = (struct ModuleHandle *)MyCalloc(1, sizeof(struct ModuleHandle));
   mod->mh_dl = dl;
   mod->mh_info = info;
@@ -1316,6 +1384,58 @@ struct ModuleHandle *module_load(const char *name, const char *loaded_by,
   mod->mh_next = manager->mod_list;
   manager->mod_list = mod;
   manager->mod_count++;
+
+  if (isolation == MODULE_PROCESS) {
+    const char *why = 0;
+
+    /* The whole of the load happens over there: the handshake does not
+     * come back until the module's own mi_init has run, so this either
+     * has a working module or a reason, exactly as dlopen() does. */
+    if (!modhost_start(mod, &why)) {
+      snprintf(errbuf, sizeof(errbuf), "%s", why ? why : "the host failed");
+      module_unload_internal(mod, 1);
+      if (errstr)
+        *errstr = errbuf;
+      return 0;
+    }
+
+    /* mh_info is the handshake's now, and the name it declared has to
+     * clear the same two checks a native module's does -- late, because
+     * the name was not knowable before. */
+    if (migration_reserved_name(mod->mh_info->mi_name)) {
+      snprintf(errbuf, sizeof(errbuf),
+               "\"%s\" is reserved for the server's own migrations; "
+               "a module cannot be called that", MIGRATION_CORE);
+      module_unload_internal(mod, 1);
+      if (errstr)
+        *errstr = errbuf;
+      return 0;
+    }
+
+    {
+      struct ModuleHandle *other;
+
+      for (other = manager->mod_list; other; other = other->mh_next)
+        if (other != mod && other->mh_info
+            && !ircd_strcmp(other->mh_info->mi_name, mod->mh_info->mi_name)) {
+          snprintf(errbuf, sizeof(errbuf),
+                   "a module named %s is already loaded",
+                   mod->mh_info->mi_name);
+          module_unload_internal(mod, 1);
+          if (errstr)
+            *errstr = errbuf;
+          return 0;
+        }
+    }
+
+    log_write(LS_SYSTEM, L_INFO, 0,
+              "Loaded module %s %s from %s, isolated in process %d",
+              mod->mh_info->mi_name,
+              mod->mh_info->mi_version ? mod->mh_info->mi_version : "?",
+              path, modhost_pid(mod));
+
+    return mod;
+  }
 
   if (info->mi_init) {
     int res;
@@ -1368,12 +1488,25 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
   if (module_in_callback()) {
     log_write(LS_SYSTEM, L_ERROR, 0,
               "Refusing to unload module %s from inside a module callback",
-              mod->mh_info->mi_name);
+              mod->mh_info ? mod->mh_info->mi_name : mod->mh_file);
     return 0;
   }
 
-  ircd_strncpy(name, mod->mh_info->mi_name, sizeof(name) - 1);
+  ircd_strncpy(name, mod->mh_info ? mod->mh_info->mi_name : mod->mh_file,
+               sizeof(name) - 1);
   name[sizeof(name) - 1] = '\0';
+
+  /* An isolated module's mi_fini runs over there, and so does everything
+   * else of its own; what is left here is the registrations the server
+   * holds on its behalf, which are reverted below exactly as for a native
+   * one.  Stopping the host first is the same rule as worker_cancel_module
+   * below, one address space out: nothing of the module may still be
+   * running while the server takes its registrations away.
+   */
+  if (mod->mh_host) {
+    modhost_stop(mod);
+    mod->mh_host = 0;
+  }
 
   /* Before mi_fini, not after: a worker thread still executing this
    * module's code would be reading whatever mi_fini has just freed.  This
@@ -1383,7 +1516,7 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    */
   worker_cancel_module(mod);
 
-  if (mod->mh_info->mi_fini) {
+  if (mod->mh_info && mod->mh_info->mi_fini) {
     manager->mod_cb_depth++;
     (*mod->mh_info->mi_fini)(mod);
     manager->mod_cb_depth--;
@@ -1449,9 +1582,12 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
   MyFree(mod);
 
   /* dlclose() last: mh_info points into the object we are about to
-   * unmap, so nothing may touch the handle after this.
+   * unmap, so nothing may touch the handle after this.  An isolated
+   * module has no object here to close -- the mapping was the host's,
+   * and it went with the process.
    */
-  dlclose(dl);
+  if (dl)
+    dlclose(dl);
 
   if (!quiet)
     log_write(LS_SYSTEM, L_INFO, 0, "Unloaded module %s", name);
@@ -1463,6 +1599,38 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
  * @param[in] mod Module to unload.
  * @return Non-zero on success, zero if the module cannot be unloaded now.
  */
+/** Take an isolated module out after its host has gone.
+ *
+ * ircd/modhost.c calls this when a host dies or misbehaves: the host is
+ * already stopped, so what is left is the server's own bookkeeping.  It
+ * exists separately from module_unload() only so that modhost.c does not
+ * have to know whether it is allowed to unload right now -- it is not,
+ * if the death was noticed from inside one of the module's own hooks, and
+ * that is exactly when it is most likely to be noticed.
+ *
+ * @param[in] mod The module whose host is gone.
+ */
+void module_unload_isolated(struct ModuleHandle *mod) {
+  assert(0 != mod);
+
+  mod->mh_host = 0;
+
+  if (module_in_callback()) {
+    /* Reverting registrations from inside the module's own hook would
+     * free what is being walked.  The handle is left with no host, which
+     * every path through modhost.c treats as gone, and the configuration
+     * reconciliation on the next rehash takes it out.
+     */
+    log_write(LS_SYSTEM, L_WARNING, 0,
+              "Module %s will be removed when the server is next idle",
+              mod->mh_info ? mod->mh_info->mi_name : mod->mh_file);
+    mod->mh_marked = 0;
+    return;
+  }
+
+  module_unload_internal(mod, 0);
+}
+
 int module_unload(struct ModuleHandle *mod) {
   return module_unload_internal(mod, 0);
 }

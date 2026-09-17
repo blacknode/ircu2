@@ -115,6 +115,7 @@ static const struct lexer_token tokens[] = {
   { "ipcheck", IPCHECK },
   { "ipv4", TOK_IPV4 },
   { "ipv6", TOK_IPV6 },
+  { "isolation", ISOLATION },
   { "jupe", JUPE },
   { "kb", KBYTES },
   { "kbytes", KBYTES },

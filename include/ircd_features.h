@@ -246,6 +246,17 @@ extern void feature_mark(void);
 extern void feature_report(struct Client* to, const struct StatDesc* sd,
                            char* param);
 
+/** Look a feature up by name; -1 when there is no such feature. */
+extern int feature_lookup(const char* name);
+/** What kind of value a feature holds; see feature_type(). */
+#define FEATURE_TYPE_NONE 0
+#define FEATURE_TYPE_INT  1
+#define FEATURE_TYPE_BOOL 2
+#define FEATURE_TYPE_STR  3
+
+/** What kind of value a feature holds; see the note on the definition. */
+extern int feature_type(int feat);
+
 extern int feature_int(enum Feature feat);
 extern int feature_bool(enum Feature feat);
 extern const char *feature_str(enum Feature feat);

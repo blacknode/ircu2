@@ -1122,6 +1122,21 @@ static int parse_frozen_blocks(struct Client *from, struct Message *mptr,
  * @param[in] parv The parameters.
  * @return What the handler returned, or 0 if a hook refused the command.
  */
+/** The command being dispatched, for a handler that has to ask.
+ *
+ * parv never carries the command's own name -- parv[0] is the source --
+ * so a handler shared by several commands has no way to tell which one it
+ * is.  Almost nothing needs to: a command has a handler of its own.  The
+ * exception is ircd/modhost.c, whose one proxy handler stands in for
+ * every command an isolated module registered.
+ */
+static const char *parse_command;
+
+const char *parse_current_command(void)
+{
+  return parse_command ? parse_command : "";
+}
+
 static int parse_dispatch(struct Client *cptr, struct Client *from,
                           struct Message *mptr, MessageHandler handler,
                           int parc, char *parv[])
@@ -1129,7 +1144,10 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
   struct HookCommand hcc;
   struct HookContext ctx;
   enum HandlerType htype = cli_handler(cptr);
+  const char *outer = parse_command;
   int ret;
+
+  parse_command = mptr->cmd;
 
   /* One line in is one message, however many sends it turns into: the
    * fan-out to a channel, the echo back to its sender and the copy that
@@ -1219,6 +1237,8 @@ static int parse_dispatch(struct Client *cptr, struct Client *from,
   label_end();
 
   msg_tag_line_end();
+
+  parse_command = outer;
 
   return ret;
 }

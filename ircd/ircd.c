@@ -78,6 +78,7 @@
 #include "websocket.h"
 #include "whowas.h"
 #include "http_server.h"
+#include "modhost.h"
 #include "worker.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
@@ -169,6 +170,13 @@ void server_die(const char *message)
    */
   http_server_stop();
   worker_shutdown();
+
+  /* And the host processes, for the same reason and in the same window:
+   * close_connections() would shut their sockets by number without
+   * telling them, and a host whose socket vanished has to guess whether
+   * the server died or dropped it.  Told properly, it runs the module's
+   * mi_fini and leaves. */
+  modhost_shutdown();
 
   flush_connections(0);
   close_connections(1);

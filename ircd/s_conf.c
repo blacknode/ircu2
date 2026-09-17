@@ -1298,8 +1298,9 @@ static void conf_clear_services(void)
  *
  * @param[in] name Name of the module, resolved against the server's module
  *   directory (MOD_PATH) by module_load().
+ * @param[in] isolated Non-zero for isolation = "process".
  */
-void conf_add_module(const char *name)
+void conf_add_module(const char *name, int isolated)
 {
   struct ModuleHandle *mod;
   const char *err = 0;
@@ -1307,6 +1308,24 @@ void conf_add_module(const char *name)
   assert(0 != name);
 
   mod = module_find_file(name);
+  if (mod) {
+    /* Changing where a module runs is not something to do in place: the
+     * old code has to stop before the new copy starts, whichever
+     * direction it is going.  So it is an unload and a load, and the
+     * module finds out the way it finds out about any reload. */
+    if ((module_host(mod) != 0) != (isolated != 0)) {
+      if (module_unload(mod))
+        mod = 0;
+      else {
+        sendto_opmask_butone(0, SNO_OLDSNO,
+                             "Could not move module %s; it stays where it is",
+                             name);
+        module_mark(mod);
+        return;
+      }
+    }
+  }
+
   if (mod) {
     if (!module_changed_on_disk(mod)) {
       /* Unchanged: keep it, and let it know a rehash happened. */
@@ -1326,7 +1345,9 @@ void conf_add_module(const char *name)
     }
   }
 
-  if (!module_load(name, NULL, &err)) {
+  if (!module_load_isolation(name, NULL,
+                             isolated ? MODULE_PROCESS : MODULE_NATIVE,
+                             &err)) {
     if (!err)
       err = "unknown error";
 

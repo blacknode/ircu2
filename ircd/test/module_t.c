@@ -54,6 +54,28 @@ int mod_cap_index_two;
 int mod_cmdhook_pre_calls;
 int mod_cmdhook_post_calls;
 
+/* The isolated-module half of the loader is ircd/modhost.c, which is a
+ * process, a socket and the whole of the server's state; none of that
+ * belongs in a test of the register.  What module.c calls into is these
+ * three, and here they say "there is no host", which is the answer for
+ * every module this test loads.
+ */
+int modhost_start(struct ModuleHandle *mod, const char **errstr) {
+  (void) mod;
+  if (errstr)
+    *errstr = "this build has no module host";
+  return 0;
+}
+
+void modhost_stop(struct ModuleHandle *mod) {
+  (void) mod;
+}
+
+int modhost_pid(const struct ModuleHandle *mod) {
+  (void) mod;
+  return 0;
+}
+
 /* Defined by module_stub.c. */
 extern int stub_commands_live;
 extern int stub_commands_added;

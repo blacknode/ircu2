@@ -110,6 +110,8 @@ set(IRCU_SOURCES
   cache.c
   http.c
   http_server.c
+  modhost.c
+  modhost_frame.c
   capab.c
   chan_modes.c
   channel.c
@@ -348,6 +350,36 @@ target_include_directories(umkpasswd PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(umkpasswd PRIVATE ircu_config ${IRCU_SYSTEM_LIBRARIES})
 add_dependencies(umkpasswd ircu_chattr)
 
+# ---------------------------------------------------------------------------
+# ircu-modhost: one isolated module, one process
+# ---------------------------------------------------------------------------
+# Started by the ircd, never by hand.  It links the parts of the server that
+# are pure -- the allocator, the string helpers, ircd_snprintf() -- and
+# defines the rest of the module API itself, as frames on a socket.  See
+# ircd/modhost/modhost_api.c for what a module may and may not call over
+# there, and doc/readme.isolation for why.
+add_executable(ircu-modhost
+  modhost/modhost_main.c
+  modhost/modhost_api.c
+  modhost/modhost_io.c
+  modhost_frame.c
+  ircd_alloc.c
+  ircd_snprintf.c
+  ircd_string.c
+  match.c
+  memdebug.c)
+target_include_directories(ircu-modhost PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/modhost"
+  "${PROJECT_SOURCE_DIR}/include"
+  "${IRCU_PATCHLIST_DIR}")
+target_link_libraries(ircu-modhost PRIVATE ircu_config ${IRCU_SYSTEM_LIBRARIES}
+  ${CMAKE_DL_LIBS})
+# A module resolves its symbols against this executable, exactly as it does
+# against the ircd: same mechanism, different process.
+set_target_properties(ircu-modhost PROPERTIES ENABLE_EXPORTS ON)
+add_dependencies(ircu-modhost ircu_chattr)
+
 add_executable(convert-conf convert-conf.c)
 target_link_libraries(convert-conf PRIVATE ircu_config ${IRCU_SYSTEM_LIBRARIES})
 
@@ -373,7 +405,10 @@ configure_file(
 
 install(SCRIPT "${PROJECT_BINARY_DIR}/cmake/PreInstallHooks.cmake")
 
-install(TARGETS ircd umkpasswd convert-conf
+# ircu-modhost goes beside the ircd, because that is where the ircd looks
+# for it: they are one version and are upgraded together (the handshake
+# compares their ABI and refuses a mismatch).
+install(TARGETS ircd ircu-modhost umkpasswd convert-conf
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
 install(SCRIPT "${PROJECT_BINARY_DIR}/cmake/InstallHooks.cmake")

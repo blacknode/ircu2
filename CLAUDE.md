@@ -473,6 +473,57 @@ and refusing a name found under two. `Module { name = "nocaps"; };` and
 directory (`modules/hooks/nocaps.so`), never the absolute one. A module reaches
 its resources through `module_dir()`.
 
+**Isolated modules** (`include/modhost.h`, `ircd/modhost.c`,
+`ircd/modhost/`, `doc/readme.isolation`, proposal 006 §7.7). `Module {
+name = "x"; isolation = "process"; }` runs a module in a host process of
+its own — `ircu-modhost`, fork+**exec** so it carries neither the
+server's memory nor its descriptors — with the module API travelling over
+a socketpair. It gets a `struct ModuleHandle` like any other, which is
+what makes `/MODULE LIST`, the rehash reconciliation and reverting its
+registrations work unchanged; what the handle has instead of a `dlopen()`
+handle is a process. **`isolation` is about failure, not privilege**: an
+isolated module still gets everything it asks for, it just cannot reach
+past the protocol.
+
+**The asymmetry is the design: the host may block, the server may not.**
+Host→server is a *synchronous* request (`feature_int()`, `FindUser()`)
+answered from state the server already has; server→host is never waited
+on. A veto therefore uses `HOOK_PENDING`/`hook_resume()` — which is
+precisely why §5.5 had to come first — and `FEAT_HOOK_TIMEOUT` refuses
+what goes unanswered. **Silence is measured as well as each deadline**: a
+module that stopped answering refuses *every* registration one deadline
+at a time and no operator can get in to unload it, so a host asked
+something and silent for twice `FEAT_HOOK_TIMEOUT` (min 30s) is reaped.
+The handshake is **synchronous with a deadline** — `module_load()`
+already blocks for `dlopen()` and `mi_init`, so `/MODULE LOAD` still
+answers with a loaded module or a reason.
+
+**What crosses is bytes and a numnick, never a pointer.** A handler over
+there gets a real `struct Client` built from the blob (so `cli_name()`,
+`IsAnOper()`, `MyConnect()` work) that is a **copy**, freed when the call
+returns. The frame is length-prefixed, big-endian, with each argument
+counted *and* NUL-terminated by the encoder — so **the decoder never
+writes**, which on a wire fed by the untrusted side is worth the byte an
+argument. `modhost_frame.c` is that parser, tested alone (`modhost_t`);
+a frame it cannot read drops the host, because there is no resynchronising
+a length-prefixed stream. `modhost_decode()` does not copy, so **a frame
+is valid only until the next read** — both ends consume on the following
+call, and getting that wrong looks exactly like a module failing to
+register.
+
+**The API over there is a profile, not all of it** (`modhost_api.c`):
+commands, hooks, the log, the allocator, the string helpers,
+`ircd_snprintf()`, the features, finding a client and sending to one.
+Everything else — modes, caps, bots, db, cache, HTTP, workers,
+migrations, i18n — is absent, and a module that calls one **does not
+load**: `RTLD_NOW`, and the error names the symbol. A silent stub and a
+module believing it registered a user mode nobody has would be worse.
+**The module is compiled once**: nothing in its source says which side it
+runs on. `modules/commands/isolated_demo.c` is the reference and will
+crash or spin on request. `enum Feature`, `enum HookType` and
+`enum HandlerType` travel as numbers, which is safe only because the
+handshake compares `IRCU_MODULE_ABI` between server and host.
+
 **Workers** (`include/worker.h`, `ircd/worker.c`, `doc/readme.workers`). Optional
 threads for work that would otherwise stall the core: `worker_submit()` hands a
 `struct WorkTask` to a pool, `worker_spawn()` starts a thread with a loop of its
@@ -883,7 +934,7 @@ module (the mechanism) and `nickserv` (the policy and the voice). `sasl.c`,
 `doc/readme.sasl` (how a user earns `+r`: AUTHENTICATE, `ACCOUNT`, NickServ
 and the provider behind all three), `doc/readme.modules`,
 `doc/readme.workers`,
-`doc/readme.database`, `doc/readme.http`,
+`doc/readme.database`, `doc/readme.http`, `doc/readme.isolation`,
 `doc/readme.migrations`, `doc/readme.history`,
 `doc/readme.richtext`, `doc/readme.translations`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root

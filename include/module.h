@@ -634,6 +634,18 @@ extern void module_shutdown(void);
 /** Shut down and release the module system; main() only, once, at exit. */
 extern void module_close(void);
 
+/** Where a module's code runs.
+ *
+ * Declared per module in the configuration; see doc/readme.isolation.
+ * The difference is failure, not privilege: an isolated module still
+ * gets everything it asks for, it just cannot reach past the protocol to
+ * take the server down with it.
+ */
+enum ModuleIsolation {
+  MODULE_NATIVE = 0,  /**< dlopen()ed into the server, as always. */
+  MODULE_PROCESS      /**< dlopen()ed into a host process of its own. */
+};
+
 /** Load <name>.so from under MOD_PATH, searching every type directory for
  * <type>/<name>.so or <type>/<name>/<name>.so; \a name carries no
  * directory and no suffix.  \a loaded_by is the loading operator's nick,
@@ -642,6 +654,23 @@ extern void module_close(void);
 extern struct ModuleHandle* module_load(const char* name,
                                         const char* loaded_by,
                                         const char** errstr);
+
+/** The same, saying where the code should run. */
+extern struct ModuleHandle* module_load_isolation(const char* name,
+                                                  const char* loaded_by,
+                                                  enum ModuleIsolation isolation,
+                                                  const char** errstr);
+
+/** Take an isolated module out after its host has gone.  modhost.c only. */
+extern void module_unload_isolated(struct ModuleHandle* mod);
+
+/** The host process a module runs in, or NULL.  modhost.c only. */
+extern void* module_host(const struct ModuleHandle* mod);
+/** Record it.  modhost.c only. */
+extern void module_set_host(struct ModuleHandle* mod, void* host);
+/** Give an isolated module its description.  modhost.c only. */
+extern void module_set_info(struct ModuleHandle* mod,
+                            const struct ModuleInfo* info);
 extern int module_unload(struct ModuleHandle* mod);
 /** Find a module by the name it declares in its #ModuleInfo. */
 extern struct ModuleHandle* module_find(const char* name);

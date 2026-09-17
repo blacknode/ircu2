@@ -589,6 +589,28 @@ feature_desc(struct Client* from, const char *feature)
   return 0; /* not found */
 }
 
+/** What kind of value a feature holds.
+ *
+ * For code that has an #enum #Feature from somewhere it cannot trust to
+ * be the right kind -- ircd/modhost.c, where the number came out of
+ * another process.  Reading a string feature's integer would be reading
+ * whatever is at that offset.
+ * @param[in] feat Feature to inspect.
+ * @return One of the FEATURE_TYPE_* values in include/ircd_features.h.
+ */
+int feature_type(int feat)
+{
+  if (feat < 0 || feat >= FEAT_LAST_F)
+    return FEATURE_TYPE_NONE;
+
+  switch (features[feat].flags & FEAT_MASK) {
+  case FEAT_INT:  return FEATURE_TYPE_INT;
+  case FEAT_BOOL: return FEATURE_TYPE_BOOL;
+  case FEAT_STR:  return FEATURE_TYPE_STR;
+  default:        return FEATURE_TYPE_NONE;
+  }
+}
+
 /** Given a feature vector string, set the value of a feature.
  * @param[in] from Client trying to set the feature, or NULL.
  * @param[in] fields Parameters to set, starting with feature name.

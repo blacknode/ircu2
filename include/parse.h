@@ -36,4 +36,13 @@ extern struct Message *parse_add_command(const char *cmd, const char *tok,
                                          MessageHandler handlers[]);
 extern void parse_del_command(struct Message *msg);
 
+/** The command being dispatched right now, or "".
+ *
+ * parv[0] is the source, not the command, so a handler shared by several
+ * commands cannot tell which one it is from its arguments.  Almost
+ * nothing needs to; ircd/modhost.c does, because its one proxy handler
+ * stands in for every command an isolated module registered.
+ */
+extern const char *parse_current_command(void);
+
 #endif /* INCLUDED_parse_h */

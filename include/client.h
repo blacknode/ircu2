@@ -49,6 +49,8 @@
 #define INCLUDED_sys_types_h
 #endif
 
+#include "struct.h"
+#include "ircd.h"
 #include "user_flags.h"
 
 struct ConfItem;
@@ -917,6 +919,8 @@ struct Client {
 #define WasHideIdle(old)         (((old) & FLAG_HIDEIDLE) != 0)
 /** Return non-zero if \a old had mode +c (only messages from common channels). */
 #define WasCommonChans(old)      (((old) & FLAG_COMMONCHANS) != 0)
+
+#define WasFlag(old, flag)             (((old) & flag) != 0)
 
 /* free flags */
 #define FREEFLAG_SOCKET	0x0001	/**< socket needs to be freed */

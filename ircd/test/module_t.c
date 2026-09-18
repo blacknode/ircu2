@@ -20,6 +20,7 @@
 #include "hooks.h"
 #include "channel.h"
 #include "client.h"
+#include "s_conf.h"
 #include "ircd_log.h"
 
 #include <assert.h>

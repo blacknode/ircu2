@@ -117,8 +117,8 @@ int oper_password_match(const char* to_match, const char* passwd)
   if (!to_match || !passwd)
     return 0;
 
-  /* we no longer do a CRYPT_OPER_PASSWORD check because a clear 
-     text passwords just handled by a fallback mechanism called 
+  /* we no longer do a CRYPT_OPER_PASSWORD check because a clear
+     text passwords just handled by a fallback mechanism called
      crypt_clear if it's enabled -- hikari */
   crypted = ircd_crypt(to_match, passwd);
 
@@ -148,7 +148,7 @@ int m_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     return need_more_params(sptr, "OPER");
 
   aconf = find_conf_exact(name, sptr, CONF_OPERATOR);
-  if (!aconf || IsIllegal(aconf))
+  if (!aconf || IsIllegal(aconf) || ircd_strcmp(cli_name(sptr), name))
   {
     send_reply(sptr, ERR_NOOPERHOST);
     sendto_opmask_butone(0, SNO_OLDREALOP, "Failed OPER attempt by %s (%s@%s)",
@@ -187,10 +187,11 @@ int m_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     }
     cli_handler(cptr) = OPER_HANDLER;
 
-    SetWallops(sptr);
+    // SetWallops(sptr);
+    SetChannelService(sptr);
     SetServNotice(sptr);
     SetDebug(sptr);
-    
+
     set_snomask(sptr, SNO_OPERDEFAULT, SNO_ADD);
 
     /* Get the sendq and flood limit from the oper's class */

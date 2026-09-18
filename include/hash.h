@@ -1,5 +1,5 @@
 /*
- * IRC - Internet Relay Chat, include/hash.h 
+ * IRC - Internet Relay Chat, include/hash.h
  * Copyright (C) 1998 by Andrea "Nemesi" Cocito
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,6 +23,8 @@
 
 #ifndef INCLUDED_hash_h
 #define INCLUDED_hash_h
+
+#include "ircd.h"
 
 struct Client;
 struct Channel;

@@ -428,7 +428,7 @@ int bot_set_user_mode(struct Client* bot, struct Client* target,
     set_user_mode(bot, bot, 3, parv, ALLOWMODES_ANY);
     return 1;
   }
-  if (!IsServiceBot(bot) || IsAnOper(target))
+  if (!IsServiceBot(bot) /*|| IsAnOper(target)*/)
     return 0;
   set_user_mode_on(bot, bot, target, 3, parv);
   return 1;

@@ -27,7 +27,9 @@
  * Modules run inside the server process and share its address space.  A
  * module that misbehaves takes the server with it; see doc/readme.modules.
  */
-
+#ifndef INCLUDED_s_conf_h
+#include "s_conf.h"
+#endif
 #ifndef INCLUDED_sys_types_h
 #include <sys/types.h>
 #define INCLUDED_sys_types_h
@@ -68,6 +70,7 @@
 
 struct Client;
 struct ModuleHandle;
+struct ModuleList;
 
 /** ABI version of the module interface.
  *

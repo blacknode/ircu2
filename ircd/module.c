@@ -21,29 +21,29 @@
 #include "config.h"
 
 #include "account.h"
-#include "cache.h"
-#include "channel.h"
 #include "bot.h"
+#include "cache.h"
 #include "capab.h"
+#include "channel.h"
 #include "client.h"
 #include "db.h"
 #include "hooks.h"
 #include "http.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
-#include "ircd_i18n.h"
 #include "migration.h"
 #include "modhost.h"
 #include "module.h"
 #include "msg.h"
 #include "numeric.h"
 #include "parse.h"
-#include "sasl.h"
 #include "s_debug.h"
+#include "sasl.h"
 #include "send.h"
 #include "worker.h"
 
@@ -88,35 +88,35 @@ struct ModuleChanMode {
 
 /** A module the server has loaded. */
 struct ModuleHandle {
-  struct ModuleHandle *mh_next;  /**< Next module in #ModuleManager->mod_list. */
-  void *mh_dl;                   /**< Handle returned by dlopen(). */
-  struct ModuleInfo *mh_info;    /**< The module's exported description. */
-  char *mh_file;                 /**< Name the module was loaded by. */
-  char *mh_path;                 /**< Path the module was loaded from. */
-  char *mh_relpath;              /**< The same, relative to #MOD_PATH. */
-  char *mh_dir;                  /**< Directory of #mh_path. */
+  struct ModuleHandle *mh_next; /**< Next module in #ModuleManager->mod_list. */
+  void *mh_dl;                  /**< Handle returned by dlopen(). */
+  struct ModuleInfo *mh_info;   /**< The module's exported description. */
+  char *mh_file;                /**< Name the module was loaded by. */
+  char *mh_path;                /**< Path the module was loaded from. */
+  char *mh_relpath;             /**< The same, relative to #MOD_PATH. */
+  char *mh_dir;                 /**< Directory of #mh_path. */
   struct MigrationSet *mh_migrations; /**< Its migrations, or NULL. */
-  struct I18nDomain *mh_i18n;    /**< Its translations, or NULL. */
-  time_t mh_mtime;               /**< Modification time when loaded. */
-  int mh_marked;                 /**< Seen in the running configuration. */
-  struct ModuleCommand *mh_cmds; /**< Commands this module registered. */
-  struct ModuleUserMode *mh_umodes; /**< User modes this module registered. */
-  struct ModuleChanMode *mh_cmodes; /**< Channel modes it registered. */
-  char *mh_loaded_by;            /**< Nick that loaded it, or NULL for the
-                                      configuration file.  A copy: the client
-                                      may be long gone by the time anyone
-                                      asks. */
-  void *mh_host;                 /**< struct ModHost when this module runs
-                                      in a process of its own, NULL when it
-                                      is dlopen()ed into the server.  The
-                                      two kinds differ here and almost
-                                      nowhere else, which is the point of
-                                      giving an isolated module a handle
-                                      like any other. */
-  struct ModuleInfo mh_owninfo;  /**< Storage for an isolated module's
-                                      description, which cannot live in a
-                                      shared object this process never
-                                      opened. */
+  struct I18nDomain *mh_i18n;         /**< Its translations, or NULL. */
+  time_t mh_mtime;                    /**< Modification time when loaded. */
+  int mh_marked;                      /**< Seen in the running configuration. */
+  struct ModuleCommand *mh_cmds;      /**< Commands this module registered. */
+  struct ModuleUserMode *mh_umodes;   /**< User modes this module registered. */
+  struct ModuleChanMode *mh_cmodes;   /**< Channel modes it registered. */
+  char *mh_loaded_by;                 /**< Nick that loaded it, or NULL for the
+                                           configuration file.  A copy: the client
+                                           may be long gone by the time anyone
+                                           asks. */
+  void *mh_host;                      /**< struct ModHost when this module runs
+                                           in a process of its own, NULL when it
+                                           is dlopen()ed into the server.  The
+                                           two kinds differ here and almost
+                                           nowhere else, which is the point of
+                                           giving an isolated module a handle
+                                           like any other. */
+  struct ModuleInfo mh_owninfo;       /**< Storage for an isolated module's
+                                           description, which cannot live in a
+                                           shared object this process never
+                                           opened. */
 };
 
 /* A module manager */
@@ -480,11 +480,10 @@ int module_add_user_mode(struct ModuleHandle *mod, char mode, flag_t *flag) {
 
   res = client_append_user_mode(mode, bit);
   if (UMODE_APPEND_OK != res) {
-    log_write(LS_SYSTEM, L_ERROR, 0,
-              "Module %s could not register user mode %c: %s",
-              mod->mh_info->mi_name, mode,
-              UMODE_INVALID_MODE == res ? "not a mode letter"
-                                        : "already in use");
+    log_write(
+        LS_SYSTEM, L_ERROR, 0, "Module %s could not register user mode %c: %s",
+        mod->mh_info->mi_name, mode,
+        UMODE_INVALID_MODE == res ? "not a mode letter" : "already in use");
     return 0;
   }
 
@@ -791,9 +790,7 @@ static const char *module_cap_chars(const struct ModuleHandle *mod) {
  *
  * @param[in] mod Module being torn down.
  */
-static void module_drop_caps(struct ModuleHandle *mod) {
-  cap_drop_module(mod);
-}
+static void module_drop_caps(struct ModuleHandle *mod) { cap_drop_module(mod); }
 
 /** Submit a task to the worker pool on a module's behalf.
  * @param[in] mod Module submitting the work.
@@ -897,8 +894,8 @@ int module_add_command_hook(struct ModuleHandle *mod, enum HookType type,
                             const char *cmd, HookFn fn, int priority,
                             void *user, unsigned int flags) {
   assert(0 != mod);
-  return hook_add_command(mod, mod->mh_info->mi_name, type, cmd, fn,
-                          priority, user, flags);
+  return hook_add_command(mod, mod->mh_info->mi_name, type, cmd, fn, priority,
+                          user, flags);
 }
 
 /** Detach a command hook a module attached.
@@ -1046,9 +1043,7 @@ cache_id_t module_cache_del(struct ModuleHandle *mod, const char *key,
 }
 
 /** Non-zero when this server is configured to serve HTTP. */
-int module_http_available(void) {
-  return http_available();
-}
+int module_http_available(void) { return http_available(); }
 
 /** Claim a route on the HTTP provider.
  * @param[in] mod Handle passed to mi_init.
@@ -1138,8 +1133,8 @@ static int module_resolve(const char *name, char *path, size_t pathlen,
       continue;
 
     if (snprintf(candidate, sizeof(candidate), "%s/%s", IRCU_MODULE_DIR,
-                 ent->d_name) >= (int)sizeof(candidate)
-        || stat(candidate, &sb) < 0 || !S_ISDIR(sb.st_mode))
+                 ent->d_name) >= (int)sizeof(candidate) ||
+        stat(candidate, &sb) < 0 || !S_ISDIR(sb.st_mode))
       continue;
 
     for (shape = 0; shape < 2; shape++) {
@@ -1148,16 +1143,16 @@ static int module_resolve(const char *name, char *path, size_t pathlen,
       if (shape == 0)
         written = snprintf(rel, sizeof(rel), "%s/%s.so", ent->d_name, name);
       else
-        written = snprintf(rel, sizeof(rel), "%s/%s/%s.so", ent->d_name, name,
-                           name);
-      if (written < 0 || (size_t)written >= sizeof(rel)
-          || (size_t)written >= rellen)
+        written =
+            snprintf(rel, sizeof(rel), "%s/%s/%s.so", ent->d_name, name, name);
+      if (written < 0 || (size_t)written >= sizeof(rel) ||
+          (size_t)written >= rellen)
         continue;
 
-      written = snprintf(candidate, sizeof(candidate), "%s/%s",
-                         IRCU_MODULE_DIR, rel);
-      if (written < 0 || (size_t)written >= sizeof(candidate)
-          || (size_t)written >= pathlen)
+      written =
+          snprintf(candidate, sizeof(candidate), "%s/%s", IRCU_MODULE_DIR, rel);
+      if (written < 0 || (size_t)written >= sizeof(candidate) ||
+          (size_t)written >= pathlen)
         continue;
 
       if (stat(candidate, &sb) < 0 || !S_ISREG(sb.st_mode))
@@ -1300,11 +1295,11 @@ struct ModuleHandle *module_load_isolation(const char *name,
    * answering to it could rewrite the server's own rows, and /MODULE
    * MIGRATION would have no way to tell the two apart.
    */
-  if (migration_reserved_name(info->mi_name)
-      || migration_reserved_name(name)) {
+  if (migration_reserved_name(info->mi_name) || migration_reserved_name(name)) {
     snprintf(errbuf, sizeof(errbuf),
              "\"%s\" is reserved for the server's own migrations; "
-             "a module cannot be called that", MIGRATION_CORE);
+             "a module cannot be called that",
+             MIGRATION_CORE);
     dlclose(dl);
     if (errstr)
       *errstr = errbuf;
@@ -1328,8 +1323,8 @@ struct ModuleHandle *module_load_isolation(const char *name,
    * in front of an operator who is mid-migration.
    */
   {
-    const struct MigrationFile *files = (const struct MigrationFile *)
-      dlsym(dl, "ircu_module_migrations");
+    const struct MigrationFile *files =
+        (const struct MigrationFile *)dlsym(dl, "ircu_module_migrations");
     const char *migerr = 0;
 
     migrations = migration_build(info->mi_name, files, &migerr);
@@ -1372,9 +1367,9 @@ build_handle:
     char podir[1024];
     struct stat sb;
 
-    if (snprintf(podir, sizeof(podir), "%s/po", mod->mh_dir)
-        < (int)sizeof(podir)
-        && stat(podir, &sb) == 0 && S_ISDIR(sb.st_mode))
+    if (snprintf(podir, sizeof(podir), "%s/po", mod->mh_dir) <
+            (int)sizeof(podir) &&
+        stat(podir, &sb) == 0 && S_ISDIR(sb.st_mode))
       mod->mh_i18n = i18n_domain_open(info->mi_name, podir);
   }
 
@@ -1405,7 +1400,8 @@ build_handle:
     if (migration_reserved_name(mod->mh_info->mi_name)) {
       snprintf(errbuf, sizeof(errbuf),
                "\"%s\" is reserved for the server's own migrations; "
-               "a module cannot be called that", MIGRATION_CORE);
+               "a module cannot be called that",
+               MIGRATION_CORE);
       module_unload_internal(mod, 1);
       if (errstr)
         *errstr = errbuf;
@@ -1416,8 +1412,8 @@ build_handle:
       struct ModuleHandle *other;
 
       for (other = manager->mod_list; other; other = other->mh_next)
-        if (other != mod && other->mh_info
-            && !ircd_strcmp(other->mh_info->mi_name, mod->mh_info->mi_name)) {
+        if (other != mod && other->mh_info &&
+            !ircd_strcmp(other->mh_info->mi_name, mod->mh_info->mi_name)) {
           snprintf(errbuf, sizeof(errbuf),
                    "a module named %s is already loaded",
                    mod->mh_info->mi_name);
@@ -1431,8 +1427,8 @@ build_handle:
     log_write(LS_SYSTEM, L_INFO, 0,
               "Loaded module %s %s from %s, isolated in process %d",
               mod->mh_info->mi_name,
-              mod->mh_info->mi_version ? mod->mh_info->mi_version : "?",
-              path, modhost_pid(mod));
+              mod->mh_info->mi_version ? mod->mh_info->mi_version : "?", path,
+              modhost_pid(mod));
 
     return mod;
   }
@@ -1695,26 +1691,22 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
     return;
 
   for (mod = manager->mod_list; mod; mod = mod->mh_next)
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               N_(":Module %s %s: %u command%s, %u user mode%s%s%s, "
-               "%u channel mode%s%s%s, %u capabilit%s%s%s, "
-               "from modules/%s, loaded by %s"),
-               mod->mh_info->mi_name, module_version(mod),
-               module_command_count(mod),
-               module_command_count(mod) == 1 ? "" : "s",
-               module_user_mode_count(mod),
-               module_user_mode_count(mod) == 1 ? "" : "s",
-               module_user_mode_count(mod) ? " " : "",
-               module_user_mode_chars(mod),
-               module_chan_mode_count(mod),
-               module_chan_mode_count(mod) == 1 ? "" : "s",
-               module_chan_mode_count(mod) ? " " : "",
-               module_chan_mode_chars(mod),
-               module_cap_count(mod),
-               module_cap_count(mod) == 1 ? "y" : "ies",
-               module_cap_count(mod) ? " " : "",
-               module_cap_chars(mod), mod->mh_relpath,
-               mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
+    send_reply(
+        sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+        N_(":Module %s %s: %u command%s, %u user mode%s%s%s, "
+           "%u channel mode%s%s%s, %u capabilit%s%s%s, "
+           "from modules/%s, loaded by %s"),
+        mod->mh_info->mi_name, module_version(mod), module_command_count(mod),
+        module_command_count(mod) == 1 ? "" : "s", module_user_mode_count(mod),
+        module_user_mode_count(mod) == 1 ? "" : "s",
+        module_user_mode_count(mod) ? " " : "", module_user_mode_chars(mod),
+        module_chan_mode_count(mod),
+        module_chan_mode_count(mod) == 1 ? "" : "s",
+        module_chan_mode_count(mod) ? " " : "", module_chan_mode_chars(mod),
+        module_cap_count(mod), module_cap_count(mod) == 1 ? "y" : "ies",
+        module_cap_count(mod) ? " " : "", module_cap_chars(mod),
+        mod->mh_relpath,
+        mod->mh_loaded_by ? mod->mh_loaded_by : "the configuration");
 
   /* Only for modules that actually use workers: on a server where nothing
    * does, this section is silent.
@@ -1726,14 +1718,13 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
     if (tasks || workers)
       send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
                  N_(":Module %s: %u task%s in flight, %u dedicated worker%s"),
-                 mod->mh_info->mi_name, tasks, tasks == 1 ? "" : "s",
-                 workers, workers == 1 ? "" : "s");
+                 mod->mh_info->mi_name, tasks, tasks == 1 ? "" : "s", workers,
+                 workers == 1 ? "" : "s");
   }
 
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             N_(":%u module%s loaded, ABI %u"),
-             manager->mod_count, manager->mod_count == 1 ? "" : "s",
-             (unsigned int)IRCU_MODULE_ABI);
+             N_(":%u module%s loaded, ABI %u"), manager->mod_count,
+             manager->mod_count == 1 ? "" : "s", (unsigned int)IRCU_MODULE_ABI);
 
   /* Workers live next to modules in the operator's mental model, and this
    * is where an operator already looks; a stats letter of their own would
@@ -1745,16 +1736,16 @@ void module_stats(struct Client *sptr, const struct StatDesc *sd, char *param) {
   else {
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
                N_(":Workers: %u pool thread%s, %u dedicated"),
-               worker_thread_count(),
-               worker_thread_count() == 1 ? "" : "s",
+               worker_thread_count(), worker_thread_count() == 1 ? "" : "s",
                worker_dedicated_count());
     /* Split three ways rather than one "outstanding": a backlog that is all
      * queued means the pool is too small, and one that is all running means
      * something is taking far longer than it should.
      */
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               N_(":Workers: %u queued, %u running, %u waiting to be delivered"),
-               worker_queued(), worker_running(), worker_undelivered());
+    send_reply(
+        sptr, SND_EXPLICIT | RPL_STATSDEBUG,
+        N_(":Workers: %u queued, %u running, %u waiting to be delivered"),
+        worker_queued(), worker_running(), worker_undelivered());
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
                N_(":Workers: %u submitted, %u completed, %u rejected"),
                worker_submitted(), worker_completed(), worker_rejected());
@@ -1788,6 +1779,11 @@ void module_init(void) {
   manager->mod_count = 0;
   manager->mod_cb_depth = 0;
   manager->mod_list = 0;
+
+  struct ModuleList *mod;
+  for (mod = GlobalModuleList; mod; mod = mod->next) {
+    conf_add_module(mod->mod_name, mod->type);
+  }
 }
 
 /** Unload every module, in reverse order of loading. */

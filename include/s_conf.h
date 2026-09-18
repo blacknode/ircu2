@@ -20,6 +20,7 @@
 struct Client;
 struct SLink;
 struct Message;
+struct ModuleList;
 
 /*
  * General defines
@@ -214,6 +215,12 @@ struct ServiceConf {
   struct ServiceOption* options; /**< Free-form settings, in file order. */
 };
 
+struct ModuleList {
+  char *mod_name;
+  struct ModuleList *next;
+  int type;
+};
+
 /*
  * GLOBALS
  */
@@ -223,6 +230,7 @@ extern struct s_map*    GlobalServiceMapList;
 extern struct qline*    GlobalQuarantineList;
 extern struct wline*    GlobalWebircList;
 extern int              DoIdentLookups;
+extern struct ModuleList* GlobalModuleList;
 
 /*
  * Proto types
@@ -255,6 +263,8 @@ extern void conf_parse_userhost(struct ConfItem *aconf, char *host);
 extern struct ConfItem *conf_debug_iline(const char *client);
 extern void conf_add_module(const char *name, int isolated);
 extern void free_mapping(struct s_map *smap);
+extern void conf_add_module_node(const char *name, int isolated);
+
 
 /** Take ownership of a parsed Service{} block; \a svc must be complete. */
 extern void conf_add_service(struct ServiceConf *svc);

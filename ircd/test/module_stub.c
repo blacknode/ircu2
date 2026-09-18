@@ -14,6 +14,7 @@
 struct Client;
 struct ModuleHandle;
 
+#include "s_conf.h"
 #include "msg.h"
 #include "parse.h"
 
@@ -32,6 +33,12 @@ int stub_commands_added;
 /** Names currently registered, for the duplicate check. */
 #define STUB_MAX_COMMANDS 32
 static char* stub_names[STUB_MAX_COMMANDS];
+
+struct ModuleList *GlobalModuleList = NULL;
+
+void conf_add_module(const char *name, int isolated)  {
+
+}
 
 static int stub_find(const char* cmd)
 {

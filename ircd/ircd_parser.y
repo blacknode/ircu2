@@ -342,7 +342,7 @@ timefactor: SECONDS { $$ = 1; }
 sizespec:	expr	{
 			$$ = $1;
 		}
-		| expr BYTES  { 
+		| expr BYTES  {
 			$$ = $1;
 		}
 		| expr KBYTES {
@@ -361,19 +361,19 @@ sizespec:	expr	{
 
 /* this is an arithmetic expression */
 expr: NUMBER
-		{ 
+		{
 			$$ = $1;
 		}
-		| expr '+' expr { 
+		| expr '+' expr {
 			$$ = $1 + $3;
 		}
-		| expr '-' expr { 
+		| expr '-' expr {
 			$$ = $1 - $3;
 		}
-		| expr '*' expr { 
+		| expr '*' expr {
 			$$ = $1 * $3;
 		}
-		| expr '/' expr { 
+		| expr '/' expr {
 			$$ = $1 / $3;
 		}
 /* leave this out until we find why it makes BSD yacc dump core -larne
@@ -1447,7 +1447,7 @@ moduleblock: MODULE {
   tping = 0;                    /* borrowed: 0 native, 1 isolated */
 } '{' moduleitems '}' ';' {
   if (pass != NULL)
-    conf_add_module(pass, tping ? 1 : 0);
+    conf_add_module_node(pass, tping ? 1 : 0);
   MyFree(pass);
   pass = NULL;
   tping = 0;

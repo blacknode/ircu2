@@ -23,18 +23,13 @@
  */
 #include "config.h"
 
-#include "s_conf.h"
-#include "ircd_tls.h"
 #include "IPcheck.h"
-#include "class.h"
 #include "batch.h"
 #include "cache.h"
-#include "mail.h"
+#include "class.h"
 #include "client.h"
 #include "crule.h"
 #include "db.h"
-#include "ircd_features.h"
-#include "ircd_i18n.h"
 #include "fileio.h"
 #include "gline.h"
 #include "hash.h"
@@ -43,15 +38,19 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
+#include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_lexer.h"
 #include "ircd_log.h"
+#include "ircd_parser.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
-#include "ircd_vhost.h"
 #include "ircd_tls.h"
+#include "ircd_vhost.h"
 #include "list.h"
 #include "listener.h"
+#include "mail.h"
 #include "match.h"
 #include "module.h"
 #include "motd.h"
@@ -62,53 +61,65 @@
 #include "res.h"
 #include "s_auth.h"
 #include "s_bsd.h"
+#include "s_conf.h"
 #include "s_debug.h"
 #include "s_misc.h"
 #include "send.h"
 #include "struct.h"
 #include "sys.h"
-#include "ircd_parser.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <stdio.h>
-#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 /** Global list of all ConfItem structures. */
-struct ConfItem  *GlobalConfList;
+struct ConfItem *GlobalConfList;
 /** Count of items in #GlobalConfList. */
-int              GlobalConfCount;
+int GlobalConfCount;
 /** Global list of service mappings. */
-struct s_map     *GlobalServiceMapList;
+struct s_map *GlobalServiceMapList;
 /** Global list of channel quarantines. */
-struct qline     *GlobalQuarantineList;
+struct qline *GlobalQuarantineList;
 /** Global list of webirc authorizations. */
-struct wline*      GlobalWebircList;
+struct wline *GlobalWebircList;
 
 /** Flag for whether to perform ident lookups. */
 int DoIdentLookups;
 
 /** Configuration information for #me. */
-struct LocalConf   localConf;
+struct LocalConf localConf;
 /** Global list of connection rules. */
-struct CRuleConf*  cruleConfList;
+struct CRuleConf *cruleConfList;
 /** Global list of K-lines. */
-struct DenyConf*   denyConfList;
+struct DenyConf *denyConfList;
+
+struct ModuleList *GlobalModuleList = NULL;
+
+void conf_add_module_node(const char *name, int isolated) {
+  struct ModuleList *mod = (struct ModuleList *)MyMalloc(sizeof(*mod));
+  assert(0 != mod);
+
+  DupString(mod->mod_name, (char *)name);
+
+  mod->type = isolated;
+  mod->next = GlobalModuleList;
+  GlobalModuleList = mod;
+}
 
 /** Tell a user that they are banned, dumping the message from a file.
  * @param sptr Client being rejected
  * @param filename Send this file's contents to \a sptr
  */
-static void killcomment(struct Client* sptr, const char* filename)
-{
-  FBFILE*     file = 0;
-  char        line[80];
+static void killcomment(struct Client *sptr, const char *filename) {
+  FBFILE *file = 0;
+  char line[80];
   struct stat sb;
 
   if (NULL == (file = fbopen(filename, "r"))) {
@@ -119,7 +130,7 @@ static void killcomment(struct Client* sptr, const char* filename)
   }
   fbstat(&sb, file);
   while (fbgets(line, sizeof(line) - 1, file)) {
-    char* end = line + strlen(line);
+    char *end = line + strlen(line);
     while (end > line) {
       --end;
       if ('\n' == *end || '\r' == *end)
@@ -137,49 +148,44 @@ static void killcomment(struct Client* sptr, const char* filename)
 /** Allocate a new struct ConfItem and link it to #GlobalConfList.
  * @return Newly allocated structure.
  */
-struct ConfItem* make_conf(int type)
-{
-  struct ConfItem* aconf;
+struct ConfItem *make_conf(int type) {
+  struct ConfItem *aconf;
 
-  aconf = (struct ConfItem*) MyMalloc(sizeof(struct ConfItem));
+  aconf = (struct ConfItem *)MyMalloc(sizeof(struct ConfItem));
   assert(0 != aconf);
   ++GlobalConfCount;
   memset(aconf, 0, sizeof(struct ConfItem));
   aconf->tls_verifypeer = 0;
   aconf->tls_systemca = LISTENER_TLS_SYSTEMCA_DEFAULT;
-  aconf->status  = type;
-  aconf->next    = GlobalConfList;
+  aconf->status = type;
+  aconf->next = GlobalConfList;
   GlobalConfList = aconf;
   return aconf;
 }
 
 /** Return non-zero if \a aconf needs its own outbound TLS context. */
-int conf_tls_needs_custom_ctx(const struct ConfItem *aconf)
-{
-  return aconf && (
-    !EmptyString(aconf->tls_cacertfile) ||
-    !EmptyString(aconf->tls_cacertdir) ||
-    !EmptyString(aconf->tls_ciphers) ||
-    !EmptyString(aconf->tls_fingerprint) ||
-    aconf->tls_verifypeer == 1 ||
-    aconf->tls_systemca != LISTENER_TLS_SYSTEMCA_DEFAULT);
+int conf_tls_needs_custom_ctx(const struct ConfItem *aconf) {
+  return aconf &&
+         (!EmptyString(aconf->tls_cacertfile) ||
+          !EmptyString(aconf->tls_cacertdir) ||
+          !EmptyString(aconf->tls_ciphers) ||
+          !EmptyString(aconf->tls_fingerprint) || aconf->tls_verifypeer == 1 ||
+          aconf->tls_systemca != LISTENER_TLS_SYSTEMCA_DEFAULT);
 }
 
 /** Return non-zero if outbound Connect block requires PKIX validation. */
-int ircd_tls_connect_verify_ca(const struct ConfItem *aconf)
-{
+int ircd_tls_connect_verify_ca(const struct ConfItem *aconf) {
   return ircd_tls_trust_verifies_ca(ircd_tls_connect_trust_policy(aconf));
 }
 
 /** Return non-zero if Connect block requires peer hostname verification. */
-int ircd_tls_connect_verify_hostname(const struct ConfItem *aconf)
-{
+int ircd_tls_connect_verify_hostname(const struct ConfItem *aconf) {
   return ircd_tls_connect_verify_ca(aconf);
 }
 
 /** Return the trust policy for inbound connections on \a listener. */
-ircd_tls_trust_policy ircd_tls_listener_trust_policy(const struct Listener *listener)
-{
+ircd_tls_trust_policy
+ircd_tls_listener_trust_policy(const struct Listener *listener) {
   if (!listener)
     return TLS_TRUST_REQUEST_SOFT;
   if (listener->tls_verifypeer == 1)
@@ -190,29 +196,26 @@ ircd_tls_trust_policy ircd_tls_listener_trust_policy(const struct Listener *list
 }
 
 /** Return the trust policy for an outbound Connect block. */
-ircd_tls_trust_policy ircd_tls_connect_trust_policy(const struct ConfItem *aconf)
-{
+ircd_tls_trust_policy
+ircd_tls_connect_trust_policy(const struct ConfItem *aconf) {
   if (aconf && aconf->tls_verifypeer == 1)
     return TLS_TRUST_REQUIRE_CA;
   return TLS_TRUST_REQUIRE_SOFT;
 }
 
 /** Return non-zero if inbound listener connections require PKIX validation. */
-int ircd_tls_listener_verify_ca(const struct Listener *listener)
-{
+int ircd_tls_listener_verify_ca(const struct Listener *listener) {
   return ircd_tls_trust_verifies_ca(ircd_tls_listener_trust_policy(listener));
 }
 
 /** Return non-zero if inbound listener connections must present a cert. */
-int ircd_tls_listener_peer_cert_required(const struct Listener *listener)
-{
+int ircd_tls_listener_peer_cert_required(const struct Listener *listener) {
   return listener &&
-    ircd_tls_trust_requires_peer(ircd_tls_listener_trust_policy(listener));
+         ircd_tls_trust_requires_peer(ircd_tls_listener_trust_policy(listener));
 }
 
 /** Reload global TLS state and all listener and Connect block contexts. */
-int ircd_tls_rehash(void)
-{
+int ircd_tls_rehash(void) {
   struct ConfItem *aconf;
   int res;
 
@@ -224,8 +227,7 @@ int ircd_tls_rehash(void)
   if (res)
     return res;
 
-  for (aconf = GlobalConfList; aconf; aconf = aconf->next)
-  {
+  for (aconf = GlobalConfList; aconf; aconf = aconf->next) {
     if (!(aconf->status & CONF_SERVER))
       continue;
     if (!conf_tls_needs_custom_ctx(aconf))
@@ -239,17 +241,16 @@ int ircd_tls_rehash(void)
 }
 
 /** Return non-zero if peer certificate verification is enabled for \a cptr. */
-int ircd_tls_verifypeer_enabled(const struct Client *cptr)
-{
+int ircd_tls_verifypeer_enabled(const struct Client *cptr) {
   struct ConfItem *aconf;
   struct Listener *listener;
 
   if (!cptr)
     return 0;
 
-  if (IsConnecting(cptr))
-  {
-    if ((aconf = find_conf_byname(cli_confs(cptr), cli_name(cptr), CONF_SERVER)))
+  if (IsConnecting(cptr)) {
+    if ((aconf =
+             find_conf_byname(cli_confs(cptr), cli_name(cptr), CONF_SERVER)))
       return ircd_tls_connect_verify_ca(aconf);
     return 0;
   }
@@ -261,15 +262,13 @@ int ircd_tls_verifypeer_enabled(const struct Client *cptr)
 }
 
 /** Return non-zero if the peer must present a certificate during TLS. */
-int ircd_tls_peer_cert_required(const struct Client *cptr)
-{
+int ircd_tls_peer_cert_required(const struct Client *cptr) {
   struct Listener *listener;
 
   if (!cptr)
     return 0;
 
-  if (IsConnecting(cptr))
-  {
+  if (IsConnecting(cptr)) {
     /* Outbound TLS server links always require a peer certificate. */
     return 1;
   }
@@ -283,12 +282,9 @@ int ircd_tls_peer_cert_required(const struct Client *cptr)
 /** Free a struct ConfItem and any resources it owns.
  * @param aconf Item to free.
  */
-void free_conf(struct ConfItem *aconf)
-{
-  Debug((DEBUG_DEBUG, "free_conf: %s %s %d",
-         aconf->host ? aconf->host : "*",
-         aconf->name ? aconf->name : "*",
-         aconf->address.port));
+void free_conf(struct ConfItem *aconf) {
+  Debug((DEBUG_DEBUG, "free_conf: %s %s %d", aconf->host ? aconf->host : "*",
+         aconf->name ? aconf->name : "*", aconf->address.port));
   if (aconf->dns_pending)
     delete_resolver_queries(aconf);
   MyFree(aconf->username);
@@ -312,10 +308,9 @@ void free_conf(struct ConfItem *aconf)
  * @param cptr Client to operate on.
  * @param aconf ConfItem to detach.
  */
-static void detach_conf(struct Client* cptr, struct ConfItem* aconf)
-{
-  struct SLink** lp;
-  struct SLink*  tmp;
+static void detach_conf(struct Client *cptr, struct ConfItem *aconf) {
+  struct SLink **lp;
+  struct SLink *tmp;
 
   assert(0 != aconf);
   assert(0 != cptr);
@@ -325,7 +320,8 @@ static void detach_conf(struct Client* cptr, struct ConfItem* aconf)
 
   while (*lp) {
     if ((*lp)->value.aconf == aconf) {
-      if (aconf->conn_class && (aconf->status & CONF_CLIENT_MASK) && ConfLinks(aconf) > 0)
+      if (aconf->conn_class && (aconf->status & CONF_CLIENT_MASK) &&
+          ConfLinks(aconf) > 0)
         --ConfLinks(aconf);
 
       assert(0 < aconf->clients);
@@ -348,8 +344,7 @@ static void detach_conf(struct Client* cptr, struct ConfItem* aconf)
  * @param[in,out] aconf Configuration item to set.
  * @param[in] host user\@host mask to parse.
  */
-void conf_parse_userhost(struct ConfItem *aconf, char *host)
-{
+void conf_parse_userhost(struct ConfItem *aconf, char *host) {
   char *host_part;
   unsigned char addrbits;
 
@@ -375,9 +370,9 @@ void conf_parse_userhost(struct ConfItem *aconf, char *host)
  * @param vptr Pointer to struct ConfItem for the block.
  * @param hp DNS reply, or NULL if the lookup failed.
  */
-static void conf_dns_callback(void* vptr, const struct irc_in_addr *addrs, int addr_count, const char *h_name)
-{
-  struct ConfItem* aconf = (struct ConfItem*) vptr;
+static void conf_dns_callback(void *vptr, const struct irc_in_addr *addrs,
+                              int addr_count, const char *h_name) {
+  struct ConfItem *aconf = (struct ConfItem *)vptr;
   assert(aconf);
   aconf->dns_pending = 0;
   if (addrs && addr_count > 0)
@@ -388,10 +383,9 @@ static void conf_dns_callback(void* vptr, const struct irc_in_addr *addrs, int a
  * currently doing a lookup, do nothing.
  * @param aconf ConfItem for which to start a request.
  */
-static void conf_dns_lookup(struct ConfItem* aconf)
-{
+static void conf_dns_lookup(struct ConfItem *aconf) {
   if (!aconf->dns_pending) {
-    char            buf[HOSTLEN + 1];
+    char buf[HOSTLEN + 1];
 
     host_from_uh(buf, aconf->host, HOSTLEN);
     gethost_byname(buf, conf_dns_callback, aconf);
@@ -399,24 +393,21 @@ static void conf_dns_lookup(struct ConfItem* aconf)
   }
 }
 
-
 /** Start lookups of all addresses in the conf line.  The origin must
  * be a numeric IP address.  If the remote host field is not an IP
  * address, start a DNS lookup for it.
  * @param aconf Connection to do lookups for.
  */
-void
-lookup_confhost(struct ConfItem *aconf)
-{
+void lookup_confhost(struct ConfItem *aconf) {
   if (EmptyString(aconf->host) || EmptyString(aconf->name)) {
-    Debug((DEBUG_ERROR, "Host/server name error: (%s) (%s)",
-           aconf->host, aconf->name));
+    Debug((DEBUG_ERROR, "Host/server name error: (%s) (%s)", aconf->host,
+           aconf->name));
     return;
   }
-  if (aconf->origin_name
-      && !ircd_aton(&aconf->origin.addr, aconf->origin_name)) {
-    Debug((DEBUG_ERROR, "Origin name error: (%s) (%s)",
-        aconf->origin_name, aconf->name));
+  if (aconf->origin_name &&
+      !ircd_aton(&aconf->origin.addr, aconf->origin_name)) {
+    Debug((DEBUG_ERROR, "Origin name error: (%s) (%s)", aconf->origin_name,
+           aconf->name));
   }
   /*
    * Do name lookup now on hostnames given and store the
@@ -424,11 +415,10 @@ lookup_confhost(struct ConfItem *aconf)
    */
   if (IsIP6Char(*aconf->host)) {
     if (!ircd_aton(&aconf->address.addr, aconf->host)) {
-      Debug((DEBUG_ERROR, "Host/server name error: (%s) (%s)",
-          aconf->host, aconf->name));
+      Debug((DEBUG_ERROR, "Host/server name error: (%s) (%s)", aconf->host,
+             aconf->name));
     }
-  }
-  else
+  } else
     conf_dns_lookup(aconf);
 }
 
@@ -436,9 +426,8 @@ lookup_confhost(struct ConfItem *aconf)
  * @param name Server name to find.
  * @return Pointer to the corresponding ConfItem, or NULL if none exists.
  */
-struct ConfItem* conf_find_server(const char* name)
-{
-  struct ConfItem* conf;
+struct ConfItem *conf_find_server(const char *name) {
+  struct ConfItem *conf;
   assert(0 != name);
 
   for (conf = GlobalConfList; conf; conf = conf->next) {
@@ -460,12 +449,11 @@ struct ConfItem* conf_find_server(const char* name)
  * @param mask Filter for CRule types (only consider if type & \a mask != 0).
  * @return Name of rule that forbids the connection; NULL if no prohibitions.
  */
-const char* conf_eval_crule(const char* name, int mask)
-{
-  struct CRuleConf* p = cruleConfList;
+const char *conf_eval_crule(const char *name, int mask) {
+  struct CRuleConf *p = cruleConfList;
   assert(0 != name);
 
-  for ( ; p; p = p->next) {
+  for (; p; p = p->next) {
     if (0 != (p->type & mask) && 0 == match(p->hostmask, name)) {
       if (crule_eval(p->node))
         return p->rule;
@@ -479,10 +467,9 @@ const char* conf_eval_crule(const char* name, int mask)
  * @param cptr Client to operate on.
  * @param mask ConfItem types to keep.
  */
-void det_confs_butmask(struct Client* cptr, int mask)
-{
-  struct SLink* link;
-  struct SLink* next;
+void det_confs_butmask(struct Client *cptr, int mask) {
+  struct SLink *link;
+  struct SLink *next;
   assert(0 != cptr);
 
   for (link = cli_confs(cptr); link; link = next) {
@@ -496,9 +483,8 @@ void det_confs_butmask(struct Client* cptr, int mask)
  * @param cptr Client for whom to check rules.
  * @return Authorization check result.
  */
-enum AuthorizationCheckResult attach_iline(struct Client* cptr)
-{
-  struct ConfItem* aconf;
+enum AuthorizationCheckResult attach_iline(struct Client *cptr) {
+  struct ConfItem *aconf;
 
   assert(0 != cptr);
 
@@ -508,14 +494,15 @@ enum AuthorizationCheckResult attach_iline(struct Client* cptr)
     /* If you change any of this logic, please make corresponding
      * changes in conf_debug_iline() below.
      */
-    if (aconf->address.port && aconf->address.port != cli_listener(cptr)->addr.port)
+    if (aconf->address.port &&
+        aconf->address.port != cli_listener(cptr)->addr.port)
       continue;
     if (aconf->username && match(aconf->username, cli_username(cptr)))
       continue;
     if (aconf->host && match(aconf->host, cli_sockhost(cptr)))
       continue;
-    if ((aconf->addrbits >= 0)
-        && !ipmask_check(&cli_ip(cptr), &aconf->address.addr, aconf->addrbits))
+    if ((aconf->addrbits >= 0) &&
+        !ipmask_check(&cli_ip(cptr), &aconf->address.addr, aconf->addrbits))
       continue;
     if (IPcheck_nr(cptr) > aconf->maximum)
       return ACR_TOO_MANY_FROM_IP;
@@ -535,14 +522,13 @@ enum AuthorizationCheckResult attach_iline(struct Client* cptr)
  * @param[in] client Client specifier.
  * @return Matching Client block structure.
  */
-struct ConfItem *conf_debug_iline(const char *client)
-{
+struct ConfItem *conf_debug_iline(const char *client) {
   struct irc_in_addr address;
   struct ConfItem *aconf;
   struct DenyConf *deny;
   char *sep;
   unsigned short listener;
-  char username[USERLEN+1], hostname[HOSTLEN+1], realname[REALLEN+1];
+  char username[USERLEN + 1], hostname[HOSTLEN + 1], realname[REALLEN + 1];
 
   /* Initialize variables. */
   listener = 0;
@@ -577,15 +563,16 @@ struct ConfItem *conf_debug_iline(const char *client)
     /* Looks like an IP address? */
     tmp = ircd_aton(&tmpaddr, client);
     if (tmp && (client[tmp] == '\0' || client[tmp] == ',')) {
-        memcpy(&address, &tmpaddr, sizeof(address));
-        client += tmp + (client[tmp] != '\0');
-        continue;
+      memcpy(&address, &tmpaddr, sizeof(address));
+      client += tmp + (client[tmp] != '\0');
+      continue;
     }
 
     /* Realname? */
     if (client[0] == '$' && client[1] == 'R') {
       client += 2;
-      for (tmp = 0; *client != '\0' && *client != ',' && tmp < REALLEN; ++client, ++tmp) {
+      for (tmp = 0; *client != '\0' && *client != ',' && tmp < REALLEN;
+           ++client, ++tmp) {
         if (*client == '\\')
           realname[tmp] = *++client;
         else
@@ -607,34 +594,37 @@ struct ConfItem *conf_debug_iline(const char *client)
     if (aconf->status != CONF_CLIENT)
       continue;
     if (aconf->address.port && aconf->address.port != listener) {
-      fprintf(stdout, "Listener port mismatch: %u != %u\n", aconf->address.port, listener);
+      fprintf(stdout, "Listener port mismatch: %u != %u\n", aconf->address.port,
+              listener);
       continue;
     }
     if (aconf->username && match(aconf->username, username)) {
-      fprintf(stdout, "Username mismatch: %s != %s\n", aconf->username, username);
+      fprintf(stdout, "Username mismatch: %s != %s\n", aconf->username,
+              username);
       continue;
     }
     if (aconf->host && match(aconf->host, hostname)) {
       fprintf(stdout, "Hostname mismatch: %s != %s\n", aconf->host, hostname);
       continue;
     }
-    if ((aconf->addrbits >= 0)
-        && !ipmask_check(&address, &aconf->address.addr, aconf->addrbits)) {
-      fprintf(stdout, "IP address mismatch: %s != %s\n", aconf->name, ircd_ntoa(&address));
+    if ((aconf->addrbits >= 0) &&
+        !ipmask_check(&address, &aconf->address.addr, aconf->addrbits)) {
+      fprintf(stdout, "IP address mismatch: %s != %s\n", aconf->name,
+              ircd_ntoa(&address));
       continue;
     }
-    fprintf(stdout, "Match! username=%s host=%s ip=%s class=%s maxlinks=%u password=%s\n",
-            (aconf->username ? aconf->username : "(null)"),
-            (aconf->host ? aconf->host : "(null)"),
-            (aconf->name ? aconf->name : "(null)"),
-            ConfClass(aconf), aconf->maximum,
-            (aconf->passwd ? aconf->passwd : "(null)"));
+    fprintf(
+        stdout,
+        "Match! username=%s host=%s ip=%s class=%s maxlinks=%u password=%s\n",
+        (aconf->username ? aconf->username : "(null)"),
+        (aconf->host ? aconf->host : "(null)"),
+        (aconf->name ? aconf->name : "(null)"), ConfClass(aconf),
+        aconf->maximum, (aconf->passwd ? aconf->passwd : "(null)"));
     break;
   }
 
   /* If no authorization, say so and exit. */
-  if (!aconf)
-  {
+  if (!aconf) {
     fprintf(stdout, "No authorization found.\n");
     return NULL;
   }
@@ -652,11 +642,11 @@ struct ConfItem *conf_debug_iline(const char *client)
       continue;
 
     /* Looks like a match; report it. */
-    fprintf(stdout, "Denied! usermask=%s realmask=\"%s\" hostmask=%s (bits=%u)\n",
+    fprintf(stdout,
+            "Denied! usermask=%s realmask=\"%s\" hostmask=%s (bits=%u)\n",
             deny->usermask ? deny->usermask : "(null)",
             deny->realmask ? deny->realmask : "(null)",
-            deny->hostmask ? deny->hostmask : "(null)",
-            deny->bits);
+            deny->hostmask ? deny->hostmask : "(null)", deny->bits);
   }
 
   return aconf;
@@ -668,8 +658,7 @@ struct ConfItem *conf_debug_iline(const char *client)
  * @param cptr Client to check
  * @return Non-zero if \a aconf is attached to \a cptr, zero if not.
  */
-static int is_attached(struct ConfItem *aconf, struct Client *cptr)
-{
+static int is_attached(struct ConfItem *aconf, struct Client *cptr) {
   struct SLink *lp;
 
   for (lp = cli_confs(cptr); lp; lp = lp->next) {
@@ -686,8 +675,8 @@ static int is_attached(struct ConfItem *aconf, struct Client *cptr)
  * @param aconf ConfItem to attach
  * @return Authorization check result.
  */
-enum AuthorizationCheckResult attach_conf(struct Client *cptr, struct ConfItem *aconf)
-{
+enum AuthorizationCheckResult attach_conf(struct Client *cptr,
+                                          struct ConfItem *aconf) {
   struct SLink *lp;
 
   if (is_attached(aconf, cptr))
@@ -696,7 +685,7 @@ enum AuthorizationCheckResult attach_conf(struct Client *cptr, struct ConfItem *
     return ACR_NO_AUTHORIZATION;
   if ((aconf->status & (CONF_OPERATOR | CONF_CLIENT)) &&
       ConfLinks(aconf) >= ConfMaxLinks(aconf) && ConfMaxLinks(aconf) > 0)
-    return ACR_TOO_MANY_IN_CLASS;  /* Use this for printing error message */
+    return ACR_TOO_MANY_IN_CLASS; /* Use this for printing error message */
   lp = make_link();
   lp->next = cli_confs(cptr);
   lp->value.aconf = aconf;
@@ -721,10 +710,7 @@ enum AuthorizationCheckResult attach_conf(struct Client *cptr, struct ConfItem *
 /** Return our LocalConf configuration structure.
  * @return A pointer to #localConf.
  */
-const struct LocalConf* conf_get_local(void)
-{
-  return &localConf;
-}
+const struct LocalConf *conf_get_local(void) { return &localConf; }
 
 /** Attach ConfItems to a client if the name passed matches that for
  * the ConfItems or is an exact match for them.
@@ -733,11 +719,10 @@ const struct LocalConf* conf_get_local(void)
  * @param statmask Filter to limit ConfItem::status.
  * @return First ConfItem attached to \a cptr.
  */
-struct ConfItem* attach_confs_byname(struct Client* cptr, const char* name,
-                                     int statmask)
-{
-  struct ConfItem* tmp;
-  struct ConfItem* first = NULL;
+struct ConfItem *attach_confs_byname(struct Client *cptr, const char *name,
+                                     int statmask) {
+  struct ConfItem *tmp;
+  struct ConfItem *first = NULL;
 
   assert(0 != name);
 
@@ -747,7 +732,7 @@ struct ConfItem* attach_confs_byname(struct Client* cptr, const char* name,
   for (tmp = GlobalConfList; tmp; tmp = tmp->next) {
     if (0 != (tmp->status & statmask) && !IsIllegal(tmp)) {
       assert(0 != tmp->name);
-      if (0 == match(tmp->name, name) || 0 == ircd_strcmp(tmp->name, name)) { 
+      if (0 == match(tmp->name, name) || 0 == ircd_strcmp(tmp->name, name)) {
         if (ACR_OK == attach_conf(cptr, tmp) && !first)
           first = tmp;
       }
@@ -763,11 +748,10 @@ struct ConfItem* attach_confs_byname(struct Client* cptr, const char* name,
  * @param statmask Filter to limit ConfItem::status.
  * @return First ConfItem attached to \a cptr.
  */
-struct ConfItem* attach_confs_byhost(struct Client* cptr, const char* host,
-                                     int statmask)
-{
-  struct ConfItem* tmp;
-  struct ConfItem* first = 0;
+struct ConfItem *attach_confs_byhost(struct Client *cptr, const char *host,
+                                     int statmask) {
+  struct ConfItem *tmp;
+  struct ConfItem *first = 0;
 
   assert(0 != host);
   if (HOSTLEN < strlen(host))
@@ -776,7 +760,7 @@ struct ConfItem* attach_confs_byhost(struct Client* cptr, const char* host,
   for (tmp = GlobalConfList; tmp; tmp = tmp->next) {
     if (0 != (tmp->status & statmask) && !IsIllegal(tmp)) {
       assert(0 != tmp->host);
-      if (0 == match(tmp->host, host) || 0 == ircd_strcmp(tmp->host, host)) { 
+      if (0 == match(tmp->host, host) || 0 == ircd_strcmp(tmp->host, host)) {
         if (ACR_OK == attach_conf(cptr, tmp) && !first)
           first = tmp;
       }
@@ -792,8 +776,8 @@ struct ConfItem* attach_confs_byhost(struct Client* cptr, const char* host,
  * @param statmask Filter for ConfItem::status
  * @return First found matching ConfItem.
  */
-struct ConfItem* find_conf_exact(const char* name, struct Client *cptr, int statmask)
-{
+struct ConfItem *find_conf_exact(const char *name, struct Client *cptr,
+                                 int statmask) {
   struct ConfItem *tmp;
 
   for (tmp = GlobalConfList; tmp; tmp = tmp->next) {
@@ -802,16 +786,13 @@ struct ConfItem* find_conf_exact(const char* name, struct Client *cptr, int stat
       continue;
     if (tmp->username && match(tmp->username, cli_username(cptr)))
       continue;
-    if (tmp->addrbits < 0)
-    {
+    if (tmp->addrbits < 0) {
       if (match(tmp->host, cli_sockhost(cptr)))
         continue;
-    }
-    else if (!ipmask_check(&cli_ip(cptr), &tmp->address.addr, tmp->addrbits))
+    } else if (!ipmask_check(&cli_ip(cptr), &tmp->address.addr, tmp->addrbits))
       continue;
-    if ((tmp->status & CONF_OPERATOR)
-        && (MaxLinks(tmp->conn_class) > 0)
-        && (tmp->clients >= MaxLinks(tmp->conn_class)))
+    if ((tmp->status & CONF_OPERATOR) && (MaxLinks(tmp->conn_class) > 0) &&
+        (tmp->clients >= MaxLinks(tmp->conn_class)))
       continue;
     return tmp;
   }
@@ -825,10 +806,9 @@ struct ConfItem* find_conf_exact(const char* name, struct Client *cptr, int stat
  * @param statmask Filter for ConfItem::status.
  * @return First matching ConfItem from \a lp.
  */
-struct ConfItem* find_conf_byname(struct SLink* lp, const char* name,
-                                  int statmask)
-{
-  struct ConfItem* tmp;
+struct ConfItem *find_conf_byname(struct SLink *lp, const char *name,
+                                  int statmask) {
+  struct ConfItem *tmp;
   assert(0 != name);
 
   if (HOSTLEN < strlen(name))
@@ -851,10 +831,9 @@ struct ConfItem* find_conf_byname(struct SLink* lp, const char* name,
  * @param statmask Filter for ConfItem::status.
  * @return First matching ConfItem from \a lp.
  */
-struct ConfItem* find_conf_byhost(struct SLink* lp, const char* host,
-                                  int statmask)
-{
-  struct ConfItem* tmp = NULL;
+struct ConfItem *find_conf_byhost(struct SLink *lp, const char *host,
+                                  int statmask) {
+  struct ConfItem *tmp = NULL;
   assert(0 != host);
 
   if (HOSTLEN < strlen(host))
@@ -877,27 +856,25 @@ struct ConfItem* find_conf_byhost(struct SLink* lp, const char* host,
  * @param statmask Filter for ConfItem::status.
  * @return First matching ConfItem from \a lp.
  */
-struct ConfItem* find_conf_byip(struct SLink* lp, const struct irc_in_addr* ip,
-                                int statmask)
-{
-  struct ConfItem* tmp;
+struct ConfItem *find_conf_byip(struct SLink *lp, const struct irc_in_addr *ip,
+                                int statmask) {
+  struct ConfItem *tmp;
 
   for (; lp; lp = lp->next) {
     tmp = lp->value.aconf;
-    if (0 != (tmp->status & statmask)
-        && !irc_in_addr_cmp(&tmp->address.addr, ip))
+    if (0 != (tmp->status & statmask) &&
+        !irc_in_addr_cmp(&tmp->address.addr, ip))
       return tmp;
   }
   return 0;
 }
 
 /** Free all CRules from #cruleConfList. */
-void conf_erase_crule_list(void)
-{
-  struct CRuleConf* next;
-  struct CRuleConf* p = cruleConfList;
+void conf_erase_crule_list(void) {
+  struct CRuleConf *next;
+  struct CRuleConf *p = cruleConfList;
 
-  for ( ; p; p = next) {
+  for (; p; p = next) {
     next = p->next;
     crule_free(&p->node);
     MyFree(p->hostmask);
@@ -910,17 +887,13 @@ void conf_erase_crule_list(void)
 /** Return #cruleConfList.
  * @return #cruleConfList
  */
-const struct CRuleConf* conf_get_crule_list(void)
-{
-  return cruleConfList;
-}
+const struct CRuleConf *conf_get_crule_list(void) { return cruleConfList; }
 
 /** Free all deny rules from #denyConfList. */
-void conf_erase_deny_list(void)
-{
-  struct DenyConf* next;
-  struct DenyConf* p = denyConfList;
-  for ( ; p; p = next) {
+void conf_erase_deny_list(void) {
+  struct DenyConf *next;
+  struct DenyConf *p = denyConfList;
+  for (; p; p = next) {
     next = p->next;
     MyFree(p->hostmask);
     MyFree(p->usermask);
@@ -934,18 +907,13 @@ void conf_erase_deny_list(void)
 /** Return #denyConfList.
  * @return #denyConfList
  */
-const struct DenyConf* conf_get_deny_list(void)
-{
-  return denyConfList;
-}
+const struct DenyConf *conf_get_deny_list(void) { return denyConfList; }
 
 /** Find any existing quarantine for the named channel.
  * @param chname Channel name to search for.
  * @return Reason for channel's quarantine, or NULL if none exists.
  */
-const char*
-find_quarantine(const char *chname)
-{
+const char *find_quarantine(const char *chname) {
   struct qline *qline;
 
   for (qline = GlobalQuarantineList; qline; qline = qline->next)
@@ -959,24 +927,21 @@ find_quarantine(const char *chname)
  * @param passwd Client-provided password for block.
  * @return WebIRC authorization block, or NULL if none exists.
  */
-const struct wline *
-find_webirc(const struct irc_in_addr *addr, const char *passwd)
-{
+const struct wline *find_webirc(const struct irc_in_addr *addr,
+                                const char *passwd) {
   struct wline *wline;
 
   for (wline = GlobalWebircList; wline; wline = wline->next)
-    if (ipmask_check(addr, &wline->ip, wline->bits)
-        && (0 == strcmp(wline->passwd, passwd)))
+    if (ipmask_check(addr, &wline->ip, wline->bits) &&
+        (0 == strcmp(wline->passwd, passwd)))
       return wline;
   return NULL;
 }
 
 /** Free all qline structs from #GlobalQuarantineList. */
-void clear_quarantines(void)
-{
+void clear_quarantines(void) {
   struct qline *qline;
-  while ((qline = GlobalQuarantineList))
-  {
+  while ((qline = GlobalQuarantineList)) {
     GlobalQuarantineList = qline->next;
     MyFree(qline->reason);
     MyFree(qline->chname);
@@ -985,19 +950,17 @@ void clear_quarantines(void)
 }
 
 /** Mark everything in #GlobalWebircList stale. */
-static void webirc_mark_stale(void)
-{
+static void webirc_mark_stale(void) {
   struct wline *wline;
   for (wline = GlobalWebircList; wline; wline = wline->next)
     wline->stale = 1;
 }
 
 /** Remove any still-stale entries in #GlobalWebircList. */
-static void webirc_remove_stale(void)
-{
+static void webirc_remove_stale(void) {
   struct wline *wline, **pp_w;
 
-  for (pp_w = &GlobalWebircList; (wline = *pp_w) != NULL; ) {
+  for (pp_w = &GlobalWebircList; (wline = *pp_w) != NULL;) {
     if (wline->stale) {
       *pp_w = wline->next;
       MyFree(wline->passwd);
@@ -1009,27 +972,28 @@ static void webirc_remove_stale(void)
   }
 }
 
-/** When non-zero, indicates that a configuration error has been seen in this pass. */
+/** When non-zero, indicates that a configuration error has been seen in this
+ * pass. */
 static int conf_error;
-/** When non-zero, indicates that the configuration file was loaded at least once. */
+/** When non-zero, indicates that the configuration file was loaded at least
+ * once. */
 static int conf_already_read;
 
 /** Read configuration file.
  * @return Zero on failure, non-zero on success. */
-int read_configuration_file(void)
-{
+int read_configuration_file(void) {
   conf_error = 0;
-  feature_unmark(); /* unmark all features for resetting later */
-  db_conf_unmark(); /* the Database block is dropped if it is gone */
+  feature_unmark();    /* unmark all features for resetting later */
+  db_conf_unmark();    /* the Database block is dropped if it is gone */
   cache_conf_unmark(); /* and the Redis block, the same way */
-  mail_conf_unmark(); /* and the Mail block */
+  mail_conf_unmark();  /* and the Mail block */
   vhost_conf_unmark(); /* a new Security block replaces the key */
   clear_nameservers(); /* clear previous list of DNS servers */
   if (!init_lexer())
     return 0;
   yyparse();
   deinit_lexer();
-  feature_mark(); /* reset unmarked features */
+  feature_mark();  /* reset unmarked features */
   db_conf_sweep(); /* ... which is decided here, once the file is read */
   cache_conf_sweep();
   mail_conf_sweep();
@@ -1040,7 +1004,7 @@ int read_configuration_file(void)
    */
   if (!vhost_conf_sweep()) {
     static const char msg[] =
-      "Config file error: Security block with virtual_host_key is required";
+        "Config file error: Security block with virtual_host_key is required";
     sendto_opmask_butone(0, SNO_ALL, "%s", msg);
     log_write(LS_CONFIG, L_ERROR, 0, "%s", msg);
     if (!conf_already_read)
@@ -1054,9 +1018,7 @@ int read_configuration_file(void)
 /** Report an error message about the configuration file.
  * @param msg The error to report.
  */
-void
-yyerror(const char *msg)
-{
+void yyerror(const char *msg) {
   const char *fname;
   int lineno;
 
@@ -1066,15 +1028,13 @@ yyerror(const char *msg)
   log_write(LS_CONFIG, L_ERROR, 0, "Config file parse error line %s:%d: %s",
             fname, lineno, msg);
   if (!conf_already_read)
-    fprintf(stderr, "Config file parse error line %s:%d: %s\n",
-            fname, lineno, msg);
- conf_error = 1;
+    fprintf(stderr, "Config file parse error line %s:%d: %s\n", fname, lineno,
+            msg);
+  conf_error = 1;
 }
 
 /** Attach CONF_UWORLD items to a server and everything attached to it. */
-static void
-attach_conf_uworld(struct Client *cptr)
-{
+static void attach_conf_uworld(struct Client *cptr) {
   struct DLink *lp;
 
   attach_confs_byhost(cptr, cli_name(cptr), CONF_UWORLD);
@@ -1085,11 +1045,9 @@ attach_conf_uworld(struct Client *cptr)
 /** Free all memory associated with service mapping \a smap.
  * @param smap[in] The mapping to free.
  */
-void free_mapping(struct s_map *smap)
-{
+void free_mapping(struct s_map *smap) {
   struct nick_host *nh, *next;
-  for (nh = smap->services; nh; nh = next)
-  {
+  for (nh = smap->services; nh; nh = next) {
     next = nh->next;
     MyFree(nh);
   }
@@ -1100,8 +1058,7 @@ void free_mapping(struct s_map *smap)
 }
 
 /** Unregister and free all current service mappings. */
-static void close_mappings(void)
-{
+static void close_mappings(void) {
   struct s_map *map, *next;
 
   for (map = GlobalServiceMapList; map; map = next) {
@@ -1113,13 +1070,12 @@ static void close_mappings(void)
 }
 
 /** Service{} blocks of the current configuration, in file order. */
-static struct ServiceConf* serviceConfList;
+static struct ServiceConf *serviceConfList;
 
 /** Tail of #serviceConfList, so that file order is kept cheaply. */
-static struct ServiceConf** serviceConfTail = &serviceConfList;
+static struct ServiceConf **serviceConfTail = &serviceConfList;
 
-void conf_free_service(struct ServiceConf *svc)
-{
+void conf_free_service(struct ServiceConf *svc) {
   struct SLink *lp, *next;
 
   if (!svc)
@@ -1158,8 +1114,7 @@ void conf_free_service(struct ServiceConf *svc)
  * @param[in] name Option name.
  * @param[in] value Its value.
  */
-void conf_service_set_option(struct ServiceConf *svc, char *name, char *value)
-{
+void conf_service_set_option(struct ServiceConf *svc, char *name, char *value) {
   struct ServiceOption *opt;
   struct ServiceOption **tail;
 
@@ -1175,7 +1130,7 @@ void conf_service_set_option(struct ServiceConf *svc, char *name, char *value)
     return;
   }
 
-  opt = (struct ServiceOption *) MyCalloc(1, sizeof(*opt));
+  opt = (struct ServiceOption *)MyCalloc(1, sizeof(*opt));
   opt->name = name;
   opt->value = value;
   *tail = opt;
@@ -1186,9 +1141,8 @@ void conf_service_set_option(struct ServiceConf *svc, char *name, char *value)
  * @param[in] name Option name.
  * @param[in] def What to return when it is absent.
  */
-const char *conf_service_option(const struct ServiceConf *svc,
-                                const char *name, const char *def)
-{
+const char *conf_service_option(const struct ServiceConf *svc, const char *name,
+                                const char *def) {
   const struct ServiceOption *opt;
 
   if (!svc || !name)
@@ -1212,8 +1166,7 @@ const char *conf_service_option(const struct ServiceConf *svc,
  * @param[in] def What to return when it is absent or unreadable.
  */
 int conf_service_option_int(const struct ServiceConf *svc, const char *name,
-                            int def)
-{
+                            int def) {
   const char *text = conf_service_option(svc, name, 0);
   char *end = 0;
   long value;
@@ -1230,11 +1183,10 @@ int conf_service_option_int(const struct ServiceConf *svc, const char *name,
     return def;
   }
 
-  return (int) value;
+  return (int)value;
 }
 
-void conf_add_service(struct ServiceConf *svc)
-{
+void conf_add_service(struct ServiceConf *svc) {
   assert(0 != svc);
   assert(0 != svc->name);
   assert(0 != svc->type);
@@ -1244,13 +1196,9 @@ void conf_add_service(struct ServiceConf *svc)
   serviceConfTail = &svc->next;
 }
 
-const struct ServiceConf *conf_service_list(void)
-{
-  return serviceConfList;
-}
+const struct ServiceConf *conf_service_list(void) { return serviceConfList; }
 
-const struct ServiceConf *conf_find_service(const char *nick)
-{
+const struct ServiceConf *conf_find_service(const char *nick) {
   const struct ServiceConf *svc;
 
   for (svc = serviceConfList; svc; svc = svc->next)
@@ -1266,8 +1214,7 @@ const struct ServiceConf *conf_find_service(const char *nick)
  * implements, not the nickname an operator chose for it.
  * @param[in] type Type to look for, compared case-insensitively.
  */
-const struct ServiceConf *conf_find_service_type(const char *type)
-{
+const struct ServiceConf *conf_find_service_type(const char *type) {
   const struct ServiceConf *svc;
 
   if (EmptyString(type))
@@ -1281,8 +1228,7 @@ const struct ServiceConf *conf_find_service_type(const char *type)
 }
 
 /** Forget every Service{} block, before the file is read again. */
-static void conf_clear_services(void)
-{
+static void conf_clear_services(void) {
   struct ServiceConf *svc, *next;
 
   for (svc = serviceConfList; svc; svc = next) {
@@ -1303,12 +1249,13 @@ static void conf_clear_services(void)
  *   directory (MOD_PATH) by module_load().
  * @param[in] isolated Non-zero for isolation = "process".
  */
-void conf_add_module(const char *name, int isolated)
-{
+void conf_add_module(const char *name, int isolated) {
   struct ModuleHandle *mod;
   const char *err = 0;
 
   assert(0 != name);
+
+  Debug((DEBUG_DEBUG, "Loading module %s...", name));
 
   mod = module_find_file(name);
   if (mod) {
@@ -1339,18 +1286,17 @@ void conf_add_module(const char *name, int isolated)
 
     /* The file changed underneath us; take the old code out first. */
     if (!module_unload(mod)) {
-      sendto_opmask_butone(0, SNO_OLDSNO,
-                           "Could not unload changed module %s", name);
-      log_write(LS_SYSTEM, L_ERROR, 0,
-                "Could not unload changed module %s", name);
+      sendto_opmask_butone(0, SNO_OLDSNO, "Could not unload changed module %s",
+                           name);
+      log_write(LS_SYSTEM, L_ERROR, 0, "Could not unload changed module %s",
+                name);
       module_mark(mod);
       return;
     }
   }
 
   if (!module_load_isolation(name, NULL,
-                             isolated ? MODULE_PROCESS : MODULE_NATIVE,
-                             &err)) {
+                             isolated ? MODULE_PROCESS : MODULE_NATIVE, &err)) {
     if (!err)
       err = "unknown error";
 
@@ -1359,10 +1305,9 @@ void conf_add_module(const char *name, int isolated)
      * does not set conf_error: one bad module should not stop the server
      * from coming up, or make a rehash fail.
      */
-    sendto_opmask_butone(0, SNO_OLDSNO, "Could not load module %s: %s",
-                         name, err);
-    log_write(LS_SYSTEM, L_ERROR, 0, "Could not load module %s: %s",
-              name, err);
+    sendto_opmask_butone(0, SNO_OLDSNO, "Could not load module %s: %s", name,
+                         err);
+    log_write(LS_SYSTEM, L_ERROR, 0, "Could not load module %s: %s", name, err);
     if (!conf_already_read)
       fprintf(stderr, "Could not load module %s: %s\n", name, err);
   }
@@ -1375,14 +1320,13 @@ void conf_add_module(const char *name, int isolated)
  * @return CPTR_KILLED if any client was K/G-lined because of the
  * rehash; otherwise 0.
  */
-int rehash(struct Client *cptr, int sig)
-{
-  struct ConfItem** tmp = &GlobalConfList;
-  struct ConfItem*  tmp2;
-  struct Client*    acptr;
-  int               i;
-  int               ret = 0;
-  int               found_g = 0;
+int rehash(struct Client *cptr, int sig) {
+  struct ConfItem **tmp = &GlobalConfList;
+  struct ConfItem *tmp2;
+  struct Client *acptr;
+  int i;
+  int ret = 0;
+  int found_g = 0;
 
   if (1 == sig)
     sendto_opmask_butone(0, SNO_OLDSNO,
@@ -1403,8 +1347,7 @@ int rehash(struct Client *cptr, int sig)
         tmp2->next = 0;
       }
       tmp2->status |= CONF_ILLEGAL;
-    }
-    else {
+    } else {
       *tmp = tmp2->next;
       free_conf(tmp2);
     }
@@ -1454,7 +1397,8 @@ int rehash(struct Client *cptr, int sig)
 
   log_reopen(); /* reopen log files */
   if (ircd_tls_rehash()) {
-    sendto_opmask_butone(0, SNO_OLDSNO, "TLS initialization failed during rehash");
+    sendto_opmask_butone(0, SNO_OLDSNO,
+                         "TLS initialization failed during rehash");
     if (MyUser(cptr) && IsAnOper(cptr))
       send_reply(cptr, SND_EXPLICIT | RPL_REHASHING,
                  N_(":TLS initialization failed"));
@@ -1462,7 +1406,7 @@ int rehash(struct Client *cptr, int sig)
 
   auth_close_unused();
   close_listeners();
-  class_delete_marked();         /* unless it fails */
+  class_delete_marked(); /* unless it fails */
 
   /*
    * Flush out deleted I and P lines although still in use.
@@ -1473,8 +1417,7 @@ int rehash(struct Client *cptr, int sig)
       tmp2->next = NULL;
       if (!tmp2->clients)
         free_conf(tmp2);
-    }
-    else
+    } else
       tmp = &tmp2->next;
   }
 
@@ -1499,16 +1442,16 @@ int rehash(struct Client *cptr, int sig)
        */
       if ((found_g = find_kill(acptr))) {
         sendto_opmask_butone(0, found_g == -2 ? SNO_GLINE : SNO_OPERKILL,
-                             found_g == -2 ? "G-line active for %s%s" :
-                             "K-line active for %s%s",
-                             IsUnknown(acptr) ? "Unregistered Client ":"",
+                             found_g == -2 ? "G-line active for %s%s"
+                                           : "K-line active for %s%s",
+                             IsUnknown(acptr) ? "Unregistered Client " : "",
                              get_client_name(acptr, SHOW_IP));
-        if (exit_client(cptr, acptr, &me, found_g == -2 ? "G-lined" :
-            "K-lined") == CPTR_KILLED)
+        if (exit_client(cptr, acptr, &me,
+                        found_g == -2 ? "G-lined" : "K-lined") == CPTR_KILLED)
           ret = CPTR_KILLED;
       } else if ((wline = cli_wline(acptr)) && wline->stale) {
-        if (exit_client(cptr, acptr, &me, "WebIRC authorization removed")
-            == CPTR_KILLED)
+        if (exit_client(cptr, acptr, &me, "WebIRC authorization removed") ==
+            CPTR_KILLED)
           ret = CPTR_KILLED;
       }
     }
@@ -1538,8 +1481,7 @@ int rehash(struct Client *cptr, int sig)
  * @return Non-zero on success, zero on failure.
  */
 
-int init_conf(void)
-{
+int init_conf(void) {
   if (read_configuration_file()) {
     /*
      * make sure we're sane to start if the config
@@ -1569,13 +1511,12 @@ int init_conf(void)
  * @return 0 if client is accepted; -1 if client was locally denied
  * (K-line); -2 if client was globally denied (G-line).
  */
-int find_kill(struct Client *cptr)
-{
-  const char*      host;
-  const char*      name;
-  const char*      realname;
-  struct DenyConf* deny;
-  struct Gline*    agline = NULL;
+int find_kill(struct Client *cptr) {
+  const char *host;
+  const char *name;
+  const char *realname;
+  struct DenyConf *deny;
+  struct Gline *agline = NULL;
 
   assert(0 != cptr);
 
@@ -1611,8 +1552,8 @@ int find_kill(struct Client *cptr)
       if (deny->flags & DENY_FLAGS_FILE)
         killcomment(cptr, deny->message);
       else
-        send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
-                   N_(":%s."), deny->message);
+        send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, N_(":%s."),
+                   deny->message);
     }
     return -1;
   }
@@ -1622,8 +1563,8 @@ int find_kill(struct Client *cptr)
      * find active glines
      * added a check against the user's IP address to find_gline() -Kev
      */
-    send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
-               N_(":%s."), GlineReason(agline));
+    send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, N_(":%s."),
+               GlineReason(agline));
     return -2;
   }
 
@@ -1635,13 +1576,12 @@ int find_kill(struct Client *cptr)
  * @param cptr Client to check for access.
  * @return Access check result.
  */
-enum AuthorizationCheckResult conf_check_client(struct Client *cptr)
-{
+enum AuthorizationCheckResult conf_check_client(struct Client *cptr) {
   enum AuthorizationCheckResult acr = ACR_OK;
 
   if ((acr = attach_iline(cptr))) {
-    Debug((DEBUG_DNS, "ch_cl: access denied: %s[%s]", 
-          cli_name(cptr), cli_sockhost(cptr)));
+    Debug((DEBUG_DNS, "ch_cl: access denied: %s[%s]", cli_name(cptr),
+           cli_sockhost(cptr)));
     return acr;
   }
   return ACR_OK;
@@ -1655,15 +1595,15 @@ enum AuthorizationCheckResult conf_check_client(struct Client *cptr)
  * @param cptr Peer server to check.
  * @return 0 if accepted, -1 if access denied.
  */
-int conf_check_server(struct Client *cptr)
-{
-  struct ConfItem* c_conf = NULL;
-  struct SLink*    lp;
+int conf_check_server(struct Client *cptr) {
+  struct ConfItem *c_conf = NULL;
+  struct SLink *lp;
 
-  Debug((DEBUG_DNS, "sv_cl: check access for %s[%s]", 
-        cli_name(cptr), cli_sockhost(cptr)));
+  Debug((DEBUG_DNS, "sv_cl: check access for %s[%s]", cli_name(cptr),
+         cli_sockhost(cptr)));
 
-  if (IsUnknown(cptr) && !attach_confs_byname(cptr, cli_name(cptr), CONF_SERVER)) {
+  if (IsUnknown(cptr) &&
+      !attach_confs_byname(cptr, cli_name(cptr), CONF_SERVER)) {
     Debug((DEBUG_DNS, "No C/N lines for %s", cli_sockhost(cptr)));
     return -1;
   }
@@ -1685,8 +1625,9 @@ int conf_check_server(struct Client *cptr)
   }
 
   /* Try finding the Connect block by DNS name and IP next. */
-  if (!c_conf && !(c_conf = find_conf_byhost(lp, cli_sockhost(cptr), CONF_SERVER)))
-        c_conf = find_conf_byip(lp, &cli_ip(cptr), CONF_SERVER);
+  if (!c_conf &&
+      !(c_conf = find_conf_byhost(lp, cli_sockhost(cptr), CONF_SERVER)))
+    c_conf = find_conf_byip(lp, &cli_ip(cptr), CONF_SERVER);
 
   /*
    * Attach by IP# only if all other checks have failed.
@@ -1703,8 +1644,8 @@ int conf_check_server(struct Client *cptr)
    * if no Connect block, then deny access
    */
   if (!c_conf) {
-    Debug((DEBUG_DNS, "sv_cl: access denied: %s[%s@%s]",
-          cli_name(cptr), cli_username(cptr), cli_sockhost(cptr)));
+    Debug((DEBUG_DNS, "sv_cl: access denied: %s[%s@%s]", cli_name(cptr),
+           cli_username(cptr), cli_sockhost(cptr)));
     return -1;
   }
   /*
@@ -1715,8 +1656,7 @@ int conf_check_server(struct Client *cptr)
   if (!irc_in_addr_valid(&c_conf->address.addr))
     memcpy(&c_conf->address.addr, &cli_ip(cptr), sizeof(c_conf->address.addr));
 
-  Debug((DEBUG_DNS, "sv_cl: access ok: %s[%s]",
-         cli_name(cptr), cli_sockhost(cptr)));
+  Debug((DEBUG_DNS, "sv_cl: access ok: %s[%s]", cli_name(cptr),
+         cli_sockhost(cptr)));
   return 0;
 }
-

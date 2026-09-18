@@ -1,0 +1,46 @@
+El orden para un módulo x nuevo
+
+# 1. Módulo de DIRECTORIO (uno de un solo fichero no puede tener traducciones)
+#    y el directorio po/ tiene que existir: el target `pot` solo genera
+#    plantilla para modules/*/*/po que ya exista.
+mkdir -p modules/commands/x/po
+
+/* 2. Codificar el módulo con las marcas */
+#define I18N_DOMAIN x_i18n            /* antes del include */
+#include "ircd_i18n.h"
+#include "module.h"
+
+static struct I18nDomain* x_i18n;
+
+static int init(struct ModuleHandle* mod)
+{
+  x_i18n = module_i18n(mod);          /* NULL si no hay po/ instalado */
+  ...
+}
+/* ... y en el código: _(to, "..."), _n(to, "...", "...", n), N_("...") */
+
+# 3. Configurar (una vez; si instalas gettext después, vuelve a ejecutarlo)
+cmake --preset dev
+
+# 4. Extraer la plantilla: escribe modules/commands/x/po/x.pot
+cmake --build build/dev --target pot
+
+# 5. Crear el catálogo de cada idioma a partir de ESA plantilla
+msginit -l es -i modules/commands/x/po/x.pot -o modules/commands/x/po/es.po --no-translator
+msginit -l pt -i modules/commands/x/po/x.pot -o modules/commands/x/po/pt.po --no-translator
+
+# 6. Traducir los msgstr (Poedit, editor...), comprobar cabecera UTF-8 y Plural-Forms
+
+# 7. Compilar, validar e instalar
+cmake --build --preset dev
+ctest --test-dir build/dev -R ircd_i18n_t --output-on-failure   # carga también modules/*/*/po/*.po
+cmake --install build/dev      # deja x.so y po/es.po, po/pt.po juntos en lib/modules/commands/x/
+
+msgmerge entra después, en el ciclo de mantenimiento: cuando cambies o añadas texto en x, vuelves a pot y actualizas el catálogo existente en lugar de crearlo de cero:
+
+cmake --build build/dev --target pot
+msgmerge -U modules/commands/x/po/es.po modules/commands/x/po/x.pot
+
+msginit = idioma nuevo (una vez); msgmerge = idioma existente tras cambiar los fuentes. Nunca ambos sobre el mismo fichero en la misma pasada.
+
+modules/services/irc_services/ es el ejemplo completo a copiar: services.h:40 define I18N_DOMAIN, irc_services.c:552 lo abre, y po/ tiene irc_services.pot + es.po.

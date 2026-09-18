@@ -24,6 +24,7 @@
  * Keeping them apart is what lets the register be tested without a server,
  * the same split as migration.c against migration_run.c.
  */
+#include "bot.h"
 #include "config.h"
 
 #include "account.h"
@@ -37,6 +38,7 @@
 #include "msg.h"
 #include "numeric.h"
 #include "s_bsd.h"
+#include "s_conf.h"
 #include "s_debug.h"
 #include "s_misc.h"
 #include "s_user.h"
@@ -181,6 +183,8 @@ int account_login(struct Client* cptr, const char* nick, const char* email)
   {
     char* parv[4];
     char modebuf[8];
+    struct ServiceConf* bot_conf;
+    struct Bot *bot;
 
     strcpy(modebuf, "+r");
     parv[0] = cli_name(&me);
@@ -188,7 +192,14 @@ int account_login(struct Client* cptr, const char* nick, const char* email)
     parv[2] = modebuf;
     parv[3] = NULL;
 
-    set_user_mode_on(&me, &me, cptr, 3, parv);
+    bot_conf = (struct ServiceConf*)conf_find_service_type("nickserv");
+    if (bot_conf)
+        bot = bot_find(FindClient(bot_conf->name));
+    struct Client *source = &me;
+    if (bot)
+        source = bot->b_client;
+
+    set_user_mode_on(source, source, cptr, 3, parv);
   }
 
   if (!IsAccount(cptr)) {

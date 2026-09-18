@@ -375,16 +375,16 @@ static void check_pings(struct Event* ev) {
   assert(0 != ev_timer(ev));
 
   next_check += feature_int(FEAT_PINGFREQUENCY);
-  
+
   /* Scan through the client table */
   for (i=0; i <= HighestFd; i++) {
     struct Client *cptr = LocalClientArray[i];
-   
+
     if (!cptr)
       continue;
-     
+
     assert(&me != cptr);  /* I should never be in the local client array! */
-   
+
 
     /* Remove dead clients. */
     if (IsDead(cptr)) {
@@ -394,7 +394,7 @@ static void check_pings(struct Event* ev) {
 
     Debug((DEBUG_DEBUG, "check_pings(%s)=status:%s current: %d",
 	   cli_name(cptr),
-	   IsPingSent(cptr) ? "[Ping Sent]" : "[]", 
+	   IsPingSent(cptr) ? "[Ping Sent]" : "[]",
 	   (int)(CurrentTime - cli_lasttime(cptr))));
 
     /* Unregistered clients pingout after max_ping seconds, they don't
@@ -467,16 +467,16 @@ static void check_pings(struct Event* ev) {
 
     /* Ok, the thing that will happen most frequently, is that someone will
      * have sent something recently.  Cover this first for speed.
-     * -- 
+     * --
      * If it's an unregistered client and hasn't managed to register within
      * max_ping then it's obviously having problems (broken client) or it's
      * just up to no good, so we won't skip it, even if its been sending
-     * data to us. 
+     * data to us.
      * -- hikari
      */
     if ((CurrentTime-cli_lasttime(cptr) < max_ping) && IsRegistered(cptr)) {
       expire = cli_lasttime(cptr) + max_ping;
-      if (expire < next_check) 
+      if (expire < next_check)
 	next_check = expire;
       continue;
     }
@@ -492,7 +492,7 @@ static void check_pings(struct Event* ev) {
       exit_client_msg(cptr, cptr, &me, "Ping timeout");
       continue;
     }
-    
+
     if (!IsPingSent(cptr))
     {
       /* If we haven't PINGed the connection and we haven't heard from it in a
@@ -502,23 +502,23 @@ static void check_pings(struct Event* ev) {
 
       /* If we're late in noticing don't hold it against them :) */
       cli_lasttime(cptr) = CurrentTime - max_ping;
-      
+
       if (IsUser(cptr))
         sendrawto_one(cptr, MSG_PING " :%s", cli_name(&me));
       else
         sendcmdto_prio_one(&me, CMD_PING, cptr, ":%s", cli_name(&me));
     }
-    
+
     expire = cli_lasttime(cptr) + max_ping * 2;
     if (expire < next_check)
       next_check=expire;
   }
-  
+
   assert(next_check >= CurrentTime);
-  
+
   Debug((DEBUG_DEBUG, "[%i] check_pings() again in %is",
 	 CurrentTime, next_check-CurrentTime));
-  
+
   timer_add(&ping_timer, check_pings, 0, TT_ABSOLUTE, next_check);
 }
 
@@ -634,7 +634,7 @@ static char check_file_access(const char *path, char which, int mode) {
   if (!access(path, mode))
     return 1;
 
-  fprintf(stderr, 
+  fprintf(stderr,
 	  "Check on %cPATH (%s) failed: %s\n"
 	  "Please create this file and/or reconfigure the build "
 	  "using -DIRCU_%cPATH and recompile to correct this.\n",
@@ -782,14 +782,13 @@ int main(int argc, char **argv) {
   initmsgtree();
   initstats();
 
-  /* we need this for now, when we're modular this 
+  /* we need this for now, when we're modular this
      should be removed -- hikari */
   ircd_crypt_init();
 
   motd_init();
   hooks_init();
   i18n_init();  /* before module_init(): a module opens its own domain */
-  module_init();
 
   if (!init_conf()) {
     log_write(LS_SYSTEM, L_CRIT, 0, "Failed to read configuration file %s",
@@ -801,6 +800,12 @@ int main(int argc, char **argv) {
     log_write(LS_SYSTEM, L_CRIT, 0, "TLS initialization failed");
     return 10;
   }
+
+  debug_init(thisServer.bootopt & BOOT_TTY);
+
+  /* After init_conf() */
+  module_init();
+
 
 
   /* After init_conf(), so FEAT_WORKER_THREADS has its final value, and so a
@@ -833,7 +838,6 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  debug_init(thisServer.bootopt & BOOT_TTY);
   if (check_pid()) {
     Debug((DEBUG_FATAL, "Failed to acquire PID file lock after fork"));
     exit(2);
@@ -904,6 +908,7 @@ int main(int argc, char **argv) {
 
   write_pidfile();
   init_counters();
+
 
   Debug((DEBUG_NOTICE, "Server ready..."));
   log_write(LS_SYSTEM, L_NOTICE, 0, "Server Ready");

@@ -17,16 +17,18 @@ FROM debian:trixie-slim AS builder-tree
 ARG TLS_BACKEND=openssl
 ARG SANITIZE=
 
+# libpq-dev and libjansson-dev are for modules/workers/postgres, which
+# declares them in its own module.cmake.  Without them that one module is
+# skipped and everything else builds exactly the same.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   gcc \
   make \
+  cmake \
   bison \
-  flex \
-  autoconf \
-  automake \
-  autoconf-archive \
   libc6-dev \
   pkg-config \
+  libpq-dev \
+  libjansson-dev \
   $(if [ "$TLS_BACKEND" = "openssl" ]; then echo libssl-dev; \
   elif [ "$TLS_BACKEND" = "gnutls" ]; then echo libgnutls28-dev; \
   elif [ "$TLS_BACKEND" = "libtls" ]; then echo libtls-dev; fi) \
@@ -36,16 +38,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build/ircu2
 COPY . .
 
-# Remove any host-compiled binaries (e.g., macOS Mach-O) so make rebuilds for Linux
-RUN find . -name '*.o' -delete && rm -f ircd/ircd
+# Drop any host-compiled leftovers (e.g. a macOS build tree) so the build here
+# starts from scratch for Linux.
+RUN rm -rf build && find . -name '*.o' -delete
 
-RUN ./autogen.sh \
-  && if [ -n "$SANITIZE" ]; then \
+RUN if [ -n "$SANITIZE" ]; then \
   export CFLAGS="-fsanitize=$SANITIZE -fno-omit-frame-pointer -g -O1"; \
   export LDFLAGS="-fsanitize=$SANITIZE"; \
   fi; \
-  ./configure --prefix=/opt/ircu --with-maxcon=256 --enable-debug --with-tls=${TLS_BACKEND} \
-  && make
+  cmake -B build \
+  -DCMAKE_INSTALL_PREFIX=/opt/ircu \
+  -DIRCU_MAXCON=256 \
+  -DIRCU_ENABLE_DEBUG=ON \
+  -DIRCU_TLS=${TLS_BACKEND} \
+  -DIRCU_DOMAIN=example.com \
+  && cmake --build build -j"$(nproc)"
+
+# Installed rather than copied out of the build tree, so the modules land
+# in the shape the loader searches for (<type>/<name>.so and
+# <type>/<name>/<name>.so) under IRCU_MPATH, which is $DPATH/modules and
+# therefore /opt/ircu/lib/modules.  Only that directory is carried into
+# the runtime image; the rest of what this installs stays here.
+RUN cmake --install build >/dev/null
 
 # ---------------------------------------------------------------------------
 # Stage: build the current Undernet production release from GitHub
@@ -84,10 +98,14 @@ FROM debian:trixie-slim AS runtime-base
 ARG TLS_BACKEND=openssl
 ARG SANITIZE=
 
+# libpq5 and libjansson4 are what the postgres module links against at run
+# time; harmless on an image that never loads it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
   perl \
   gdb \
   valgrind \
+  libpq5 \
+  libjansson4 \
   $(if [ "$TLS_BACKEND" = "openssl" ]; then echo libssl3t64; \
   elif [ "$TLS_BACKEND" = "gnutls" ]; then echo libgnutls30t64; \
   elif [ "$TLS_BACKEND" = "libtls" ]; then echo libtls28t64; fi) \
@@ -113,6 +131,11 @@ RUN chown ircu:ircu /opt/ircu/lib/iauth-dns-stub.pl
 RUN touch /opt/ircu/lib/ircd.motd && chown ircu:ircu /opt/ircu/lib/ircd.motd
 
 COPY tests/docker/iauth-tilded.pl /opt/ircu/bin/iauth-tilded.pl
+
+# Stands in for the local MTA.  The sendmail module runs whatever the
+# Mail{} block names; this one keeps the message where a test can read it.
+COPY tests/docker/fake-sendmail.sh /opt/ircu/bin/fake-sendmail
+RUN chmod 755 /opt/ircu/bin/fake-sendmail
 RUN chmod +x /opt/ircu/bin/iauth-tilded.pl && chown ircu:ircu /opt/ircu/bin/iauth-tilded.pl
 
 COPY tests/docker/ircd-entrypoint.sh /opt/ircu/lib/ircd-entrypoint.sh
@@ -134,5 +157,25 @@ RUN chown ircu:ircu /opt/ircu/bin/ircd
 # Final: working-tree binary (default target — must stay last)
 # ---------------------------------------------------------------------------
 FROM runtime-base AS runtime-tree
-COPY --from=builder-tree /build/ircu2/ircd/ircd /opt/ircu/bin/ircd
+COPY --from=builder-tree /build/ircu2/build/ircd/ircd /opt/ircu/bin/ircd
 RUN chown ircu:ircu /opt/ircu/bin/ircd
+# The core translation catalogs, where the server reads them (PO_PATH is
+# $DPATH/po); tests/i18n exercises LANGUAGE against them.
+COPY --from=builder-tree /build/ircu2/po/*.po /opt/ircu/lib/po/
+RUN chown -R ircu:ircu /opt/ircu/lib/po
+# Every module the build produced, where the loader looks for them.  A
+# module is inert until a Module{} block or /MODULE LOAD names it, so
+# carrying them into every image costs nothing and means any test can ask
+# for one; tests/identity_db is the first that does.
+COPY --from=builder-tree /opt/ircu/lib/modules /opt/ircu/lib/modules
+RUN chown -R ircu:ircu /opt/ircu/lib/modules
+
+# Somewhere for HISTORY EXPORT to write; tests/history/ checks that a file
+# lands there.  Empty in the image: what goes in it is one person's whole
+# record, so it is created per container and never baked in.
+RUN mkdir -p /opt/ircu/lib/export && chown ircu:ircu /opt/ircu/lib/export
+
+# Where an upload is written as it arrives, and where it is moved to once
+# it has been recorded.  One filesystem, because the move is a rename().
+RUN mkdir -p /opt/ircu/lib/spool /opt/ircu/lib/files \
+  && chown ircu:ircu /opt/ircu/lib/spool /opt/ircu/lib/files

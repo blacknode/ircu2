@@ -84,9 +84,11 @@
 #include "IPcheck.h"
 #include "client.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_chattr.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -95,6 +97,7 @@
 #include "numnicks.h"
 #include "s_debug.h"
 #include "s_misc.h"
+#include "s_auth.h"
 #include "s_user.h"
 #include "send.h"
 #include "sys.h"
@@ -179,6 +182,39 @@ int m_nick(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if (0 == do_nick_name(nick)) {
     send_reply(sptr, ERR_ERRONEUSNICKNAME, arg);
     return 0;
+  }
+
+  /* A module is deciding whether this connection may register, and it was
+   * shown the nickname it has now.  Letting it change underneath would
+   * make the answer be about a different user, so the client is told to
+   * try again; the hold is bounded by FEAT_HOOK_TIMEOUT, so "in a moment"
+   * is the truth.
+   */
+  if (!IsRegistered(cptr) && auth_module_held(cptr)) {
+    send_reply(sptr, SND_EXPLICIT | ERR_BANNICKCHANGE,
+               N_("%s :Registration is being checked, try again in a moment"),
+               nick);
+    return 0;
+  }
+
+  /* Modules get their say once the nick is known to be well-formed, but
+   * before anything is changed.  This is m_nick(), the local-client path:
+   * ms_nick() handles nicks other servers have already accepted, and
+   * vetoing one of those would leave this server disagreeing with the rest
+   * of the network about what the user is called.
+   */
+  if (hook_is_active(HOOK_CLIENT_PRE_NICK)) {
+    struct HookContext hc;
+
+    hook_context_init(&hc);
+    hc.hc_client = sptr;
+    hc.hc_source = cptr;
+    hc.hc_arg = nick;
+
+    if (hook_run(HOOK_CLIENT_PRE_NICK, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_ERRONEUSNICKNAME, nick);
+      return 0;
+    }
   }
 
   /* 

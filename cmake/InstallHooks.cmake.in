@@ -1,0 +1,89 @@
+#
+# Post-install fixups, run by `cmake --install` after the binaries are in
+# place.  This is the CMake port of the install-exec-hook rule that used to
+# live in ircd/Makefile.am.
+#
+# It does four things:
+#   1. create the data directory (mode 700) if it is missing;
+#   2. install the binary under a timestamped name with a symlink to it;
+#   3. apply the requested mode/owner/group to the installed binaries;
+#   4. seed doc/example.conf into the data directory.
+#
+# Ownership changes are attempted, not required: installing as an unprivileged
+# user into their own prefix is the common case, and there `chown` to yourself
+# either succeeds or is a no-op.
+#
+
+set(_bindir  "$ENV{DESTDIR}@CMAKE_INSTALL_FULL_BINDIR@")
+set(_dpath   "$ENV{DESTDIR}@IRCU_DPATH@")
+set(_owner   "@IRCU_OWNER@")
+set(_group   "@IRCU_GROUP@")
+set(_mode    "@IRCU_MODE@")
+set(_symlink "@IRCU_SYMLINK@")
+set(_example "@PROJECT_SOURCE_DIR@/doc/example.conf")
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+function(_ircu_try_chown path)
+  if(NOT _owner AND NOT _group)
+    return()
+  endif()
+  set(_spec "${_owner}")
+  if(_group)
+    set(_spec "${_spec}:${_group}")
+  endif()
+  execute_process(COMMAND chown ${_spec} ${path}
+    RESULT_VARIABLE _res ERROR_QUIET OUTPUT_QUIET)
+  if(NOT _res EQUAL 0)
+    message(WARNING "Could not chown ${_spec} ${path}; leaving ownership as is")
+  endif()
+endfunction()
+
+function(_ircu_chmod mode path)
+  execute_process(COMMAND chmod ${mode} ${path}
+    RESULT_VARIABLE _res ERROR_QUIET OUTPUT_QUIET)
+  if(NOT _res EQUAL 0)
+    message(WARNING "Could not chmod ${mode} ${path}")
+  endif()
+endfunction()
+
+# ---------------------------------------------------------------------------
+# 1. Data directory
+# ---------------------------------------------------------------------------
+if(NOT EXISTS "${_dpath}")
+  message(STATUS "Creating directory ${_dpath}")
+  file(MAKE_DIRECTORY "${_dpath}")
+  _ircu_chmod(700 "${_dpath}")
+  _ircu_try_chown("${_dpath}")
+endif()
+
+# ---------------------------------------------------------------------------
+# 2. Timestamped binary plus symlink
+# ---------------------------------------------------------------------------
+if(NOT _symlink STREQUAL "no")
+  string(TIMESTAMP _tag "%Y%m%d%H%M")
+  message(STATUS "Installing ircd as ${_bindir}/ircd.${_tag}")
+  file(RENAME "${_bindir}/ircd" "${_bindir}/ircd.${_tag}")
+  file(REMOVE "${_bindir}/${_symlink}")
+  file(CREATE_LINK "ircd.${_tag}" "${_bindir}/${_symlink}" SYMBOLIC)
+endif()
+
+# ---------------------------------------------------------------------------
+# 3. Mode and ownership of the installed binaries
+# ---------------------------------------------------------------------------
+file(GLOB _installed "${_bindir}/ircd" "${_bindir}/ircd.*")
+foreach(_bin IN LISTS _installed)
+  _ircu_chmod("${_mode}" "${_bin}")
+  _ircu_try_chown("${_bin}")
+endforeach()
+
+# ---------------------------------------------------------------------------
+# 4. Example configuration
+# ---------------------------------------------------------------------------
+if(EXISTS "${_example}")
+  file(INSTALL "${_example}"
+    DESTINATION "${_dpath}"
+    FILE_PERMISSIONS OWNER_READ OWNER_WRITE)
+  _ircu_try_chown("${_dpath}/example.conf")
+endif()

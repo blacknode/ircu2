@@ -82,6 +82,7 @@
 
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -137,7 +138,7 @@ int ms_xquery(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   /* Look up the target server */
   if (!(acptr = FindNServer(parv[1])))
     return send_reply(sptr, SND_EXPLICIT | ERR_NOSUCHSERVER,
-		      "* :Server has disconnected");
+		      N_("* :Server has disconnected"));
 
   /* Forward the query to its destination */
   if (!IsMe(acptr))

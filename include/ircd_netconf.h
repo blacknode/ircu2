@@ -48,18 +48,13 @@ typedef void (*config_callback_f)(const char *key, const char *old_value, const 
 
 /** Configuration callback structure */
 struct ConfigCallback {
-  char *key_prefix;                    /**< Key prefix to match (e.g., "sasl.") */
+  char *key_prefix;                    /**< Key prefix to match (e.g., "sline.") */
   config_callback_f callback;          /**< Callback function */
   struct ConfigCallback *next;         /**< Next callback */
 };
 
 /** Network configuration options */
 enum NetConf {
-    /* SASL configuration options */
-    NETCONF_SASL_SERVER,
-    NETCONF_SASL_MECHANISMS,
-    NETCONF_SASL_TIMEOUT,
-    
     /* S:line related settings */
     NETCONF_SLINE_SERVER,
     NETCONF_SLINE_HOLD_TIMEOUT,

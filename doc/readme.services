@@ -1,0 +1,227 @@
+SERVICES documentation, last updated on 11 Sep 2026
+
+Network services -- NickServ, ChanServ and the like -- have always been a
+separate program linked to the network as a server of its own (GNUWorld,
+X).  This file describes the pieces that let them live inside the ircd
+instead: a user mode that marks a client as a service of the network, a
+bot API in the core that introduces such clients, a hook that hands a
+service what users say to it, a configuration block that declares the
+services, and a module, irc_services, that puts it all together and is
+the place to write the services themselves.
+
+
+THE PIECES
+==========
+
+  user mode +S     A service bot of the network.  Only the server sets it,
+                   as it alone sets +B (a bot of the network): a user can
+                   neither claim it nor shed it, and neither can an
+                   operator; a MODE from another server is trusted, as
+                   every user mode is.  Test it with IsServiceBot();
+                   IsLocalServiceBot() is true only for a service bot
+                   this server introduced, which is the one whose
+                   messages this server handles.
+
+  include/bot.h    The bot API.  bot_create() with BOT_SERVICE introduces
+                   a client with +S, +k, +o and +B, owned by the calling
+                   module and destroyed when that module unloads.  +k is
+                   what gives it the protections a channel service has
+                   had since long before this file: no KICK, no deop, no
+                   KILL from a local operator, no target limits.  +o is
+                   the standing a service acts with: it is counted and
+                   shown as an operator, and exempt from what exempts
+                   one.  readme.modules, VIRTUAL CLIENTS, explains the
+                   API.
+
+  HOOK_MESSAGE_RECEIVED
+                   Fires when a user -- on this server or any other --
+                   sends a PRIVMSG or NOTICE to a local service bot, in
+                   any of the forms the server accepts (a plain nick,
+                   nick@server, a Pseudo{} alias), and, for each local
+                   service bot on a channel, for every message to that
+                   channel.  hc_client is the bot, hc_source the sender,
+                   hc_channel the channel or NULL, hc_arg the text and
+                   hc_notice whether it was a NOTICE.  The message goes
+                   nowhere else: the bot has no connection.
+
+  HOOK_CONFIG_LOADED
+                   Fires once at start-up, when the configuration has
+                   been read and the server is ready to introduce
+                   clients, and at the end of every rehash.  A module
+                   reads the Service{} blocks here, not in mi_init:
+                   mi_init runs in the middle of the parse.
+
+  Service{}        One block per service bot; see CONFIGURATION.
+
+  irc_services     The module.  modules/services/irc_services/.
+
+
+CONFIGURATION
+=============
+
+  Module { name = "irc_services"; };
+
+  Service {
+    name = "NickServ";               # nick; required, unique
+    type = "nickserv";               # which service this is; required
+    username = "services";           # optional; default: nick, lower case
+    host = "services.example.net";   # optional; default: <nick>.<BOT_HOSTNAME>
+    description = "Nickname Services"; # optional; default: "<NETWORK> bot"
+    channel = "#services";           # optional, repeatable: joins with ops
+    "max_accounts" = 3;              # optional: read by the type, not the core
+  };
+  Service { name = "ChanServ"; type = "chanserv"; channel = "#services"; };
+
+The server checks the block for what it can -- a name that is a nick, a
+type, no two blocks with the same name -- and records it.  What a type
+means is the module's business: irc_services knows "nickserv" and
+"chanserv" and refuses, in the log and to operators, a block whose type
+it does not.  The list is cleared and rebuilt on every rehash.
+
+Anything beyond those six fields is a free-form option: a quoted name, a
+value that is a quoted string or a number (with the usual time suffixes,
+so "grace_period" = 1 minutes; is 60), and no keyword in the grammar.
+What a service needs to be told is the service's business, and a block of
+its own for each service would mean a lexer keyword for every option any
+service ever grows.  The core keeps them verbatim, in file order, and the
+module that implements the type reads the ones it knows:
+
+  const struct ServiceConf *svc = conf_find_service_type("nickserv");
+  int max = conf_service_option_int(svc, "max_accounts", 3);
+  const char *pfx = conf_service_option(svc, "guest_prefix", "guest-");
+
+Names are compared case-insensitively and the last value of a repeated
+name wins.  conf_service_option_int() returns its default both when the
+option is absent and when its value is not a number, with a warning in
+the log, so a typo does not silently become zero.  An option no module
+reads is not an error -- a setting for a service this server does not run
+costs nothing.
+
+A Pseudo{} block gives users a short command for a service:
+
+  Pseudo "NS" { name = "NickServ"; nick = "NickServ@hub.example.net"; };
+
+nick@server addressing reaches a local service bot even though the server
+is not itself flagged as a service.  For a user on another server it
+still needs that server to see this one as a service, which it does not
+advertise; a user elsewhere on the network reaches the bot by its nick.
+
+
+WHAT IRC_SERVICES DOES
+======================
+
+On HOOK_CONFIG_LOADED -- or at once, if an operator loaded it by hand,
+since the configuration is then complete and the server up -- the module
+makes its bots match the Service{} blocks: a block with no bot gets one,
+a bot whose block is gone quits, a bot whose block changed (a different
+type, host, description, channel list) quits and comes back as the block
+now says, and a bot whose block is unchanged is left alone.  /REHASH is
+therefore how an operator adds or removes a service.
+
+/BOT LIST shows service bots with their module; /BOT JOIN, PART and SAY
+work on them; /BOT RENAME and DESTROY refuse them.
+
+A service bot may still be taken away by the network: a KILL from an
+operator on another server, or a nick collision at a netjoin that this
+server loses.  The module notices through HOOK_CLIENT_EXITING and brings
+the bot back from a timer, five seconds later.  If a user has taken the
+nick meanwhile, that user is killed, as services have always done; if
+what holds the nick is itself a service (+S or +k -- most likely the
+same Service{} block on another server, which is a configuration error
+between two servers rather than something to fight over), the module
+waits and tries again, backing off by doubling to five minutes.  A name
+that is not a nick at all, or that a server has, is given up on with a
+message to operators.  Unloading the module quits its bots.
+
+A message for a bot goes to svc_dispatch() in dispatch.c.  The first
+word names a command, looked up in the type's own table and then in the
+table every type shares (HELP, VERSION); the rest are its arguments.  A
+command asks for a minimum number of arguments, may be restricted to
+IRC operators, and may or may not be usable from a channel: a line on a
+channel a service is on counts only if it starts with '!', and only for
+commands flagged SVC_CMD_FANTASY, which then see the channel in
+sc_channel rather than as an argument.  Replies are NOTICEs from the
+bot to the user, through svc_reply().  A command sent as a NOTICE is
+run, but its errors are not answered, so that two automata can never
+end up answering each other; a message from another service, or a CTCP,
+is ignored for the same reason.
+
+
+ADDING A SERVICE, OR A COMMAND
+==============================
+
+Everything a service is lives in one file, modules/services/irc_services/
+svc_<type>.c:
+
+  static void cmd_register(struct ServiceCall* call)
+  {
+    /* call->sc_argv[0] is "REGISTER", sc_argv[1..] the arguments,
+     * call->sc_source the user, call->sc_channel the channel if this
+     * came as !register, call->sc_service->sv_client the bot itself.
+     */
+    svc_reply(call, "Registered %s.", call->sc_argv[1]);
+  }
+
+  static const struct ServiceCommand commands[] = {
+    { "REGISTER", "REGISTER <password> <email>",
+      "Register your nick.", 2, 0, cmd_register },
+    { "INFO", "INFO <nick>", "Show what is known about a nick.",
+      1, 0, cmd_info },
+    { NULL, NULL, NULL, 0, 0, NULL }
+  };
+
+  const struct ServiceType svc_type_nickserv = {
+    "nickserv", "Nickname services", commands
+  };
+
+A new type is a new file like it, its type declared in services.h and
+listed in service_types[] in irc_services.c.  A new command is a row in
+the table and the function above it.  HELP reads the table, so it needs
+nothing.
+
+
+THE MAIN THREAD, AND SLOW WORK
+==============================
+
+A command runs in the main thread, inside the hook that received the
+message, with the whole server waiting.  It may read and change any core
+state -- that is what makes it a service -- and it may not block.  A
+command that needs a database, a password hash, anything slow, hands
+the work off and answers later:
+
+  - db_query()/db_exec() (include/db.h) take the query and call back in
+    the main thread with the rows.  Give the callback the user's numnick
+    through the task, never the struct Client pointer: the user may have
+    quit by the time the answer arrives, and worker_task_client() says
+    whether they are still here.
+
+  - module_submit_work() (include/module.h) runs a WorkFn in a pool
+    thread, which must obey the one rule in readme.workers -- it touches
+    no core state -- and calls back in the main thread with the result.
+
+In both cases the reply is sent from the callback, with
+bot_send_user() and a fresh lookup of the user.  The services in the
+tree today do neither, because they have nothing slow to do; the shape
+is what the next one follows.
+
+
+WHAT IS NOT HERE YET
+====================
+
+  - Nothing is stored.  NickServ has no accounts and ChanServ no channel
+    registrations; each has one command, INFO, that reads what the
+    server already knows.  The database API and per-module SQL
+    migrations (readme.database, readme.migrations) are what the real
+    ones are built on.
+
+  - No SVSNICK and no channel modes set by a service: a service sets
+    channel modes the way any operator's bot would, through the
+    ModeBuf, and irc_services does not do it.  User modes it does:
+    bot_set_user_mode() lets a service bot put +r on (or take it off)
+    any user but an operator -- see readme.accounting -- and NickServ
+    uses it to freeze a client wearing a registered nickname it has not
+    proved is its own (nick_policy.c, doc/readme.sasl).
+
+  - One server runs a given service.  Two servers with the same
+    Service{} block will each try to introduce the same nick; the
+    back-off keeps them from fighting, but they do not cooperate.

@@ -101,6 +101,7 @@ test_bit0_divergence(void)
     assert(search_best_data(tree, "2001:db8::1") == &data_low);
     assert(search_best_data(tree, "8000::1") == &data_high);
     assert(search_best_data(tree, "4000::1") == 0);
+    cidr_free_tree(tree);
     printf("Passed: bit 0 divergence\n");
 }
 
@@ -155,6 +156,7 @@ test_add_find(void)
     assert(cidr_rem_node_by_cidr(tree, &addr, bits) == 1);
     assert(search_best_data(tree, "10.20.30.41") == &data_v4_wide);
     assert(search_best_data(tree, "10.20.30.40") == &data_v4_host);
+    cidr_free_tree(tree);
     printf("Passed: add/find/remove\n");
 }
 
@@ -195,6 +197,7 @@ test_iter_remove_during_iteration(void)
     assert(search_best_data(tree, "10.20.30.1") == 0);
     assert(search_best_data(tree, "192.168.1.1") == 0);
     assert(search_best_data(tree, "2001:db8::1") == 0);
+    cidr_free_tree(tree);
     printf("Passed: node removal during iteration\n");
 }
 
@@ -220,6 +223,7 @@ test_iter_continue(void)
 
     assert(guard <= 64);
     assert(visited == 4);
+    cidr_free_tree(tree);
     printf("Passed: continue during iteration\n");
 }
 
@@ -247,6 +251,7 @@ test_closest_data_parent(void)
     assert(node != 0 && node->data == &d1);
     node = cidr_get_closest_data_parent(node);
     assert(node == 0);
+    cidr_free_tree(tree);
     printf("Passed: closest data parent\n");
 }
 
@@ -298,6 +303,7 @@ test_empty_node_removal(void)
     /* Root nodes must survive removal attempts. */
     node = _cidr_find_exact_node_raw(tree, &addr, bits);
     assert(node == 0);
+    cidr_free_tree(tree);
     printf("Passed: empty node removal\n");
 }
 
@@ -334,6 +340,7 @@ test_iter_virtual_nodes(void)
     /* 6 data nodes + 2 family roots + 1 virtual split node. */
     assert(all_nodes == 9);
     assert(virtual_nodes == 3);
+    cidr_free_tree(tree);
     printf("Passed: virtual node iteration\n");
 }
 

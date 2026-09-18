@@ -1,24 +1,25 @@
-"""Comprehensive channel-ban matching for TRUST_USERNAME paired identities.
+"""Channel-ban matching for TRUST_USERNAME paired identities.
 
-When a user is fully hidden (+x + account), bans must match these identities:
+A hidden user has two complete identities a ban may match:
 
-  ~user@realhost          (real)
-  user@account.hiddenhost (visible)
+  ~user@realhost   (real: what the server knows and operators see)
+  user@<vhost>     (visible: what everyone else sees)
 
-Mixed forms such as user@realhost must not match.
+Mixed forms such as user@realhost must not match.  Every user is hidden
+from registration on, so there is no "before" state any more; the real
+host is what an operator's WHOIS (338) reports.
 """
 
 import asyncio
 import pytest
 
 from irc_client import IRCClient
-from p10_server import P10Server
 
 from trust_username.helpers import (
-    HIDDEN_HOST_SUFFIX,
-    hidden_host,
-    hide_via_services,
+    REAL_HOST,
+    VIS_HOST,
     oper_up,
+    whois_actual,
     whois_userline,
 )
 
@@ -26,64 +27,37 @@ from trust_username.helpers import (
 pytestmark = pytest.mark.multi_server
 
 
-@pytest.fixture
-async def services(ircd_network):
-    hub = ircd_network["hub"]
-    srv = P10Server(
-        name="services.test.net",
-        numeric=4,
-        password="testpass",
-    )
-    await srv.connect(hub["host"], hub["server_port"])
-    await srv.handshake()
-    yield srv
-    await srv.disconnect()
-
-
 async def _ban_join_check(
     ircd_network,
-    services,
     *,
     channel: str,
-    account: str,
     nick_op: str,
     nick_victim: str,
     ban_mask: str,
     expect_banned: bool,
-    capture_real_host: bool = False,
 ):
-    """Hide victim, set ban_mask, re-JOIN, assert 474 or 366."""
+    """Set ban_mask, have the victim JOIN, assert 474 or 366."""
     hub = ircd_network["hub"]
 
     chanop = IRCClient()
     await chanop.connect(hub["host"], hub["port"])
     await chanop.register(nick_op, "testuser", "Test User")
+    await oper_up(chanop)
 
     victim = IRCClient()
     await victim.connect(hub["host"], hub["port"])
     await victim.register(nick_victim, "testuser", "Test User")
 
-    real_host = None
     try:
         await chanop.send(f"JOIN {channel}")
         await chanop.wait_for("366")
-        await victim.send(f"JOIN {channel}")
-        await victim.wait_for("366")
 
-        if capture_real_host:
-            _, real_host = await whois_userline(chanop, nick_victim)
-            assert not real_host.endswith(HIDDEN_HOST_SUFFIX), real_host
-
-        await hide_via_services(services, nick_victim, account)
-        vis_host = hidden_host(account)
-
-        # Confirm visible WHOIS form after hide.
-        vis_user, whois_host = await whois_userline(chanop, nick_victim)
+        real_user, real_host = await whois_actual(chanop, nick_victim)
+        assert real_user == "~testuser", real_user
+        assert real_host == REAL_HOST, real_host
+        vis_user, vis_host = await whois_userline(chanop, nick_victim)
         assert vis_user == "testuser", f"Expected visible untilded user, got {vis_user!r}"
-        assert whois_host == vis_host
-
-        await victim.send(f"PART {channel}")
-        await victim.wait_for("PART")
+        assert vis_host == VIS_HOST, vis_host
 
         mask = ban_mask.format(real_host=real_host, vis_host=vis_host)
         await chanop.send(f"MODE {channel} +b {mask}")
@@ -111,251 +85,110 @@ async def _ban_join_check(
 
 # --- Should match: real identity ---
 
-async def test_ban_real_tilded_user_any_host(ircd_network, services):
+async def test_ban_real_tilded_user_any_host(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_r1", account="TuBanR1",
-        nick_op="tubr1o", nick_victim="tubr1v",
-        ban_mask="*!~testuser@*",
-        expect_banned=True,
+        ircd_network, channel="#tu71_b1", nick_op="tu71b1o", nick_victim="tu71b1v",
+        ban_mask="*!~testuser@*", expect_banned=True,
     )
 
 
-async def test_ban_real_tilded_user_realhost(ircd_network, services):
+async def test_ban_real_tilded_user_realhost(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_r2", account="TuBanR2",
-        nick_op="tubr2o", nick_victim="tubr2v",
-        ban_mask="*!~testuser@{real_host}",
-        expect_banned=True,
-        capture_real_host=True,
+        ircd_network, channel="#tu71_b2", nick_op="tu71b2o", nick_victim="tu71b2v",
+        ban_mask="*!~testuser@{real_host}", expect_banned=True,
     )
 
 
-async def test_ban_real_tilded_user_hiddenhost(ircd_network, services):
-    """Classic path: real ~user still matches against the hidden host field."""
+async def test_ban_real_tilded_user_hiddenhost(ircd_network):
+    """A tilded user with the hidden host also matches: the visible host is
+    the user's host as far as the channel is concerned."""
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_r3", account="TuBanR3",
-        nick_op="tubr3o", nick_victim="tubr3v",
-        ban_mask="*!~testuser@{vis_host}",
-        expect_banned=True,
+        ircd_network, channel="#tu71_b3", nick_op="tu71b3o", nick_victim="tu71b3v",
+        ban_mask="*!~testuser@{vis_host}", expect_banned=True,
     )
 
 
 # --- Should match: visible identity ---
 
-async def test_ban_visible_user_any_host(ircd_network, services):
+async def test_ban_visible_user_any_host(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_v1", account="TuBanV1",
-        nick_op="tubv1o", nick_victim="tubv1v",
-        ban_mask="*!testuser@*",
-        expect_banned=True,
+        ircd_network, channel="#tu71_b4", nick_op="tu71b4o", nick_victim="tu71b4v",
+        ban_mask="*!testuser@*", expect_banned=True,
     )
 
 
-async def test_ban_visible_user_hiddenhost(ircd_network, services):
+async def test_ban_visible_user_hiddenhost(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_v2", account="TuBanV2",
-        nick_op="tubv2o", nick_victim="tubv2v",
-        ban_mask="*!testuser@{vis_host}",
-        expect_banned=True,
+        ircd_network, channel="#tu71_b5", nick_op="tu71b5o", nick_victim="tu71b5v",
+        ban_mask="*!testuser@{vis_host}", expect_banned=True,
     )
 
 
-async def test_ban_any_user_hiddenhost(ircd_network, services):
+async def test_ban_any_user_hiddenhost(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_v3", account="TuBanV3",
-        nick_op="tubv3o", nick_victim="tubv3v",
-        ban_mask="*!*@{vis_host}",
-        expect_banned=True,
+        ircd_network, channel="#tu71_b6", nick_op="tu71b6o", nick_victim="tu71b6v",
+        ban_mask="*!*@{vis_host}", expect_banned=True,
     )
 
 
-async def test_ban_nick_visible_user_hiddenhost(ircd_network, services):
+async def test_ban_any_user_realhost(ircd_network):
+    """A ban an operator places on the real host still lands."""
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_v4", account="TuBanV4",
-        nick_op="tubv4o", nick_victim="tubv4v",
-        ban_mask="tubv4v!testuser@{vis_host}",
-        expect_banned=True,
+        ircd_network, channel="#tu71_b6r", nick_op="tu71b6ro", nick_victim="tu71b6rv",
+        ban_mask="*!*@{real_host}", expect_banned=True,
     )
 
 
-# --- Must not match: mixed / wrong identities ---
-
-async def test_ban_rejects_visible_user_realhost(ircd_network, services):
+async def test_ban_nick_visible_user_hiddenhost(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_n1", account="TuBanN1",
-        nick_op="tubn1o", nick_victim="tubn1v",
-        ban_mask="*!testuser@{real_host}",
-        expect_banned=False,
-        capture_real_host=True,
+        ircd_network, channel="#tu71_b7", nick_op="tu71b7o", nick_victim="tu71b7v",
+        ban_mask="tu71b7v!testuser@{vis_host}", expect_banned=True,
     )
 
 
-async def test_ban_rejects_wrong_visible_user(ircd_network, services):
+# --- Should NOT match ---
+
+async def test_ban_rejects_visible_user_realhost(ircd_network):
+    """user@realhost is a mixed identity: nobody is that."""
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_n2", account="TuBanN2",
-        nick_op="tubn2o", nick_victim="tubn2v",
-        ban_mask="*!otheruser@{vis_host}",
-        expect_banned=False,
+        ircd_network, channel="#tu71_b8", nick_op="tu71b8o", nick_victim="tu71b8v",
+        ban_mask="*!testuser@{real_host}", expect_banned=False,
     )
 
 
-async def test_ban_rejects_wrong_hidden_account(ircd_network, services):
+async def test_ban_rejects_wrong_visible_user(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_n3", account="TuBanN3",
-        nick_op="tubn3o", nick_victim="tubn3v",
-        ban_mask="*!testuser@WrongAcct.users.undernet.org",
-        expect_banned=False,
+        ircd_network, channel="#tu71_b9", nick_op="tu71b9o", nick_victim="tu71b9v",
+        ban_mask="*!otheruser@{vis_host}", expect_banned=False,
     )
 
 
-async def test_ban_rejects_unrelated_nick(ircd_network, services):
+async def test_ban_rejects_wrong_hidden_host(ircd_network):
     await _ban_join_check(
-        ircd_network, services,
-        channel="#tuban_n4", account="TuBanN4",
-        nick_op="tubn4o", nick_victim="tubn4v",
-        ban_mask="someoneelse!testuser@{vis_host}",
-        expect_banned=False,
+        ircd_network, channel="#tu71_b10", nick_op="tu71b10o", nick_victim="tu71b10v",
+        ban_mask="*!testuser@AAAAAA.AAAAAA.v4", expect_banned=False,
     )
 
 
-# --- Feature off: visible (untilded) identity must not match ---
+async def test_ban_rejects_unrelated_nick(ircd_network):
+    await _ban_join_check(
+        ircd_network, channel="#tu71_b11", nick_op="tu71b11o", nick_victim="tu71b11v",
+        ban_mask="othernick!testuser@{vis_host}", expect_banned=False,
+    )
 
-async def test_ban_feature_off_untilded_does_not_match(ircd_network, services):
+
+async def test_ban_applies_to_existing_member_visible_mask(ircd_network):
+    """A ban on the visible mask silences a member already in the channel."""
     hub = ircd_network["hub"]
-    channel = "#tuban_off1"
-    account = "TuBanOff1"
-
-    oper = IRCClient()
-    await oper.connect(hub["host"], hub["port"])
-    await oper.register("tuboffo", "testuser", "Test User")
-    await oper_up(oper)
+    channel = "#tu71_b12"
 
     chanop = IRCClient()
     await chanop.connect(hub["host"], hub["port"])
-    await chanop.register("tuboffc", "testuser", "Test User")
+    await chanop.register("tu71b12o", "testuser", "Test User")
 
     victim = IRCClient()
     await victim.connect(hub["host"], hub["port"])
-    await victim.register("tuboffv", "testuser", "Test User")
-
-    try:
-        await oper.send("SET TRUST_USERNAME FALSE")
-        await oper.wait_for("NOTICE", timeout=5.0)
-
-        await chanop.send(f"JOIN {channel}")
-        await chanop.wait_for("366")
-        await victim.send(f"JOIN {channel}")
-        await victim.wait_for("366")
-
-        await hide_via_services(services, "tuboffv", account)
-        username, host = await whois_userline(chanop, "tuboffv")
-        assert username.startswith("~"), username
-        assert host == hidden_host(account)
-
-        await victim.send(f"PART {channel}")
-        await victim.wait_for("PART")
-
-        await chanop.send(f"MODE {channel} +b *!testuser@*")
-        await chanop.wait_for("MODE")
-        await asyncio.sleep(0.3)
-
-        await victim.send(f"JOIN {channel}")
-        msg = await victim.wait_for("366", timeout=5.0)
-        assert msg.command == "366", (
-            f"With TRUST_USERNAME off, untilded ban must not match: {msg}"
-        )
-    finally:
-        try:
-            await oper.send("SET TRUST_USERNAME TRUE")
-            await oper.wait_for("NOTICE", timeout=3.0)
-        except Exception:
-            pass
-        for client in (oper, chanop, victim):
-            try:
-                await client.send("QUIT :cleanup")
-            except Exception:
-                pass
-            await client.disconnect()
-
-
-async def test_ban_feature_off_tilded_still_matches(ircd_network, services):
-    hub = ircd_network["hub"]
-    channel = "#tuban_off2"
-    account = "TuBanOff2"
-
-    oper = IRCClient()
-    await oper.connect(hub["host"], hub["port"])
-    await oper.register("tubof2o", "testuser", "Test User")
-    await oper_up(oper)
-
-    chanop = IRCClient()
-    await chanop.connect(hub["host"], hub["port"])
-    await chanop.register("tubof2c", "testuser", "Test User")
-
-    victim = IRCClient()
-    await victim.connect(hub["host"], hub["port"])
-    await victim.register("tubof2v", "testuser", "Test User")
-
-    try:
-        await oper.send("SET TRUST_USERNAME FALSE")
-        await oper.wait_for("NOTICE", timeout=5.0)
-
-        await chanop.send(f"JOIN {channel}")
-        await chanop.wait_for("366")
-        await victim.send(f"JOIN {channel}")
-        await victim.wait_for("366")
-
-        await hide_via_services(services, "tubof2v", account)
-
-        await victim.send(f"PART {channel}")
-        await victim.wait_for("PART")
-
-        await chanop.send(f"MODE {channel} +b *!~testuser@{hidden_host(account)}")
-        await chanop.wait_for("MODE")
-        await asyncio.sleep(0.3)
-
-        await victim.send(f"JOIN {channel}")
-        msg = await victim.wait_for("474", timeout=5.0)
-        assert msg.command == "474"
-    finally:
-        try:
-            await oper.send("SET TRUST_USERNAME TRUE")
-            await oper.wait_for("NOTICE", timeout=3.0)
-        except Exception:
-            pass
-        for client in (oper, chanop, victim):
-            try:
-                await client.send("QUIT :cleanup")
-            except Exception:
-                pass
-            await client.disconnect()
-
-
-# --- Already present: MODE +b should mark banned member ---
-
-async def test_ban_applies_to_existing_member_visible_mask(ircd_network, services):
-    """A +b on the visible identity must ban an already-joined hidden user."""
-    hub = ircd_network["hub"]
-    channel = "#tuban_exm"
-    account = "TuBanExM"
-
-    chanop = IRCClient()
-    await chanop.connect(hub["host"], hub["port"])
-    await chanop.register("tubemo", "testuser", "Test User")
-
-    victim = IRCClient()
-    await victim.connect(hub["host"], hub["port"])
-    await victim.register("tubemv", "testuser", "Test User")
+    await victim.register("tu71b12v", "testuser", "Test User")
 
     try:
         await chanop.send(f"JOIN {channel}")
@@ -363,17 +196,13 @@ async def test_ban_applies_to_existing_member_visible_mask(ircd_network, service
         await victim.send(f"JOIN {channel}")
         await victim.wait_for("366")
 
-        await hide_via_services(services, "tubemv", account)
-        vis_host = hidden_host(account)
-
-        await chanop.send(f"MODE {channel} +b *!testuser@{vis_host}")
+        await chanop.send(f"MODE {channel} +b *!testuser@{VIS_HOST}")
         await chanop.wait_for("MODE")
         await asyncio.sleep(0.3)
 
-        # Banned members cannot speak.
         await victim.send(f"PRIVMSG {channel} :should be blocked")
         msg = await victim.wait_for("404", timeout=5.0)
-        assert msg.command == "404", f"Expected cannot send to channel: {msg}"
+        assert msg.command == "404", f"Expected ERR_CANNOTSENDTOCHAN, got: {msg}"
     finally:
         for client in (chanop, victim):
             try:

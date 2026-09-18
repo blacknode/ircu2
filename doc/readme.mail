@@ -1,0 +1,178 @@
+Mail, and the token that verifies an address
+============================================
+
+Phase 1 of doc/proposals/007-identidad.md, the piece that was left for
+when it was needed: an account is registered to an address, and until
+somebody reads a message sent to that address, the address is a claim.
+
+Two things live here, and they are not the same thing.
+
+**Verifying an address is the core's.**  It is a proof, like a password
+is a proof: what it decides is whether a client may claim an identity,
+and that decision has to be the same on every server of the network.
+include/mail.h and ircd/mail.c hold it, and ircd/m_account.c holds the
+half that needs a client.
+
+**Delivering the mail is a module's.**  SMTP has a server at the other
+end, a configuration, a queue and a set of failure modes that have
+nothing to do with IRC -- and there is more than one way to do it: hand
+it to the local MTA, speak SMTP to a relay, call somebody's HTTP API.  So
+the core holds the `Mail{}` block and the messages in flight and
+dispatches to one registered provider, which is the arrangement db.h and
+cache.h have.  `modules/workers/sendmail/` is the one that ships.
+
+
+THE TOKEN
+=========
+
+Signed, not stored.  A token carries what it asserts -- an address and an
+expiry -- and an HMAC over it:
+
+  1.<base64 of "expiry:address">.<base64 of 16 bytes of HMAC-SHA-256>
+
+The key is derived from the `Security{}` key with HMAC and a label of its
+own, so it is not the key that ciphers hostnames and cannot be used as
+one.  Every server of a network has that key by construction
+(doc/readme.accounting), which is what makes a token minted on one server
+recognisable on another -- and what makes "nothing is written down" work:
+there is no table of outstanding tokens to keep, to expire, or to leak.
+
+The cost of not storing them is that a token cannot be revoked before it
+expires.  That is why the window is short (`verify_window`, a day by
+default) and why what a token grants is one thing only: the address is
+marked verified.  It is not a login, it does not grant `+r`, and it
+cannot be replayed into one.
+
+Sixteen bytes of HMAC and not thirty-two because a person pastes this
+back, and 128 bits is far past what forging one is worth.
+
+
+WHAT A USER DOES
+================
+
+  /msg NickServ REGISTER maria@example.net secreto
+
+registers the nickname and, if this server can send mail, posts a
+message to the address.  The message says what to send back:
+
+  ACCOUNT VERIFY 1.MTc4OTY1NTIwNDpt...==.j4TQgGhY+ycIX0MBXWw9qA==
+
+or, with `verify_url` set in the `Mail{}` block, a link that carries the
+same token to whatever serves that link.
+
+  ACCOUNT VERIFY
+
+with no token asks for another message, to the address this client
+authenticated with.  There is no form of this command that takes an
+address: that would be a way to have the server post a message to
+anybody, signed by the network.  NickServ offers the same two things --
+`VERIFY` and `VERIFY <token>` -- in its own words, and they come back
+through the same function, so there is one path from a token to a
+verified address.
+
+The answers are numerics, because the proof is the core's:
+
+  988  RPL_VERIFYSENT   a message is on its way to <address>
+  989  RPL_VERIFIED     <address> is verified
+  983  ERR_ACCOUNTFAIL  why not
+  986  ERR_NOTAUTHENTICATED  you have no address for this to be sent to
+
+A token that is not one and a token from another network get the same
+answer, deliberately: telling them apart tells whoever is trying which
+half they got right.  An expired token says so, because that one is
+useful -- the answer is "ask for another".
+
+
+CONFIGURATION
+=============
+
+  Mail {
+    from = "noreply@example.net";
+    program = "/usr/sbin/sendmail";
+    timeout = 30 seconds;
+    verify_window = 1 days;
+    resend_interval = 5 minutes;
+    # verify_url = "https://example.net/verify?t=%s";
+  };
+
+`from` is the only required field, and the core applies it to every
+message: a provider cannot forget it and two providers cannot disagree
+about it.  `program` is read by the sendmail module and not by the core,
+exactly as `Redis{}`'s host is read by the redis driver.
+
+`timeout` is how long the server waits for the provider to say whether it
+sent the message, clamped to two minutes.  Nothing waits for *delivery*:
+a client is told the message was accepted, which is the only thing the
+server can honestly say without a mail server and a person reading their
+inbox.
+
+`resend_interval` is the shortest gap between two messages to one
+connection.  It is per connection and not per account because what is
+being rationed is this server mailing somebody, and the client asking has
+not necessarily proved anything about the address yet.
+
+`verify_url` must contain `%s`, where the token goes.  Without it the
+message carries the command to send back, which is what a network with no
+web side wants.
+
+With no `Mail{}` block, `mail_available()` is false, nothing is sent, and
+NickServ does not offer.  A server that sends no mail is an ordinary
+server.
+
+
+THE SENDMAIL MODULE
+===================
+
+  Module { name = "sendmail"; };
+
+The default because it needs nothing: every host that sends mail at all
+has a `sendmail`, its interface has not changed in forty years, and the
+queue, the retries, the TLS and the reputation are somebody else's
+problem -- which is where they belong.
+
+**The program runs on a worker thread**, never on the main thread: fork,
+exec, write and wait all block, and an MTA that takes a second to accept
+a message would be a second in which the server did nothing at all.  What
+crosses to the worker is bytes -- the composed message and the program to
+run -- and what comes back is an exit status, which is the rule
+doc/readme.workers states.  With `FEAT_WORKER_THREADS` at zero the module
+says so and refuses, the way the identity module refuses to hash a
+password.
+
+The message is composed by the module, because the format is the one that
+program expects: headers and a body on stdin, `-t` to read the recipient
+from the headers, `-i` so a lone dot does not end it early, and `-f` for
+the envelope sender.  The core has already refused anything with a
+newline in the address or the subject, which is what would otherwise turn
+one of those lines into several.
+
+A module that speaks SMTP to a relay registers the same way and the core
+does not care which is loaded.  It will want fields in the `Mail{}` block
+that are not there yet -- a host, a port, credentials -- and it can have
+them when it exists: configuration nobody reads is configuration invented
+blind.
+
+
+WHAT THIS IS NOT
+================
+
+- It is **not a login**.  A verified address says the address is real.
+  What grants `+r` is a credential, and that is doc/readme.sasl.
+- It is **not a queue**.  A message that the provider could not send is
+  logged and dropped; the user asks again.  Retrying belongs to the MTA,
+  which has spent forty years learning how.
+- It does **not cross a link**.  Every server checks the same signature
+  against the same key and asks the same provider, so there is nothing to
+  route -- the same reason AUTHENTICATE and ACCOUNT have no P10 token.
+
+
+WHERE TO LOOK
+=============
+
+  include/mail.h            the register, the token, the block
+  ircd/mail.c               all of it that needs no client
+  ircd/m_account.c          ACCOUNT VERIFY, and the message composed
+  ircd/test/mail_t.c        the token, one changed character at a time
+  modules/workers/sendmail/ the provider that ships
+  modules/services/irc_services/svc_nickserv.c   VERIFY, in the bot's words
+  tests/identity_db/        the end-to-end test, with a stand-in MTA

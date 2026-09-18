@@ -1,0 +1,1292 @@
+MODULE documentation, last updated on 11 Sep 2026
+
+A module is a shared object the server loads at run time.  It can add
+commands, user modes and channel modes, and attach to points in the life
+of a user or a channel, in some cases deciding whether the server carries
+on.
+
+
+READ THIS FIRST
+===============
+
+A module runs INSIDE the server process and shares its address space.
+
+  * A module that crashes takes the whole server with it.
+  * A module that corrupts memory corrupts the server's memory.
+  * A module can read anything the server can, including the TLS private
+    key and every client's IP address.
+  * A module that blocks stalls every connected client, because the server
+    is single-threaded.
+
+There is no sandbox and no way to add one without changing what a module
+is.  Load only modules you have read and trust, from people you trust.
+This is an operational decision, not a technical one, and the server
+cannot make it for you.
+
+
+WRITING A MODULE
+================
+
+A module exports exactly one symbol, a struct ModuleInfo named
+ircu_module.  Everything else the server needs, it reaches through that.
+
+  #include "config.h"
+  #include "module.h"
+
+  static int example_init(struct ModuleHandle *mod)
+  {
+    /* register commands, modes and hooks here */
+    return 0;                 /* non-zero refuses to load */
+  }
+
+  static void example_fini(struct ModuleHandle *mod)
+  {
+    /* release your own resources; the server reverts its own */
+  }
+
+  struct ModuleInfo ircu_module = {
+    IRCU_MODULE_ABI,
+    "example",                /* name, as /MODULE UNLOAD takes it */
+    "1.0.0",                  /* version */
+    "you <you@example.org>",  /* author */
+    "One line about what it does",
+    example_init,
+    example_fini,             /* may be NULL */
+    NULL                      /* mi_rehash, may be NULL */
+  };
+
+mi_init runs once after the module loads.  Returning non-zero aborts the
+load, and the server unloads the module again -- use it when the module
+cannot do its job, for instance because a command name it needs is taken.
+
+mi_fini runs once before the module unloads.  Anything registered through
+the module API is reverted by the server whether or not mi_fini does it,
+so most modules can leave it NULL.
+
+mi_rehash runs on /REHASH when the module stays loaded.  If the module's
+file changed on disk, the server unloads and reloads it instead, and
+mi_rehash is not called.
+
+
+THE ABI
+=======
+
+IRCU_MODULE_ABI is compared exactly.  A module built against a different
+value is refused with an entry in the log.
+
+There is no backwards compatibility, on purpose.  When the ABI changes,
+modules are recompiled.  A mismatched pointer layout in a shared address
+space is not a class of failure worth being lenient about, and the
+alternative -- a module quietly reading the wrong field -- is far worse
+than one that will not load.
+
+What counts as a change is anything a module compiles against, not only
+the obvious ones.  A new field in a struct the module sees, a new hook
+point, and a **new entry in enum Feature** all change it: the feature
+enum is an index into a table the server holds, so a value inserted in
+the middle of it makes a module built against the old header read the
+feature next door.  Nothing in a shared address space announces that; the
+ABI number is what does.
+
+Check the ABI a module was built against with /STATS M.
+
+
+BUILDING
+========
+
+Modules live under modules/, organised by kind, and are built by the same
+CMake run as the server:
+
+  modules/<type>/<name>.c      a module self-contained in one file
+  modules/<type>/<name>/       a module built from a directory
+
+<type> is a directory name that only organises the tree -- commands,
+modes, hooks and workers are the ones in use, and a new one is just a new
+directory.  The type is not part of a module's name: the module is named,
+loaded and unloaded by <name> alone, so a name may appear under one type
+only, and the build refuses to configure if it appears under two.
+
+Dropping mymodule.c into modules/<type>/ is all it takes for a module in
+one file: modules/CMakeLists.txt calls ircu_add_modules(), which finds it
+and builds it as the module "mymodule".  The globs are re-run by the
+build, so a new file is picked up by `cmake --build build` without
+configuring again.
+
+A module that outgrows one file becomes a directory, modules/<type>/
+mymodule/, and is still named after it.  Everything below the directory
+is sorted by suffix:
+
+  *.c              compiled into mymodule.so, subdirectories included
+  *.h              the module's own headers; the directory is on the
+                   include path, and nothing outside the module sees them
+  anything else    a resource: copied next to the shared object at build
+                   time and installed with it, at the same relative path
+
+A resource is anything the module wants to read at run time -- a word
+list, a template, a default configuration.  The module finds it through
+module_dir(), which is the absolute directory the shared object was loaded
+from:
+
+  snprintf(path, sizeof(path), "%s/words.txt", module_dir(mod));
+
+Read it in mi_init, not from a hook: a module loads at startup or on an
+operator's request, when reading a file is fine, and never in the middle
+of the message flow, where it is not.
+
+Either way the module links nothing: the server's symbols are resolved
+against the ircd executable at load time, which works because the ircd is
+built with ENABLE_EXPORTS.  The build tree mirrors the source tree, with a
+shared object where the sources were:
+
+  build/modules/<type>/mymodule.so
+  build/modules/<type>/mymodule/mymodule.so     + the resources
+
+and `cmake --install` puts the same shape under the module directory --
+the IRCU_MPATH build setting, which defaults to a "modules" subdirectory
+of the data directory (DPATH), so it follows DPATH into a chroot.  That is
+the directory the server loads from, so an installed module needs no
+further configuration to be found.
+
+To check what a module needs from the core:
+
+  nm -u mymodule.so | grep -v GLIBC
+
+
+LOADING
+=======
+
+A module is always named, never pathed.  The name is the file name of the
+shared object without its directory and without the ".so" suffix; the
+server looks for it in every type directory of the module directory it
+was built with (MOD_PATH in config.h, from IRCU_MPATH), as either
+<type>/<name>.so or <type>/<name>/<name>.so.  A name containing a "/" is
+refused, so a configuration file cannot reach a shared object outside that
+directory; a shared object dropped directly into the module directory,
+outside any type, is not found either.  A name that matches under two
+types is refused rather than resolved to whichever came first.
+
+From the configuration file:
+
+  Module {
+   name = "mymodule";
+  };
+
+("file" is accepted as a spelling of "name"; it takes the same bare module
+name.)
+
+On /REHASH a module still listed stays loaded; one no longer listed is
+unloaded; one whose file changed on disk is unloaded and loaded again.
+
+Or at run time, with the module_admin privilege:
+
+  /MODULE LIST
+  /MODULE LOAD mymodule
+  /MODULE UNLOAD mymodule
+  /MODULE RELOAD mymodule
+
+The nick of the operator that loads a module is recorded and shown by both
+listings.  It is a copy taken at load time, so it survives that client
+disconnecting, and it does not follow a later nick change.
+
+All four take the module's name, the same one the configuration file uses.
+That is the file name, which need not be the name the module declares in
+its ModuleInfo; /MODULE LIST prints the file name first, then the declared
+name in parentheses, then where the module was found as a path relative to
+the module directory -- "modules/hooks/nocaps.so" -- and never the absolute
+path, which says where the server keeps its files on the host and is not
+something to hand out over IRC.  /STATS M shows the same relative path.
+
+Everything except LIST also requires the CONFIG_OPERCMDS feature, since it
+changes what code the server is running.
+
+If a RELOAD unloads the module but cannot load it again, the server says
+so plainly: the module is then not loaded at all.
+
+
+COMMANDS
+========
+
+  MessageHandler handlers[LAST_HANDLER_TYPE];
+
+  handlers[UNREGISTERED_HANDLER] = NULL;      /* NULL becomes m_ignore */
+  handlers[CLIENT_HANDLER]       = m_mycmd;
+  handlers[SERVER_HANDLER]       = NULL;
+  handlers[OPER_HANDLER]         = m_mycmd;
+  handlers[SERVICE_HANDLER]      = NULL;
+
+  module_add_command(mod, "MYCMD", "MYCMD", MAXPARA, MFLG_SLOW, handlers);
+
+The handler signature is the same one every command in ircd/m_*.c uses:
+
+  int m_mycmd(struct Client *cptr, struct Client *sptr,
+              int parc, char *parv[]);
+
+Note what the parameters argument means.  It is the MAXIMUM number of
+parameters to split the line into, not a minimum: anything past that many
+arrives in the last one, as though it had been introduced with a colon.
+Pass MAXPARA unless your command takes free-form trailing text.  Check
+your own minimum in the handler with need_more_params().
+
+A module cannot replace a command the core already has.  Registering a
+name or token that is taken fails, and returning non-zero from mi_init is
+the usual response.
+
+
+USER MODES
+==========
+
+A module can add a user mode -- a letter users set on themselves with
+/MODE, that the server carries in the client's flags and propagates across
+the network like any core mode.
+
+  static flag_t my_flag;
+
+  if (!module_add_user_mode(mod, 'P', &my_flag))
+    return -1;                /* the letter is taken, or none are left */
+
+The module does not choose the bit.  Two modules that both picked, say,
+bit 3 would silently be the same mode, and neither author would ever see
+it happen -- so the server hands the bits out, and a bit freed by an
+unload is handed out again.  Keep what you are given; it is not stable
+across a reload.
+
+Read and write it on a client with the same macros the core uses:
+
+  if (HasUFlag(cptr, my_flag))    /* is the mode set? */
+  SetUFlag(cptr, my_flag);        /* set it   */
+  ClrUFlag(cptr, my_flag);        /* clear it */
+
+Registering the letter is half of a mode.  The server will accept /MODE
++P, show it in /MODE and in RPL_MYINFO, and send it to the other servers,
+but it means nothing until a hook reads the flag and acts on it -- see
+modules/modes/umode_nopm.c, which registers +P and then refuses private messages
+to a user who has it.
+
+A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
+already owns the letter, if another module took it first, or if the module
+asks twice.  There is nothing useful to do about that but refuse the load:
+a module cannot do its job under a letter its users were not told about.
+
+The mode goes away with the module.  On unload the server unregisters the
+letter and takes the mode off every user that still has it, announcing an
+ordinary "-P" to them and to the network, so nobody is left believing a
+mode nothing implements any more is still in force.  A module can also
+give a mode back while it stays loaded:
+
+  module_del_user_mode(mod, 'P');
+
+which does the same stripping.  A module can only remove its own modes --
+not the core's, and not another module's.
+
+Two things to keep in mind:
+
+  * A module mode is global.  It is propagated to the rest of the network,
+    where a server without the module loaded will not recognise the letter
+    and will answer the sender with ERR_UMODEUNKNOWNFLAG.  A mode is
+    something every server on the network runs, or something no server
+    runs; keeping the module list the same everywhere is the network
+    operator's job.
+
+  * The core's rules about who may set a mode apply to core modes only.
+    A module mode can be set and cleared by any local user, exactly as
+    asked.  A module that wants a say in that takes
+    HOOK_CLIENT_PRE_UMODE, which sees the whole requested mode string
+    before any of it is applied, and can refuse it.
+
+Modes are counted and listed by /STATS M alongside commands.
+
+
+CHANNEL MODES
+=============
+
+A module can add a channel mode too -- a letter chanops set on the channel
+with /MODE, that the server carries in the channel's modes and propagates
+across the network like any core mode.
+
+  static chanmode_t my_flag;
+
+  if (!module_add_chan_mode(mod, 'G', &my_flag))
+    return -1;               /* the letter is taken, or is not a letter */
+
+Unlike a user mode, the bit is not handed out: it follows from the letter.
+'A' to 'Z' are bits 0 to 25 and 'a' to 'z' are bits 26 to 51, which is the
+same rule the core's own modes follow.  So the mode a module registers is
+the same bit on every server that loads the module, and two servers built
+from the same sources agree on it without exchanging a word.  Keep what
+you are given anyway: reading the bit from the letter yourself is writing
+the rule down twice.
+
+Read and write it on a channel with the same macros the core uses:
+
+  if (HasCFlag(chptr, my_flag))   /* is the mode set? */
+  SetCFlag(chptr, my_flag);       /* set it   */
+  ClrCFlag(chptr, my_flag);       /* clear it */
+
+The registered modes are readable as a list:
+
+  const struct ChanMode *cm;
+
+  for (cm = channel_chan_modes(); cm; cm = cm->next)
+    ...                           /* cm->c, cm->flag, cm->attr */
+
+It is a pointer to const, and it is the server's list: a module reads it,
+and changes it only through module_add_chan_mode() and
+module_del_chan_mode().
+
+Registering the letter is half of a mode.  The server will accept /MODE
+#channel +G from a chanop, show it in /MODE and in RPL_MYINFO, advertise
+it in the CHANMODES token of RPL_ISUPPORT and send it to the other
+servers, but it means nothing until a hook reads the flag and acts on it
+-- see modules/modes/cmode_nocaps.c, which registers +G and then refuses shouted
+messages to a channel that has it.
+
+A mode letter is A-Z or a-z, nothing else.  Registration fails if the core
+already owns the letter, if another module took it first, or if the module
+asks twice.
+
+The mode goes away with the module.  On unload the server unregisters the
+letter and takes the mode off every channel that still has it, announcing
+an ordinary "-G" to the members and to the rest of the network, so that no
+channel is left believing it enforces a policy nothing implements any
+more.  A module can also give a mode back while it stays loaded:
+
+  module_del_chan_mode(mod, 'G');
+
+which does the same stripping.  A module can only remove its own modes.
+
+Two things to keep in mind:
+
+  * A module's channel mode is global, and unloading the module on one
+    server clears the mode everywhere.  A channel belongs to the network,
+    not to one server: leaving the letter set on servers that still have
+    the module, while this one no longer honours it, would be a channel
+    that half-enforces a rule.  Two servers are expected to run the same
+    sources, and by the same convention to load the same modules.
+
+  * A module's mode is a plain flag on the channel: it takes no argument,
+    it is set and cleared by chanops like +m or +n, and the core does not
+    ask anything else about it.  A module that wants a say in who may set
+    it takes HOOK_CHANNEL_PRE_MODE, which sees the whole requested mode
+    string before any of it is applied, and can refuse it.
+
+Channel modes are counted and listed by /STATS M alongside commands and
+user modes.
+
+
+CLIENT CAPABILITIES
+===================
+
+A module can add an IRCv3 capability -- a name a client negotiates with
+CAP LS and CAP REQ, and that the server then knows is in force for that
+connection.
+
+  static int my_cap;
+
+  if (!module_add_cap(mod, "example.org/react", 0, &my_cap))
+    return -1;               /* name taken, malformed, or no slot left */
+
+Unlike a channel mode, the position is handed out and does NOT follow from
+the name: the server gives you the lowest free one and it can differ
+between servers, between restarts and between loads.  Keep what you are
+given.  A capability is negotiated with one client over one connection and
+never crosses a server link, so there is nothing for two servers to agree
+on and nothing is imposed.
+
+Read it on a client with the macros the core uses:
+
+  if (CapActive(cptr, my_cap))    /* did this client negotiate it? */
+  if (HasCap(cptr, my_cap))       /* did it ask for it? */
+
+The registered capabilities are readable as a list, sorted by name:
+
+  const struct Capability *cap;
+
+  for (cap = cap_first(); cap; cap = cap->cap_next)
+    ...                  /* cap->cap_name, cap->cap_index, cap->cap_flags */
+
+It is a pointer to const, and it is the server's list: a module reads it,
+and changes it only through module_add_cap() and module_del_cap().
+
+A name is what IRCv3 allows: letters, digits, '-', '.' and '_', optionally
+prefixed by a vendor and a single '/'.  Use a vendor prefix of your own --
+"example.org/react" -- or the "draft/" prefix for a specification that has
+one.  Registration fails if the core already has the name, if another
+module took it first, if the module asks twice, or if every position is
+taken (there are CAP_MAX of them, and the core's come first).
+
+Registering the name is half of a capability.  The server will advertise
+it in CAP LS, accept CAP REQ for it and remember that the client has it,
+but it means nothing until the module reads the flag and behaves
+differently -- sends an extra tag, an extra numeric, a message the client
+would not otherwise get.
+
+Two things the server does for you, and you should not do by hand:
+
+  * Registering on a running server sends CAP NEW to every client that
+    negotiated cap-notify, so a capability that appears mid-session is
+    announced rather than merely becoming true.
+
+  * The capability goes away with the module.  On unload the server sends
+    CAP DEL and clears the capability from every local client that had it,
+    so no client is left believing a capability is in force that nothing
+    implements any more -- which would have it go on sending what the
+    server can no longer understand.  A module can give one back while it
+    stays loaded:
+
+      module_del_cap(mod, "example.org/react");
+
+    which does the same.  A module can only remove its own.
+
+A module that wants to take its capability out of service without
+unregistering it -- a backend it depends on went away, say -- uses:
+
+  cap_update_availability(my_cap, 0);   /* CAP DEL; stops being advertised */
+  cap_update_availability(my_cap, 1);   /* CAP NEW; advertised again */
+
+and one that advertises a value to CAP LS 302 clients ("name=value") sets
+it with cap_set_value(my_cap, "..."); the core does this for
+draft/languages.
+
+Capabilities are counted by /STATS M alongside commands, user modes and
+channel modes.
+
+
+HOOKS
+=====
+
+  module_add_hook(mod, HOOK_CLIENT_PRE_NICK, my_hook,
+                  HOOK_PRIORITY_DEFAULT, NULL);
+
+The callback:
+
+  static enum HookResult my_hook(struct HookContext *ctx, void *user);
+
+Return HOOK_CONTINUE to abstain, HOOK_ALLOW to permit and stop the chain,
+or HOOK_DENY to refuse.  HOOK_PENDING says "hold this, I will answer
+later"; see SUSPENDING A HOOK below.
+
+Hooks of the same type run in priority order, lowest first, with ties
+broken by load order.  The chain stops at the first hook that does not
+return HOOK_CONTINUE.
+
+A HOOK_DENY cannot be overturned by a hook further down the chain.  If it
+could, whether a veto held would depend on which module happened to load
+first.
+
+A hook may unregister itself from inside its own call.
+
+The hook points, and what each one gets:
+
+  Hook                    hc_client      hc_source   hc_channel  hc_arg
+  ----------------------  -------------  ----------  ----------  ------------
+  CLIENT_PRE_REGISTER *   the client     its link    -           nick
+  CLIENT_REGISTERED       the client     its link    -           -
+  CLIENT_PRE_NICK *       the client     its link    -           new nick
+  CLIENT_NICK_CHANGED     the client     its link    -           old nick
+  CLIENT_PRE_UMODE *      the client     its link    -           mode string
+  CLIENT_EXITING          the client     the killer  -           quit reason
+  CHANNEL_PRE_CREATE *    the client     its link    -           channel name
+  CHANNEL_PRE_JOIN *      the client     its link    the channel channel name
+                                                     (NULL if new)
+  CHANNEL_JOINED          the client     -           the channel channel name
+  CHANNEL_PARTED          the client     -           the channel channel name
+  MESSAGE_PRE_CHANNEL *+  the sender     the sender  the channel message text
+  MESSAGE_PRE_PRIVATE *+  the recipient  the sender  -           message text
+  MESSAGE_RECEIVED        the service    the sender  the channel message text
+                          bot                        (NULL if
+                                                     private)
+  MESSAGE_DELIVERED       the recipient  the sender  the channel message text
+                          (NULL for a                (NULL for a ("" for a
+                          channel)                   user)       TAGMSG)
+  SERVER_LINKED           the server     -           -           server name
+  CONFIG_LOADED           -              -           -           -
+
+  * can veto        + can rewrite
+
+MESSAGE_RECEIVED fires for a PRIVMSG or NOTICE sent to a service bot of
+this server -- a client with user mode +S that this server introduced
+(see include/bot.h and doc/readme.services) -- and, for every service
+bot on a channel, for each message to that channel.  The sender may be
+on any server.  hc_notice says which of the two it was.  The message is
+not delivered anywhere else: a bot has no connection to deliver to, so
+the hook is how its module hears it.
+
+MESSAGE_DELIVERED fires wherever this server relays a PRIVMSG, NOTICE or
+TAGMSG, whether it came from one of its own clients or over a link.  That
+is what separates it from MESSAGE_PRE_CHANNEL and MESSAGE_PRE_PRIVATE,
+which only ever see what started here: a module that wants to know what
+was *said*, rather than what this server's users typed, wants this one.
+
+It carries a fourth pointer the other hooks do not, ctx->hc_message, a
+struct HookMessage (include/hooks.h):
+
+  hmm_kind     PRIVMSG, NOTICE or TAGMSG.
+  hmm_msgid    the name the whole network knows this message by, or NULL.
+  hmm_time     when it was said, ISO 8601 with milliseconds.
+  hmm_target   the channel or nickname the sender addressed.
+  hmm_remote   non-zero if the sender is not a user of this server.
+
+Every server that relays the message fires it, so a channel message is
+reported once per server carrying the channel and a private message once
+at each end when the two users are apart.  That is deliberate -- no
+server has to be the one that knows -- and it means a module that stores
+messages deduplicates on hmm_msgid rather than assuming it is told once.
+For that to work across a network, NETWORK_FEATURES has to be on: it is
+what carries msgid over P10, and without it each server invents its own
+name for the same message.
+
+hmm_time is the message's @time tag when it arrived with one, so every
+server records the same instant, and this server's clock when the message
+started here.
+
+Two things are never reported.  A message **to a service** (+S or +k) is
+not: that is where a password goes -- IDENTIFY, REGISTER, DROP -- and
+handing it to whatever happens to be listening would put credentials
+wherever that module writes.  The module that owns the service already
+gets it through MESSAGE_RECEIVED and decides for itself.  A **masked**
+message ($#mask, $host) is not either: an operator addressing everyone on
+a server is an announcement, not a conversation, and there is no target to
+file it under.
+
+It is a notification, and it runs after the message has gone out: the
+return value is ignored and nothing it does can change what was sent.
+
+CONFIG_LOADED fires once at start-up, after the configuration has been
+read and the server is ready to introduce clients, and again at the end
+of every rehash.  It is the point for a module that keeps state derived
+from the configuration: mi_init and mi_rehash both run in the middle of
+the parse, when the blocks after the module's own Module{} block have
+not been read yet.
+
+Hooks marked as vetoing run before the server acts, so refusing leaves
+nothing to undo.  The rest are notifications: their return value is
+ignored.
+
+Some hook points listed in enum HookType are declared but not wired into
+the core -- CHANNEL_PRE_PART, CHANNEL_PRE_TOPIC, CHANNEL_DESTROYED and
+SERVER_SPLIT.  Registering for one of them succeeds and simply never
+fires; they are wired when something needs them, and a module that
+cannot tell the difference is a module that would have been written
+against a hook nobody had tested.
+
+
+SUSPENDING A HOOK
+=================
+
+A module that has to ask something slow -- a database, a password hash on
+a worker thread, a process of its own -- cannot answer from inside the
+hook.  The main thread is the one thread that touches core state, so a
+blocking call there stalls every other client on the server.  Such a hook
+suspends the operation instead:
+
+  static enum HookResult on_register(struct HookContext *ctx, void *user)
+  {
+    if (!ctx->hc_token)              /* cannot wait here; decide now */
+      return HOOK_CONTINUE;
+
+    ask_somebody_else(ctx->hc_token, cli_name(ctx->hc_client));
+    return HOOK_PENDING;
+  }
+
+and answers when it knows:
+
+  module_hook_resume(mod, token, HOOK_ALLOW, NULL);
+  module_hook_resume(mod, token, HOOK_DENY, "that nickname is reserved");
+
+Four things to know:
+
+  * hc_token is non-zero only where the server has a way back in.  Today
+    that is HOOK_CLIENT_PRE_REGISTER, which is held beside ident, DNS, CAP
+    negotiation and the PING cookie -- registration was already something
+    the server waits for.  A HOOK_PENDING anywhere else is logged and read
+    as HOOK_CONTINUE, so a module that does not check hc_token is a module
+    whose policy silently does not apply.
+
+  * Suspending stops the chain, the way HOOK_ALLOW and HOOK_DENY do.  The
+    module that suspended owns the decision.
+
+  * The hold has a deadline -- FEAT_HOOK_TIMEOUT, ten seconds by default
+    -- and expiring counts as HOOK_DENY.  A module that holds a veto point
+    is deciding whether something may happen; letting it through because
+    the module never answered would be the outcome it was asked to
+    prevent.  Unloading the module while it owes an answer ends the same
+    way.
+
+  * Resume from the main thread, once per token.  A worker thread must not
+    call it: the result comes back through the task's wt_done, which the
+    main thread runs, and that is where the answer belongs.  Resuming a
+    token the server no longer holds -- the client quit, the deadline
+    passed -- returns zero and does nothing, which is a normal outcome and
+    not an error to guard against.
+
+The context is the core's stack and is gone by the time the answer
+arrives, so a module copies what it needs out of it before returning
+HOOK_PENDING, and the reason for a refusal travels as an argument of
+module_hook_resume() rather than in hc_reason.
+
+modules/hooks/slowauth.c is the reference: it holds a registration, asks
+a worker thread, and resumes.
+
+
+SASL MECHANISMS
+===============
+
+The core speaks the AUTHENTICATE protocol and brings PLAIN and EXTERNAL.
+A mechanism whose exchange the core cannot know in advance -- SCRAM, a
+one-time-password step, OAUTHBEARER against an identity provider -- is a
+module:
+
+  #include "sasl.h"
+
+  static enum SaslStep my_step(struct SaslSession *ses, const char *in,
+                               size_t inlen);
+
+  module_add_sasl_mechanism(mod, "SCRAM-SHA-256", 0, my_step);
+
+A step reads the decoded bytes the client sent and either fills in
+SaslSession::ss_out with a challenge and returns SASL_STEP_CHALLENGE, or
+fills in ss_authcid, ss_authzid and ss_secret and returns
+SASL_STEP_CREDENTIAL.  SASL_STEP_FAIL ends the exchange.
+
+Four things to know:
+
+  * A mechanism decides the *shape* of the exchange, never the answer.
+    Whether the credential is good is the identity provider's business,
+    and that is a separate registration; see include/account.h.  A
+    mechanism that checked a password itself would be one that works on
+    the server it was written for and nowhere else.
+
+  * The name is uppercased and validated (RFC 4422: 1 to 20 characters of
+    A-Z, 0-9, '-' and '_'), so "scram-sha-256" and "SCRAM-SHA-256" are one
+    mechanism and cannot both be registered.
+
+  * Pass SASL_MECH_NEEDS_TLS if the exchange puts a secret on the wire in
+    the clear, as PLAIN does.  The server then refuses it on a plaintext
+    connection before the client sends anything.
+
+  * The session holds a password.  Do not copy it anywhere that outlives
+    the exchange, and do not log it.  The server wipes the session with
+    ircd_crypto_wipe() on every way out, including the client hanging up
+    halfway through.
+
+Registrations are reverted on unload, like everything else, and a module
+cannot remove the core's mechanisms or another module's.
+
+
+THE IDENTITY PROVIDER
+====================
+
+One module answers two questions for the whole server: is this credential
+good, and whose nickname is this?
+
+  #include "account.h"
+
+  static void my_verify(account_id_t id, const struct AccountRequest *req);
+  static void my_lookup(account_id_t id, const char *nick);
+  static void my_cancel(account_id_t id);
+
+  static const struct AccountProvider provider = {
+    "identity", my_verify, my_lookup, my_cancel
+  };
+
+  module_add_account_provider(mod, &provider);
+
+Neither call may block.  They start the work -- a query through db.h, the
+password hash on a worker (see WORKER THREADS and ircd_pwhash.h) -- and
+return; the answer goes back later, in the main thread, with
+account_complete() or account_complete_owner(), exactly once per question
+accepted.  Answering from inside the call is allowed, for a provider with
+a cache.
+
+Five things to know:
+
+  * One provider at a time.  A second registration is refused rather than
+    replacing the first, so two identity modules in ircd.conf are an error
+    and not a coin flip.
+
+  * A question the core has dropped -- the client left, the deadline
+    passed -- is not an error to answer: account_complete() says the
+    handle is no longer outstanding and does nothing.
+
+  * The request does not outlive the call, and its secret is a password.
+    Copy what is needed and nothing more; the core wipes the secret as
+    soon as the call returns.
+
+  * "Could not be established" is not "free".  A lookup that fails --
+    database unreachable, no answer in time -- comes back as
+    ACCOUNT_NICK_UNKNOWN, and a caller must not read that as a nickname
+    nobody has registered.  The one moment an impostor gets somebody
+    else's nickname is the moment the service protecting it is not
+    answering, and that moment can be arranged.
+
+  * Unloading the module fails every question in flight before the code
+    is unmapped, so nothing waits for an answer that is never coming.
+
+
+THE CACHE
+=========
+
+Any module may use the cache; one module implements it.  See
+doc/readme.cache for the whole of it, and include/cache.h for the API.
+
+  module_cache_get(mod, "nick:maria", on_result, data);
+  module_cache_set(mod, "nick:maria", json, len, 300, NULL, NULL);
+  module_cache_del(mod, "nick:maria", NULL, NULL);
+
+The handle is passed so that the calls are dropped if the module unloads
+before they are answered.
+
+A zero return means there is no cache -- no driver, or no Redis{} block --
+and it needs no branch of its own: the cache is never the truth, so that
+is the same thing as a miss.  Read the cache first, read the database
+second, cache the misses as well as the hits, and delete the key after
+writing to the database rather than waiting for the expiry.
+
+To implement one instead, register a struct CacheDriver with
+module_add_cache_driver().  One driver at a time, it must never block the
+main thread, and it answers with cache_complete() exactly once per call.
+
+
+HTTP
+====
+
+The core serves the HTTP -- Mongoose, on a worker thread of its own -- and
+a module claims routes on it.  A module never sees a socket: it is handed
+a request that is already parsed, in the main thread.  See doc/readme.http
+for the whole of it, and include/http.h for the API.
+
+  static enum HookResult on_config(struct HookContext* ctx, void* user) {
+    if (!module_http_available()) {
+      log_write(LS_SYSTEM, L_WARNING, 0, "mymod: no HTTP_PORT; uploads off");
+      return HOOK_CONTINUE;         /* the rest of the module works */
+    }
+    module_add_route(mod, "POST", "/upload", handle_upload, self);
+    return HOOK_CONTINUE;
+  }
+
+Ask from HOOK_CONFIG_LOADED and not from mi_init.  mi_init runs in the
+middle of the parse, where HTTP_PORT may not have been read yet, and a
+module that asks there gets "no" on a server that serves HTTP perfectly
+well.  That is the one mistake this API makes easy, and it is silent.
+
+A consumer degrades, it does not guess.  It does not fail to load and it
+does not wait: it says in the log what it switched off, and the rest of it
+works.  "Nobody configured HTTP_PORT" must not be an outage.
+
+Claiming a route while nothing is listening is fine.  The route is what
+the module owns; whether the listener is up is the operator's business,
+and it comes and goes across a rehash.  Routes are reverted when the
+module unloads.
+
+A handler runs in the main thread and does not have to answer there.  It
+either fills in the response and returns non-zero, or keeps its
+http_req_t, returns zero, and calls http_respond() when the answer
+arrives -- which is what authorising an upload against a database looks
+like.  There is a deadline either way (HTTP_TIMEOUT), and answering after
+it is ignored rather than fatal.
+
+
+RUNNING A MODULE OUT OF PROCESS
+==============================
+
+A module can be run in a host process of its own:
+
+  Module { name = "partner_api"; isolation = "process"; };
+
+Nothing in the module's source says so, and nothing has to: it is the
+same shared object either way.  What changes is that a fault in it takes
+the host and not the server.
+
+The catch is that only part of this API is available over there --
+commands, hooks, the log, memory, strings, features, finding a client and
+sending to one.  A module that calls anything else does not load isolated,
+and says which symbol it wanted.  doc/readme.isolation has the list and
+the reasoning; modules/commands/isolated_demo.c is the reference.
+
+
+COMMAND HOOKS
+=============
+
+HOOK_COMMAND_PRE and HOOK_COMMAND_POST are the two points every command
+passes through.  They are what lets a module see one user act on another
+-- KICK, KILL, WHOIS, INVITE, MODE, SILENCE, GLINE, SLINE, JUPE -- without
+a hook per command, and without the core growing one every time a command
+is added.
+
+  module_add_command_hook(mod, HOOK_COMMAND_PRE, "KICK", on_kick,
+                          HOOK_PRIORITY_DEFAULT, 0, 0);
+
+They are registered with module_add_command_hook() and not with
+module_add_hook(), which refuses them: a command hook carries a command
+name, and a hook registered without one is handed every line the server
+parses -- all the server-to-server traffic included -- to throw almost all
+of it away.  Pass NULL as the command only if that is really what you want.
+
+The context carries a struct HookCommand in hc_command:
+
+  static enum HookResult on_kick(struct HookContext *ctx, void *user)
+  {
+    const struct HookCommand *cmd = ctx->hc_command;
+
+    cmd->hcc_cmd      /* "KICK" */
+    cmd->hcc_tok      /* "K", its P10 token */
+    cmd->hcc_handler  /* CLIENT_HANDLER, SERVER_HANDLER, OPER_HANDLER, ... */
+    cmd->hcc_parc     /* number of parameters */
+    cmd->hcc_parv     /* the parameters; parv[0] is the source */
+    cmd->hcc_result   /* POST only: what the handler returned */
+    ...
+  }
+
+and the usual context fields are filled in with the subject the server
+resolved:
+
+  ctx->hc_source    /* who ran the command */
+  ctx->hc_client    /* who it acts on, already a struct Client* */
+  ctx->hc_channel   /* the channel it names, already a struct Channel* */
+  ctx->hc_arg       /* its reason, or the mask a *-line names */
+
+That resolution is the point.  A module that wanted this before would have
+had to parse parv itself, and would have had to know that the same KICK
+carries a nick from a client and a numnick from a server -- a distinction
+every ms_*() handler in the tree makes and every module would have got
+wrong for one command in ten.  Which parameter means what is declared by
+the command, in msgtab[] (see struct MsgSubject in msg.h), so a command
+registered by a module can declare it too.
+
+A command that declares nothing still reaches the hooks; hc_client and
+hc_channel are simply NULL and the module reads hcc_parv.
+
+Five rules, and the reason for each:
+
+  * A command whose source is a service bot (+S) reaches neither point.  A
+    service acts on the server's behalf, and auditing or vetoing it is
+    auditing the server.  A module that does want to see them -- an audit
+    log -- passes HOOK_CMD_INCLUDE_SERVICES as the flags.
+
+  * HOOK_DENY at HOOK_COMMAND_PRE is honoured only when the source is a
+    client of this server.  For a command that arrived from another server
+    the point is a notification: the rest of the network has already
+    applied it, and refusing it here would desynchronise this server rather
+    than prevent anything.  The attempt is logged.
+
+  * HOOK_COMMAND_POST does not run when the handler returned CPTR_KILLED.
+    The client is gone by then and the pointers in the context would be
+    freed memory; a module learns about the exit from HOOK_CLIENT_EXITING,
+    which is where it belongs.  It does not run for a command a hook
+    refused either: nothing happened to report.
+
+  * hcc_parv is read-only.  Rewriting an arbitrary parameter of a command
+    in flight is not something the server can bound the consequences of.
+    What a module may change is the context: a numeric and a reason when it
+    denies, and nothing else.
+
+  * A hook that causes another command to be dispatched is bounded.  Past a
+    small depth the server stops running the hooks and logs it, rather than
+    running out of stack on a module that wrote a loop without noticing.
+
+Denying works the same as at every other veto point: set hc_numeric and
+hc_reason, return HOOK_DENY, and the client is told in the module's own
+words.
+
+  ctx->hc_numeric = ERR_CHANOPRIVSNEEDED;
+  ircd_strncpy(ctx->hc_reason, "that user is an operator",
+               sizeof(ctx->hc_reason) - 1);
+  return HOOK_DENY;
+
+modules/hooks/cmdaudit.c is the reference: it logs what one user does to
+another and refuses a KICK aimed at a network service or an operator.
+
+
+VETO HOOKS ONLY SEE LOCAL CLIENTS
+=================================
+
+This is the most important thing to understand about hooks, so it gets its
+own section.
+
+Every veto hook runs only on the path taken by clients connected to THIS
+server.  A nick change, join or message arriving from another server has
+already been accepted by the rest of the network; refusing it here would
+leave this server disagreeing with everyone else about what a user is
+called or which channel they are in, which is a desynchronisation that
+does not heal by itself.
+
+So:
+
+  * A veto binds the server that ran it, not the network.
+  * A user on another server can do what your module forbids, and your
+    server will see it happen.
+  * If you want a rule to apply network-wide, every server needs the
+    module, or the rule belongs somewhere else -- a G-line, a channel
+    mode, or a service.
+
+Notification hooks do not have this restriction; some fire for remote
+clients too, because a notification cannot desynchronise anything.
+
+
+REFUSING, AND SAYING WHY
+========================
+
+  ctx->hc_numeric = ERR_CANNOTSENDTOCHAN;    /* optional */
+  ircd_strncpy(ctx->hc_reason, "Because I said so",
+               sizeof(ctx->hc_reason) - 1);   /* optional */
+  return HOOK_DENY;
+
+Both fields are optional.  Leaving hc_numeric at zero lets the server pick
+one that suits the hook point, and leaving hc_reason empty produces a
+generic message.
+
+
+REWRITING A MESSAGE
+===================
+
+Only MESSAGE_PRE_CHANNEL and MESSAGE_PRE_PRIVATE can rewrite.
+
+  if (ctx->hc_rewrite && ctx->hc_rewrite_len > 0) {
+    /* write into the server's buffer, never assign your own pointer */
+    ircd_strncpy(ctx->hc_rewrite, new_text, ctx->hc_rewrite_len - 1);
+    ctx->hc_rewrite[ctx->hc_rewrite_len - 1] = '\0';
+    ctx->hc_rewritten = 1;
+  }
+
+The server owns the buffer and tells you how big it is.  Assigning your
+own pointer to hc_rewrite would leave the server reading memory your
+module may have freed, or that goes away entirely when the module unloads.
+
+Rewriting is not a veto: return HOOK_CONTINUE so the rest of the chain
+still runs.
+
+
+WHAT A MODULE MUST NOT DO
+=========================
+
+  * Block.  The server is single-threaded and hooks run in the middle of
+    handling a client's command.  A hook that waits on a network round
+    trip or a slow disk stalls every other client.  Hand the slow part to
+    a worker thread and act on the answer when it arrives -- see WORKER
+    THREADS below and doc/readme.workers -- and, where the hook point
+    offers a token, suspend the operation while that happens rather than
+    deciding without the answer; see SUSPENDING A HOOK.
+
+  * Unload itself.  Unloading from inside a module callback would free the
+    code that is executing.  The server refuses and logs it.
+
+  * Keep a pointer into the core across an unload, or hand the core a
+    pointer into itself that outlives the module.
+
+  * Assume another module is loaded, or assume a load order beyond hook
+    priorities.
+
+
+WORKER THREADS
+==============
+
+A module that needs to wait for something -- a database, an HTTP API, a
+password hash -- cannot wait in a command handler or a hook, because both
+run in the main thread in the middle of serving a client.  It submits the
+work instead and is called back when the answer is ready:
+
+  #include "worker.h"
+
+  struct WorkTask *task = worker_task_new(my_work, my_done);
+  task->wt_in = payload;                /* from worker_alloc() */
+  worker_task_set_client(task, sptr);   /* the numnick, not the pointer */
+
+  if (!module_submit_work(mod, task))
+    worker_task_free(task);             /* refused: still ours */
+
+my_work runs in a worker thread; my_done runs in the main thread, where
+touching core state is safe again.  For something that is not a series of
+short tasks -- a listening socket, a subscription -- module_spawn_worker()
+starts a thread with a loop of its own.
+
+Everything a module registers is reverted when it unloads, and work is no
+exception: queued tasks are dropped, running ones are waited for, finished
+results are discarded rather than delivered, and dedicated workers are
+stopped.  Waiting is not optional -- the module's code is about to be
+unmapped -- so unloading a module with slow work in flight blocks the whole
+server until that work returns.  It is logged when it happens.
+
+Both calls need FEAT_WORKER_THREADS to be non-zero, which it is not by
+default, and both fail gracefully when it is zero.  Check the return value
+and tell the operator, rather than assuming.
+
+There is one rule for code that runs in a worker thread, and it admits no
+exceptions: it never touches core state.  No struct Client, no struct
+Channel, no CurrentTime, no MyMalloc(), no log_write(), no send_reply().
+Read doc/readme.workers before writing any of it -- the list of what is
+allowed is short, and breaking the rule produces corruption that surfaces
+somewhere else entirely.
+
+
+A DATABASE
+==========
+
+A module that wants a database does not need a worker thread of its own.
+Load a database driver -- modules/workers/postgres is the one that ships --
+and call the API in include/db.h:
+
+  #include "db.h"
+
+  struct DbParam  nick  = { DB_TYPE_TEXT, cli_name(sptr), DB_FORMAT_TEXT };
+  struct DbParam* args[] = { &nick, NULL };
+  struct DbQuery  query = { "select score from accounts where nick = $1",
+                            args };
+
+  if (db_query(mod, &query, account_loaded, numnick) != DB_OK)
+    /* refused here and now; account_loaded will not run */;
+
+account_loaded runs in the main thread, up to five seconds later, with the
+rows as a json_t array.  The statement is prepared and the values are
+bound, so a parameter can never be read as SQL; the driver's own types
+never appear; and unloading the module drops its pending callbacks instead
+of calling into code that is no longer mapped, so a module with queries in
+flight is still safe to unload.
+
+The driver is configured by a Database{} block in ircd.conf, which the
+server keeps whether or not any driver is loaded.  See doc/readme.database.
+
+
+SQL MIGRATIONS
+==============
+
+A module that needs tables of its own ships the SQL that makes them, in a
+migrations/ subdirectory of its own directory:
+
+  modules/<type>/<name>/migrations/v1_create_accounts.up.sql
+  modules/<type>/<name>/migrations/v1_create_accounts.down.sql
+
+The build compiles them into the shared object -- they are never copied
+beside it -- and the server checks them when the module is loaded: the
+v<N>_<name>.<up|down>.sql spelling, a name of letters, digits and
+underscores, versions running from 1 with no gaps, and an up for every
+down.  A module that breaks any of that does not load, and the operator is
+told which file is wrong.
+
+Nothing runs by itself.  An operator applies and reverts with /MODULE
+MIGRATION; the server never does it on load, on reload or on start-up.  The
+one exception is the server's own set, which creates the table the rest are
+recorded in, and which is why no module may be called "core".
+
+A module reads its own tables with the database API in include/db.h; see
+A DATABASE above.  Read doc/readme.migrations before shipping any of it --
+the rules are short and the loader enforces all of them.
+
+
+TRANSLATIONS
+============
+
+A module that talks to users can ship translations of what it says: one
+GNU PO file per language in a po/ subdirectory of its own directory,
+
+  modules/<type>/<name>/po/es.po
+  modules/<type>/<name>/po/pt.po
+
+They are ordinary resources -- copied beside the shared object, never
+compiled in -- and the loader opens them as the module's own domain before
+mi_init, so module_i18n(mod) is good from there.  Nothing crosses between
+domains: a module's text is looked up in the module's catalogs and nowhere
+else.  A single-file module has no directory and therefore no translations,
+the same rule that applies to its migrations.
+
+  #define I18N_DOMAIN mod_i18n           /* before the include */
+  #include "ircd_i18n.h"
+
+  static struct I18nDomain* mod_i18n;    /* = module_i18n(mod) in mi_init */
+
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s destroyed"),
+                sptr, name);
+
+_() and _n() then translate with the module's domain for the client given;
+a NULL domain -- no po/ installed -- returns the original, so a module never
+tests for it.  A broken catalog is reported and does not stop the load; a
+/REHASH reloads the module's catalogs with the core's, and /MODULE RELOAD
+reopens the domain.  The loader checks every translation's ircd_snprintf
+directives against the original before it is used, so a translator cannot
+crash a module.  doc/readme.translations has the rules, the marking
+conventions and the `pot` target that writes the module's template.
+
+
+A LIBRARY OF ITS OWN
+====================
+
+A module links against nothing by default: its symbols resolve against the
+ircd.  One that needs more than that -- a client library, a header outside
+the tree -- says so in a CMake fragment beside its sources rather than in
+the core's build files:
+
+  modules/<type>/<name>/module.cmake      a module built from a directory
+  modules/<type>/<name>.cmake             a single-file module
+
+The fragment is read with IRCU_MODULE_NAME, IRCU_MODULE_TYPE and
+IRCU_MODULE_DIR set, and answers by setting IRCU_MODULE_LINK_LIBRARIES,
+IRCU_MODULE_INCLUDE_DIRECTORIES, IRCU_MODULE_COMPILE_DEFINITIONS or
+IRCU_MODULE_COMPILE_OPTIONS -- or IRCU_MODULE_SKIP, with a reason, to bow
+out when an optional dependency is not installed.  A skipped module is
+reported at configure time and stops nothing else from building.
+
+modules/workers/postgres/module.cmake is the worked example: it looks for
+libpq and jansson, and skips the module when either is missing.
+
+
+THE EXAMPLES
+============
+
+  modes/umode_nopm.c     adds user mode +P and gives it a meaning; the
+                         reference for registering a user mode, and the
+                         smallest thing here that does something -- one
+                         file, one mode, one hook.  Read it first
+  hooks/trace_events.c   logs every notification hook; noisy, for
+                         debugging a hook point
+  hooks/nickpolicy.c     refuses nicknames; a worked veto
+  hooks/slowauth.c       holds a registration while a worker thread
+                         answers for it; the reference for HOOK_PENDING
+  hooks/nocaps.c         refuses shouted channel messages and lowercases
+                         shouted private ones; a veto and a rewrite
+  modes/cmode_nocaps.c   adds channel mode +G and gives it a meaning; the
+                         reference for registering a channel mode, and
+                         nocaps.c's rule made asked-for instead of
+                         always-on
+  workers/sendmail/      runs a program on a worker thread and answers
+                         with its exit status; the reference for
+                         module_submit_work() and for a task whose input
+                         and output are bytes and nothing else
+  commands/isolated_demo.c
+                         registers a command and two hooks, and will
+                         crash or spin on request; the reference for
+                         isolation = "process" (doc/readme.isolation) and
+                         a demonstration that the same shared object runs
+                         either side of the boundary unchanged
+  workers/postgres/      the database driver behind include/db.h; the
+                         reference for a module with a connection pool,
+                         for a module with libraries of its own
+                         (module.cmake), and for one whose worker threads
+                         outlive a single task
+  commands/m_bot/        adds /BOT, virtual bots operators create on
+                         demand; the reference for using the bot API
+                         (see VIRTUAL CLIENTS below), for a module built
+                         from a directory, and for one that ships
+                         translations (po/es.po) and marks its notices
+                         with _()
+  services/irc_services/ network services -- NickServ, ChanServ --
+                         embedded in the server: service bots from
+                         Service{} blocks, answering users through
+                         HOOK_MESSAGE_RECEIVED; the reference for
+                         service bots, for HOOK_CONFIG_LOADED, and for
+                         a module that brings a client back when the
+                         network takes it away (doc/readme.services)
+  hooks/cmdaudit.c       logs what one user does to another; the
+                         reference for HOOK_COMMAND_PRE and
+                         HOOK_COMMAND_POST, which fire around every
+                         command rather than needing a hook per command
+  hooks/richtext.c       negotiated Markdown, with the plain text the
+                         server generated going to everybody who did not
+                         ask; the reference for a module that gives one
+                         message two bodies (doc/readme.richtext)
+  workers/redis/         the cache driver behind include/cache.h, the
+                         same shape as the database one and optional in
+                         a way it is not: the cache is never the truth
+                         (doc/readme.cache)
+  workers/sendmail/      hands outgoing mail to the local MTA on a
+                         worker; the reference for a provider whose work
+                         is a program rather than a socket
+                         (doc/readme.mail)
+  services/identity/     what answers whether a password is right and
+                         whose nickname is whose: the provider behind
+                         umode +r, and the reference for a module that
+                         owns SQL migrations and for cache-then-database
+                         reading (doc/readme.sasl)
+  services/history/      what was said, kept: CHATHISTORY, SEARCH, EDIT,
+                         REDACT and MARKREAD over PostgreSQL; the
+                         reference for HOOK_MESSAGE_DELIVERED and for
+                         keeping every statement a module sends in one
+                         file (doc/readme.history)
+  services/filehost/     files, over the server's own HTTP listener; the
+                         reference for claiming routes, for answering a
+                         request later, and for a signed ticket standing
+                         in for a session (doc/readme.files)
+
+All paths are under modules/.
+
+
+VIRTUAL CLIENTS
+===============
+
+A module can bring a user into existence that has no connection behind
+it -- a bot, a service -- through include/bot.h:
+
+  if (bot_check_nick(nick, NULL) == 0)
+    bot = bot_create(mod, nick, NULL, NULL, NULL, 0);
+  bot_join(bot, "#channel");                 /* with ops, creating it */
+  bot_send_user(bot, acptr, 1, "hello");     /* 1: NOTICE, 0: PRIVMSG */
+  bot_send_channel(bot, chptr, 0, "hello");
+  bot_set_user_mode(bot, acptr, "+r");       /* service bots only, see below */
+  bot_destroy(bot, &me, "reason");
+
+The bot is a struct Client made with make_client(&me, ...), so it shares
+the server's own Connection, which has no descriptor: cli_from() of it
+is &me and everything sent to it is dropped in can_send() before
+anything is queued.  Its server is &me, so it takes a numnick from this
+server's own range and the network sees a user of this server.  It is
+not MyConnect(), so the socket paths in exit_client() are never taken.
+From then on set_nick_name(), the JoinBuf and the ModeBuf treat it like
+any other client, and neither bot.c nor the module speaks P10 itself.
+
+Two things follow from sharing &me's Connection, and bot.c respects
+both.  Never write a per-connection field of such a client --
+cli_handler(), cli_snomask(), cli_privs() and the like all belong to
+&me -- and send what it says through send.c (bot_send_*) rather than
+the relay layer, whose flood limits assert on a client that is not
+local.
+
+The first argument to bot_create() is the owner.  Unloading a module
+destroys the bots it owns, so no bot outlives the code that answers for
+it; a module that wants a quit reason of its own destroys them from
+mi_fini first, as m_bot does.  The server may also take a bot away
+without asking -- a /KILL from another server, a nick collision it
+loses -- and a module that keeps a pointer attaches to
+HOOK_CLIENT_EXITING, where bot_find() still answers for the client on
+its way out, and drops the pointer there.
+
+Every bot carries user mode +B, a bot of the network.  Pass BOT_SERVICE
+in the flags for a bot that is a service of the network -- a NickServ --
+and it is introduced with +S, +k and +o as well: +k for everything the
+server already grants a channel service (no KICK, no deop, no local
+KILL, no target limits), +o because a service acts with an operator's
+standing, +S so that messages sent to it reach its module through
+HOOK_MESSAGE_RECEIVED and so that /BOT will neither rename nor destroy
+it.  +B and +S are the server's alone: a user cannot set or clear them,
+and neither can an operator; only a MODE from another server is
+believed.  A bot with +S is what doc/readme.services is about.
+
+A service bot may also change the user modes of anyone who is not an
+operator, through bot_set_user_mode(); what it is for is +r, the mark
+of a user identified to its nick, which nobody but a server or a
+service bot can grant (doc/readme.accounting).  It is held to the modes
+a user may set on itself, plus +r and -r: +o, +k, +S, +B and -x are
+dropped from whatever it asks for.  The change reaches the network and
+the user as coming from the bot.  Any bot, +S or not, may change its
+own modes the same way, within the same limits.
+
+
+DIAGNOSTICS
+===========
+
+  /MODULE LIST     module name, declared name, version, ABI, path,
+                   description and who loaded it (the operator's nick, or
+                   the configuration file)
+  /MODULE MIGRATION LIST
+                   every row of the migrations table: what has actually
+                   been applied to this database, by whom, when, and how
+                   long it took
+  /MODULE MIGRATION STATUS <module>
+                   what that module ships, and which of it is applied
+  /STATS M         loaded modules, how many commands, user modes and
+                   channel modes each registered (with the mode letters
+                   for both), who loaded each one,
+                   for each hook point in use how many hooks are
+                   attached and how many times it has fired,
+                   the state of the worker pool, and for any module using
+                   workers how much work it has in flight
+
+The hook call counts are the quickest way to tell a hook that is not
+firing from one that is firing and abstaining.

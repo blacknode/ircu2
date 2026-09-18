@@ -24,6 +24,7 @@
 #include "config.h"
 
 #include "s_bsd.h"
+#include "batch.h"
 #include "client.h"
 #include "IPcheck.h"
 #include "channel.h"
@@ -31,6 +32,7 @@
 #include "hash.h"
 #include "ircd_alloc.h"
 #include "ircd_events.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_features.h"
 #include "ircd_osdep.h"
@@ -49,7 +51,6 @@
 #include "parse.h"
 #include "querycmds.h"
 #include "res.h"
-#include "sasl.h"
 #include "s_auth.h"
 #include "s_conf.h"
 #include "s_debug.h"
@@ -165,6 +166,23 @@ static void connect_dns_callback(void* vptr, const struct irc_in_addr *addrs, in
 /** Closes all file descriptors.
  * @param close_stderr If non-zero, also close stderr.
  */
+/** Close every descriptor above \a keep.
+ *
+ * For the far side of a fork(), between the fork and the exec: a child
+ * that cannot see the server's descriptors cannot write to a client by
+ * accident and cannot hold a listening socket open across a restart.
+ * Only close() is called, so it is safe in that window, where almost
+ * nothing else is.
+ * @param[in] keep Highest descriptor to leave alone.
+ */
+void close_connections_above(int keep)
+{
+  int i;
+
+  for (i = keep + 1; i < MAXCONNECTIONS; ++i)
+    close(i);
+}
+
 void close_connections(int close_stderr)
 {
   int i;
@@ -503,8 +521,6 @@ void close_connection(struct Client *cptr)
 
   det_confs_butmask(cptr, 0);
 
-  /* Clean up SASL timer if it exists */
-  sasl_stop_timeout(cptr);
 
   if (cli_listener(cptr)) {
     release_listener(cli_listener(cptr));
@@ -723,6 +739,13 @@ static int read_packet(struct Client *cptr, int socket_ready)
       SetExemptThrottle(cptr);
     else
       ClearExemptThrottle(cptr);
+
+    /* Raised -- after the exemption is decided from the class alone, so
+     * that this does not hand out the exemption as well -- to whatever a
+     * client that negotiated draft/multiline was promised it could send.
+     * See multiline_flood_ceiling() in batch.h.
+     */
+    flood_limit = multiline_flood_ceiling(cptr, flood_limit);
   }
 
   if (socket_ready &&
@@ -893,7 +916,7 @@ static int read_packet(struct Client *cptr, int socket_ready)
       return exit_client(cptr, cptr, &me, "dbuf_put fail");
 
     Debug((DEBUG_DEBUG, "dbuf: %u maxfl: %u", DBufLength(&(cli_recvQ(cptr))), GetMaxFlood(cptr)));
-    if (recvq_over_flood(cptr, GetMaxFlood(cptr)))
+    if (recvq_over_flood(cptr, flood_limit))
       return exit_client(cptr, cptr, &me, "Excess Flood");
 
     while (DBufLength(&(cli_recvQ(cptr))) && !NoNewLine(cptr) &&
@@ -983,15 +1006,17 @@ int connect_server(struct ConfItem* aconf, struct Client* by)
       sendto_opmask_butone(0, SNO_OLDSNO, "Server %s already present from %s", 
                            aconf->name, cli_name(cli_from(cptr)));
       if (by && IsUser(by) && !MyUser(by)) {
-        sendcmdto_one(&me, CMD_NOTICE, by, "%C :Server %s already present "
-                      "from %s", by, aconf->name, cli_name(cli_from(cptr)));
+        sendcmdto_one(&me, CMD_NOTICE, by,
+                      _(by, "%C :Server %s already present "
+                      "from %s"), by, aconf->name, cli_name(cli_from(cptr)));
       }
       return 0;
     }
     else if (IsHandshake(cptr) || IsConnecting(cptr)) {
       if (by && IsUser(by)) {
-        sendcmdto_one(&me, CMD_NOTICE, by, "%C :Connection to %s already in "
-                      "progress", by, cli_name(cptr));
+        sendcmdto_one(&me, CMD_NOTICE, by,
+                      _(by, "%C :Connection to %s already in "
+                      "progress"), by, cli_name(cptr));
       }
       return 0;
     }
@@ -1027,8 +1052,9 @@ int connect_server(struct ConfItem* aconf, struct Client* by)
     sendto_opmask_butone(0, SNO_OLDSNO, "Host %s is not enabled for "
                          "connecting: no Connect block", aconf->name);
     if (by && IsUser(by) && !MyUser(by)) {
-      sendcmdto_one(&me, CMD_NOTICE, by, "%C :Connect to host %s failed: no "
-                    "Connect block", by, aconf->name);
+      sendcmdto_one(&me, CMD_NOTICE, by,
+                    _(by, "%C :Connect to host %s failed: no "
+                    "Connect block"), by, aconf->name);
     }
     det_confs_butmask(cptr, 0);
     free_client(cptr);
@@ -1039,7 +1065,8 @@ int connect_server(struct ConfItem* aconf, struct Client* by)
    */
   if (!connect_inet(aconf, cptr)) {
     if (by && IsUser(by) && !MyUser(by)) {
-      sendcmdto_one(&me, CMD_NOTICE, by, "%C :Couldn't connect to %s", by,
+      sendcmdto_one(&me, CMD_NOTICE, by,
+                    _(by, "%C :Couldn't connect to %s"), by,
                     cli_name(cptr));
     }
     det_confs_butmask(cptr, 0);

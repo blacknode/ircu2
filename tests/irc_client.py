@@ -209,6 +209,32 @@ class IRCClient:
             if msg.command in ("376", "422"):  # End of MOTD or no MOTD
                 return msgs
 
+    async def drain(self, quiet: float = 0.7) -> list["Message"]:
+        """Read and discard whatever the server is still saying.
+
+        register() stops at the end of the MOTD, but this server has more
+        to say after it -- the connection-count notices, the hidden host,
+        the +x that goes with it -- and a test that reads the very next
+        line off the stream would get one of those instead of the answer
+        it asked for.  A real client does not care because it dispatches
+        on what arrives; a test that asserts on the *next* line does, so
+        it calls this first.
+
+        Returns what was discarded, for a test that wants to look.
+        """
+        # Whatever a previous wait_for() stashed counts as "still being
+        # said": a MODE that arrived before the 381 somebody was waiting
+        # for is in the buffer, not on the socket, and leaving it there
+        # would hand it to the next question as if it were the answer.
+        seen = self._buffer
+        self._buffer = []
+
+        while True:
+            try:
+                seen.append(await self._recv_from_stream(timeout=quiet))
+            except asyncio.TimeoutError:
+                return seen
+
     async def negotiate_cap(self, caps: list[str], timeout: float = 5.0) -> list[str]:
         """Negotiate IRC capabilities before registration.
 
@@ -245,8 +271,15 @@ class IRCClient:
             else:
                 self._buffer.append(msg)
 
-        # Request the caps the server supports
-        available = [c for c in caps if c in ls_caps]
+        # Request the caps the server supports.
+        #
+        # Under CAP LS 302 an entry may carry a value -- "sasl=PLAIN",
+        # "draft/chathistory=100", "blacknode/richtext=markdown" -- and the
+        # name is what a client asks for.  Comparing whole entries silently
+        # dropped every capability that had one, so a test could negotiate
+        # nothing and only notice when it tested something that needed it.
+        ls_names = {entry.split("=", 1)[0] for entry in ls_caps}
+        available = [c for c in caps if c.split("=", 1)[0] in ls_names]
         if not available:
             await self.send("CAP END")
             return []
@@ -272,10 +305,6 @@ class IRCClient:
 
         await self.send("CAP END")
         return acked
-
-    async def authenticate_sasl(self, mechanism: str, credentials: str):
-        """Authenticate via SASL."""
-        raise NotImplementedError("SASL support not yet implemented")
 
     async def wait_for(self, command: str, timeout: float = 5.0) -> Message:
         """Consume messages until one matching command is found.
@@ -376,6 +405,25 @@ class IRCClient:
         await self.send(line)
         return await self.wait_for(command, timeout=timeout)
 
+    async def wait_for_mode(self, target: str, timeout: float = 5.0) -> Message:
+        """Wait for a MODE change on `target` (a channel or a nickname).
+
+        Not simply the next MODE: a client is sent `MODE <nick> :+x` of
+        its own after registration, and an operator gets its own modes
+        after OPER, so "the next MODE" is often somebody else's answer.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError(f"no MODE on {target}")
+
+            msg = await self.wait_for("MODE", timeout=remaining)
+            if msg.params and msg.params[0].lower() == target.lower():
+                return msg
+
     async def set_umode(self, modes: str, nick: str | None = None) -> Message:
         """Send MODE <nick> <modes>, wait for the echo, and verify it applied.
 
@@ -387,17 +435,48 @@ class IRCClient:
         change is expected.
         """
         nick = nick or self.nick
-        await self.send(f"MODE {nick} {modes}")
-        msg = await self.wait_for("MODE")
-        applied = parse_mode_string(msg.params[-1])
         requested = parse_mode_string(modes)
-        for ch, sign in requested.items():
-            if applied.get(ch) != sign:
+
+        await self.send(f"MODE {nick} {modes}")
+
+        # Not simply "the next MODE": every client is sent `MODE <nick>
+        # :+x` of its own shortly after registration (the hidden host, see
+        # doc/readme.accounting), and a mode change somebody else made can
+        # arrive at any time.  The answer to this request is the echo that
+        # carries what was asked for; anything else is somebody else's.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        seen = []
+
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 raise AssertionError(
-                    f"MODE {modes} not applied as expected: requested "
-                    f"{sign}{ch}, got {msg.params[-1]!r}"
+                    f"MODE {modes} was never echoed back; saw {seen}"
                 )
-        return msg
+
+            try:
+                msg = await self.wait_for("MODE", timeout=remaining)
+            except asyncio.TimeoutError:
+                raise AssertionError(
+                    f"MODE {modes} was never echoed back; saw {seen}"
+                )
+
+            applied = parse_mode_string(msg.params[-1])
+            if all(applied.get(ch) == sign for ch, sign in requested.items()):
+                return msg
+
+            # A different change: if it touches a mode we asked about and
+            # says the opposite, the request was refused and waiting for a
+            # better answer would only time out.
+            for ch, sign in requested.items():
+                if ch in applied and applied[ch] != sign:
+                    raise AssertionError(
+                        f"MODE {modes} not applied as expected: requested "
+                        f"{sign}{ch}, got {msg.params[-1]!r}"
+                    )
+
+            seen.append(msg.params[-1])
 
     async def silence(self, pattern: str, timeout: float = 5.0) -> Message:
         """Send SILENCE +<pattern>, waiting for the server's echo.

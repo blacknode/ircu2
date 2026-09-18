@@ -1,0 +1,324 @@
+IDENTIFYING documentation, last updated on 16 Sep 2026
+
+How a user earns +r.  doc/readme.accounting describes the model -- an
+account IS a nickname, +r means identified to the one in use -- and this
+file describes the three ways in and the one thing behind them.
+
+  AUTHENTICATE      IRCv3 SASL, for a client that negotiates it
+  ACCOUNT           the same question as an ordinary command
+  /msg NickServ     the same question again, for whoever is used to it
+
+All three hand the credential to sasl_login_request(), and everything
+after the credential -- asking the provider, granting +r, taking the
+nickname, lifting the freeze -- is one path.  What differs between them
+is only which numerics the client is answered in.
+
+
+WHO DECIDES
+===========
+
+The server does not know whether a password is right.  It holds the
+question and the answer's consequences; a module holds the answer.
+
+  ircd/sasl.c            the shape of an exchange.  Turns AUTHENTICATE
+                         lines into an authcid (the address), an authzid
+                         (which of that address's accounts) and a
+                         secret, and stops.  Knows nothing about
+                         clients, which is why sasl_t can test the whole
+                         state machine without a server.
+  ircd/account.c         the provider register and the questions in
+                         flight.  Never dereferences a struct Client.
+  ircd/account_user.c    what an answer does to a user: account_login(),
+                         account_logout(), the guest rename.
+  ircd/m_authenticate.c  where the three meet, and the only place that
+                         holds all three at once.
+  ircd/m_account.c       the ACCOUNT command.
+  modules/services/identity/    the provider: the store, the Argon2, the
+                         cache in front of the database.
+  modules/services/irc_services/  NickServ: the grace period and the
+                         commands a person types.
+
+One provider at a time.  A second registration is refused rather than
+replacing the first, so two identity modules in ircd.conf produce an
+error in the log instead of a coin flip.  With no provider registered
+the sasl capability is not advertised at all: a client that negotiates
+SASL against a server which cannot authenticate anybody would find out
+after sending its password, which is worse than seeing that it is not
+on offer.
+
+
+SASL, ON THE WIRE
+=================
+
+    CAP LS
+    :server CAP * LS :... sasl=EXTERNAL,PLAIN ...
+    CAP REQ :sasl
+    AUTHENTICATE PLAIN
+    AUTHENTICATE +
+    AUTHENTICATE <base64 of authzid NUL authcid NUL password>
+    :server 900 maria maria!u@host maria :You are now logged in as maria
+    :server 903 maria :SASL authentication successful
+    CAP END
+
+The capability's value is the mechanism list, sorted by name so it does
+not depend on module load order.  The core brings two:
+
+  PLAIN     RFC 4616.  Sends the password in the clear, so it carries
+            SASL_MECH_NEEDS_TLS and is refused on a plain connection
+            unless FEAT_ACCOUNT_REQUIRE_TLS is turned off on purpose.
+  EXTERNAL  RFC 4422 appendix A.  The credential is the certificate the
+            server already has; the message carries only which account.
+            No certificate, no credential -- failing there rather than
+            letting the provider decide keeps "authenticated as nobody"
+            from existing even for an instant.
+
+A module adds its own with module_add_sasl_mechanism(); registering or
+unregistering one re-advertises the capability, with CAP NEW / CAP DEL
+on a running server.
+
+AUTHENTICATE has no P10 token, on purpose.  Every server runs the
+identity module against the same store, so there is nothing to route
+and no half-open session left on the far side of a netsplit; what
+travels is +r, which travelled already.
+
+A message longer than 400 characters is chunked, as the specification
+says; a continuation is charged its bytes but not the flat per-command
+flood penalty, or a chunked credential would cost two seconds per chunk
+before the client had finished connecting.  Starting an exchange is
+charged in full, and three consecutive failures end it.
+
+
+DURING REGISTRATION, AND AFTER
+==============================
+
+A client that authenticates after registering is simply logged in.  One
+that authenticates during registration cannot be: it is not a user yet,
+and a user mode cannot be granted to something that is not a user.  So
+the two halves are separated:
+
+  - the nickname is taken at once (account_claim_nick()), so the client
+    is introduced to the network under the name it is entitled to
+    instead of joining as one thing and being renamed a moment later;
+  - the 900 and 903 are sent at once.  A client waits for the 903
+    before it sends CAP END, and CAP END is what lets registration
+    finish: holding the numeric would be each side waiting for the
+    other;
+  - only the +r grant waits, until the end of register_user().
+
+Registration is held meanwhile by AR_SASL_PENDING, one more flag beside
+ident, DNS, CAP and the PING cookie -- registration was already a state
+machine that waits, so this is not a new kind of thing.
+
+If the exchange fails, the client comes in without +r and under
+whatever name it is entitled to, which for a registered nickname it
+could not prove is a guest name.
+
+
+ACCOUNT
+=======
+
+    ACCOUNT LOGIN <address> <password> [<account>]
+    ACCOUNT LOGOUT
+    ACCOUNT LIST
+
+For every client that does not speak IRCv3, and the same question
+underneath.  A client that never negotiated the sasl capability is
+never told about SASL: there is no 903, and a failure is ERR_ACCOUNTFAIL
+(983) with the reason.
+
+LOGIN works before registration as well as after.  Before, it behaves
+like PASS and holds registration with the same AR_SASL_PENDING; after,
+it identifies, or switches which account is in use, which is the same
+act.  With no account named it takes the address's default one.
+
+LIST shows the accounts of the address you are identified with:
+
+    :server 984 maria maria       *d :in use, default
+    :server 984 maria maria_movil -  :available
+    :server 985 maria :End of ACCOUNT LIST
+
+The second parameter is flags for a client -- "*" the one in use, "d"
+the address's default, "-" neither -- and the text is for the person
+and is translated.  Which one is in use is the server's own knowledge,
+not the provider's.
+
+LIST needs cli_user()->email, which exists only because this client
+authenticated with it.  There is no form of this command that lists
+somebody else's accounts: asking "what accounts does this address
+hold" about an address you have not authenticated with is an account
+enumerator, whether or not the answer is filtered afterwards.  Without
+it, ERR_NOTAUTHENTICATED (986).
+
+ACCOUNT has these three subcommands and does not grow.  Registering an
+account, verifying an address or changing a password do not touch
+struct Client: they are policy, and policy is NickServ's.
+
+Like AUTHENTICATE it has no P10 token, for that reason and one more:
+"AC" is what the historical ircu account burst used, and giving it a
+different meaning here would land an old peer's burst on a client
+command.
+
+
+NICKSERV
+========
+
+    /msg NickServ IDENTIFY <address> <password> [<account>]
+    /msg NickServ REGISTER <address> <password>
+    /msg NickServ PASSWORD <old> <new>
+    /msg NickServ DROP <password>
+    /msg NickServ STATUS
+
+IDENTIFY is the door a frozen client can still reach: a PRIVMSG to a
+local +S bot is one of the few things the freeze lets through, and it
+exists for this command.  With no account named and the client frozen
+it means the nickname in use -- "identify to this nickname" is what the
+client is being asked to do, and logging it in as some other account of
+its would rename it out from under the question.
+
+REGISTER takes the nickname in use and no other: an account is a
+nickname, so registering one you are not wearing is registering a name
+you have not shown you can hold.  It creates the address if it is new,
+and if the address exists the password must be its password -- taking a
+second nickname for an address is as much an act of its holder as
+changing the password is.  It logs the client in on the spot, because
+the password was just checked or just set.
+
+PASSWORD and DROP need the address the client proved was its own.  DROP
+ends in a logout, because +r to an account that no longer exists is not
+a state the model defines.
+
+"max_accounts" and "grace_period" go in the Service{} block that
+already declares the bot, not in a block of their own:
+
+    Service {
+      name = "NickServ";
+      type = "nickserv";
+      "max_accounts" = 3;
+      "grace_period" = 1 minutes;
+    };
+
+
+WHAT THE PROVIDER IS ASKED
+==========================
+
+include/account.h.  Four questions, all of them answered later, in the
+main thread, and none of them allowed to block:
+
+  ap_verify   is this credential good?
+  ap_lookup   whose nickname is this?
+  ap_list     what accounts does this address hold?
+  ap_change   register / change the password / drop
+
+All four are required.  A provider that could verify but not list would
+make ACCOUNT LIST answer "the identity service is not available" on a
+server where identity works, and that is the one answer a user cannot
+tell from an outage.
+
+Every question has a deadline (FEAT_ACCOUNT_TIMEOUT) on a timer of
+account.c's own, is dropped when the client it was about leaves, and is
+failed if the module is unloaded still owing it.
+
+ap_lookup's three answers are FREE, REGISTERED and UNKNOWN, and UNKNOWN
+is not FREE.  See WHEN NOTHING CAN BE ESTABLISHED in
+doc/readme.accounting; it is the rule that overrides the rest.
+
+
+THE IDENTITY MODULE
+===================
+
+modules/services/identity/.  No bot, no commands, not one line sent to
+a user: it registers the provider and answers.  It owns the schema, so
+it is a directory module with migrations, applied by an operator:
+
+    /MODULE MIGRATION APPLY identity
+
+It needs a Database{} block and the postgres module.  A Redis{} block
+and the redis module are optional and only make it faster.  It runs
+Argon2 on a worker, so FEAT_WORKER_THREADS must not be zero -- with no
+worker pool it refuses every verification and says so in the log, which
+is better than stopping the server for a quarter of a second per login.
+
+APPLY THE MIGRATIONS BEFORE LETTING ANYBODY IN.  Until they are applied
+there is no "account" table, so every nickname lookup fails, and a lookup
+that fails is UNKNOWN, and UNKNOWN is not FREE -- so every user that
+registers is renamed to guest-*.  That is the rule working exactly as
+written (the source of truth is not answering), not a bug, and it is the
+one moment a new deployment meets it: bring the server up, apply the
+migrations, then open the port.
+
+The password pepper comes from the IRCU_PASSWORD_PEPPER environment
+variable, the same value on every server, and deliberately not from the
+configuration file: it is the one secret whose whole purpose is to not
+be wherever the hashes are, and a configuration file gets copied,
+diffed and pasted into a bug report.
+
+A verification is one query and then one worker.  The address's row and
+the account it named come back together, before the password is
+checked, and nothing about either is said until after it is: which
+accounts an address holds is not something a wrong password gets to
+find out.  For the same reason "no such address" and "wrong password"
+are the same answer.
+
+A stored hash made with costs below what the server asks for now is
+made again -- on a worker, after the client has been answered, so that
+raising the costs never shows up as login latency -- and the update is
+guarded by the hash it replaces, so a password changed in between is
+not overwritten.
+
+A write takes an advisory lock inside a SQL function created by the
+module's own migration, because counting an address's accounts and then
+inserting one is a race the moment there are two servers.  See ONE
+STATEMENT, AND WHAT TO DO WHEN THAT IS NOT ENOUGH in
+doc/readme.database.
+
+
+THE TRADITIONAL CLIENT
+======================
+
+An acceptance requirement, not an aspiration.
+
+  - A client that does not ask for the sasl capability never sees an
+    AUTHENTICATE.
+  - ACCOUNT is one more command; a client that does not type it does
+    not notice it.
+  - +r already existed.  +f is one more letter in the MODE the client
+    was already receiving.
+  - There is still no account-notify, account-tag or extended-join, and
+    now for a better reason than "they were removed": with an account
+    that IS the nick, all three repeat the prefix.
+
+
+TESTS
+=====
+
+  ircd/test/sasl_t.c        the mechanism register and the exchange,
+                            including the chunking, without a server
+  ircd/test/account_t.c     the provider register and the questions in
+                            flight, without a provider
+  ircd/test/crypto_t.c      Argon2, SHA-256, AES-GCM and base64 against
+                            their published vectors
+  tests/identity/           +f and what it blocks, the guest rename,
+                            ACCOUNT's refusals, the capability with no
+                            provider
+  tests/identity_db/        the same thing with a provider: registering,
+                            the account limit, identifying by all three
+                            doors, the listing, the password change, the
+                            drop, and the grace period against a real
+                            store
+
+tests/identity_db/ runs against the "identity" topology -- one ircd with
+this module and one PostgreSQL, in docker-compose.yml.  There is no Redis
+there on purpose: the cache is never the truth, so a server without one
+answers exactly the same.  The schema is created by the tests themselves
+running /MODULE MIGRATION APPLY identity, which is how a deployment does
+it and therefore worth doing the same way.
+
+
+VERIFYING THE ADDRESS
+=====================
+
+Earning +r proves a credential.  It does not prove that the address the
+credential is filed under is real, and until somebody reads a message
+sent to it, it is a claim.  That is a separate proof with its own
+mechanism -- a signed token, ACCOUNT VERIFY, and a mail provider module
+-- and it is documented in doc/readme.mail.

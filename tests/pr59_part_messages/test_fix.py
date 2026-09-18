@@ -65,7 +65,7 @@ async def test_banned_user_part_message_hidden_remote(ircd_network):
 
         # chanop bans the user
         await chanop.send("MODE #test_pr59_s2s +b banned59!*@*")
-        await chanop.wait_for("MODE")
+        await chanop.wait_for_mode("#test_pr59_s2s")
         await asyncio.sleep(0.5)  # Let mode propagate across servers
 
         # banned user parts with a message

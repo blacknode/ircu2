@@ -87,9 +87,23 @@ struct User {
   char               username[USERLEN + 1];
   char               host[HOSTLEN + 1];       /**< displayed hostname */
   char               realhost[HOSTLEN + 1];   /**< actual hostname */
-  char               account[ACCOUNTLEN + 1]; /**< IRC account name */
-  uint64_t	     acc_id;                  /**< IRC account id */
-  uint64_t           acc_flags;               /**< IRC account flags */
+  /** Registered nick the user is identified to, or an empty string.
+   * Set together with umode +r and always equal to the nick that was
+   * current when +r was granted; see doc/readme.accounting.
+   */
+  char               account[NICKLEN + 1];
+  /** Address of the identity this user authenticated with, or NULL.
+   *
+   * Local, and only local.  It does not cross P10, it is never shown to a
+   * third party -- WHOIS reports it only to the user themselves -- and it
+   * does not outlive the session: logging out clears it at the same
+   * moment +r goes away, because a state where one exists without the
+   * other is one the model does not define.  A user who arrived from
+   * another server has NULL here, which is the server saying it does not
+   * know, and is the reason the field is in User rather than Connection:
+   * a remote user has the former and not the latter.  See proposal 007.
+   */
+  const char*        email;
 };
 
 #endif /* INCLUDED_struct_h */

@@ -12,6 +12,7 @@
 #include "config.h"
 
 #include "msg_tag.h"
+#include "batch.h"
 #include "capab.h"
 #include "client.h"
 #include "ircd.h"
@@ -20,6 +21,8 @@
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
 #include "msg.h"
+#include "msgid.h"
+#include "parse.h"
 
 #include <string.h>
 #include <time.h>
@@ -245,13 +248,293 @@ msg_tag_clienttagdeny_rebuild(void)
   }
 }
 
+/* ------------------------------------------------------------------
+ * The message identifier of the line being handled.  See msg_tag.h.
+ * ------------------------------------------------------------------ */
+
+/** Non-zero between msg_tag_line_begin() and msg_tag_line_end(). */
+static int msgid_line_open;
+/** Non-zero if this line's command carries an identifier at all. */
+static int msgid_line_wanted;
+/** The line's command token, so that only its own relay gets the id. */
+static char msgid_line_tok[16];
+/** The identifier, empty until something asks for one. */
+static char msgid_line_value[MSGIDLEN + 1];
+
+/** A stored message being sent again, rather than one happening now.
+ *
+ * A message read back out of a history store already has a name and a
+ * time, and both of them are the network's rather than this server's: the
+ * whole point of storing them was that a client would later be shown the
+ * same message everyone else saw.  So they are put here and the rendering
+ * below uses them in place of the line's own -- which, in a database
+ * callback, there is none of anyway.
+ */
+static int  replay_open;
+static char replay_time[32];
+/** Client-only tags to put back on the line, rendered, or empty.
+ *
+ * A stored message may have carried client tags -- which message it
+ * replies to, which message it is a reaction to -- and those are part of
+ * the message rather than decoration on it.  The core does not know what
+ * any of them mean: whatever stored them says what to put back, already
+ * spelled the way it goes on the wire.
+ */
+static char replay_tags[512];
+
+/** One client tag not to relay for the moment, or "".
+ *
+ * A module that delivers one message two ways -- rich text to the clients
+ * that negotiated it, plain text to everybody else -- has to be able to
+ * say which half a tag belongs to.  @c +blacknode/format=markdown is true
+ * of one of those bodies and a lie about the other, and a tag that is a
+ * lie is worse than no tag.
+ */
+static char suppress_key[CAPVALUELEN];
+
+/** A server tag the replay in force carries, or "".
+ *
+ * What the store says about the message rather than what the message
+ * said: that it has been edited since.  Nobody claimed it when the
+ * message was sent and no client may claim it about somebody else's
+ * message, so it is the server's to state -- which also means
+ * CLIENTTAGDENY has no say in it, the way it has none over @c batch.
+ */
+static char replay_note_key[CAPVALUELEN];
+static char replay_note_value[128];
+
+int
+msg_tag_needs_msgid(const char *tok)
+{
+  if (!tok)
+    return 0;
+
+  /* What a user says, and nothing else.  These are the messages another
+   * message can reply to, react to, edit, delete or store, which is the
+   * whole reason an identifier exists.
+   *
+   * WALLCHOPS and WALLVOICES are deliberately not here even though they
+   * are things a user says.  They go out to the channel as WALLCHOPS but
+   * are echoed back to their sender as a NOTICE, so the sender would be
+   * given a different name for the message than everyone else got -- and a
+   * message two clients disagree about the name of is worse than one with
+   * no name at all.  They can be added when that path is made to agree
+   * with itself.
+   */
+  return !ircd_strcmp(tok, TOK_PRIVATE)
+    || !ircd_strcmp(tok, TOK_NOTICE)
+    || !ircd_strcmp(tok, TOK_TAGMSG);
+}
+
+void
+msg_tag_line_begin(const char *tok, struct MsgTag *tags, int from_server)
+{
+  const struct MsgTag *tag;
+
+  msgid_line_open = 1;
+  msgid_line_wanted = msg_tag_needs_msgid(tok);
+  msgid_line_value[0] = '\0';
+  msgid_line_tok[0] = '\0';
+  if (tok) {
+    ircd_strncpy(msgid_line_tok, tok, sizeof(msgid_line_tok) - 1);
+    msgid_line_tok[sizeof(msgid_line_tok) - 1] = '\0';
+  }
+
+  if (!msgid_line_wanted)
+    return;
+
+  /* An identifier that came with the message is the network's: the server
+   * it started on named it, and every server has to call it the same
+   * thing.  From a client it is not: an identifier a client could choose
+   * is one it could use to point at -- or overwrite -- somebody else's
+   * message wherever they are kept.
+   */
+  if (!from_server)
+    return;
+
+  tag = msg_tag_find(tags, "msgid");
+  if (tag && tag->value && msgid_valid(tag->value)) {
+    ircd_strncpy(msgid_line_value, tag->value, sizeof(msgid_line_value) - 1);
+    msgid_line_value[sizeof(msgid_line_value) - 1] = '\0';
+  }
+}
+
+void
+msg_tag_line_force_msgid(const char *tok)
+{
+  if (!msgid_line_open)
+    return;
+
+  /* A NULL token disarms it: the line has already named what it had to
+   * name and nothing after this carries an identifier.
+   */
+  if (!tok) {
+    msgid_line_wanted = 0;
+    msgid_line_value[0] = '\0';
+    msgid_line_tok[0] = '\0';
+    return;
+  }
+
+  msgid_line_wanted = 1;
+  msgid_line_value[0] = '\0';
+  ircd_strncpy(msgid_line_tok, tok, sizeof(msgid_line_tok) - 1);
+  msgid_line_tok[sizeof(msgid_line_tok) - 1] = '\0';
+}
+
+void
+msg_tag_line_replay(const char *tok, const char *msgid, const char *when,
+                    const char *tags)
+{
+  msgid_line_open = 1;
+  msgid_line_wanted = 0;
+  msgid_line_value[0] = '\0';
+  msgid_line_tok[0] = '\0';
+  replay_open = 0;
+  replay_time[0] = '\0';
+  replay_tags[0] = '\0';
+  replay_note_key[0] = '\0';
+  replay_note_value[0] = '\0';
+
+  if (!tok)
+    return;
+
+  ircd_strncpy(msgid_line_tok, tok, sizeof(msgid_line_tok) - 1);
+  msgid_line_tok[sizeof(msgid_line_tok) - 1] = '\0';
+
+  /* No identifier is a legitimate answer -- an old row, a store that
+   * never had one -- and it must not turn into a freshly minted one,
+   * which would give the same message two names.  So "wanted" is set only
+   * when there is something to hand out.
+   */
+  if (msgid && *msgid) {
+    msgid_line_wanted = 1;
+    ircd_strncpy(msgid_line_value, msgid, sizeof(msgid_line_value) - 1);
+    msgid_line_value[sizeof(msgid_line_value) - 1] = '\0';
+  }
+
+  if (when && *when) {
+    replay_open = 1;
+    ircd_strncpy(replay_time, when, sizeof(replay_time) - 1);
+    replay_time[sizeof(replay_time) - 1] = '\0';
+  }
+
+  if (tags && *tags) {
+    replay_open = 1;
+    ircd_strncpy(replay_tags, tags, sizeof(replay_tags) - 1);
+    replay_tags[sizeof(replay_tags) - 1] = '\0';
+  }
+}
+
+void
+msg_tag_line_replay_server_tag(const char *key, const char *value)
+{
+  replay_note_key[0] = '\0';
+  replay_note_value[0] = '\0';
+
+  if (!key || !*key)
+    return;
+
+  replay_open = 1;
+  ircd_strncpy(replay_note_key, key, sizeof(replay_note_key) - 1);
+  replay_note_key[sizeof(replay_note_key) - 1] = '\0';
+
+  if (value && *value) {
+    ircd_strncpy(replay_note_value, value, sizeof(replay_note_value) - 1);
+    replay_note_value[sizeof(replay_note_value) - 1] = '\0';
+  }
+}
+
+void
+msg_tag_line_replay_end(void)
+{
+  replay_open = 0;
+  replay_time[0] = '\0';
+  replay_tags[0] = '\0';
+  replay_note_key[0] = '\0';
+  replay_note_value[0] = '\0';
+  msg_tag_line_end();
+}
+
+const char *
+msg_tag_line_replay_tags(void)
+{
+  return replay_tags[0] ? replay_tags : 0;
+}
+
+void
+msg_tag_suppress(const char *key)
+{
+  if (!key || !*key) {
+    suppress_key[0] = '\0';
+    return;
+  }
+
+  ircd_strncpy(suppress_key, key, sizeof(suppress_key) - 1);
+  suppress_key[sizeof(suppress_key) - 1] = '\0';
+}
+
+void
+msg_tag_line_end(void)
+{
+  msgid_line_open = 0;
+  msgid_line_wanted = 0;
+  msgid_line_value[0] = '\0';
+  msgid_line_tok[0] = '\0';
+}
+
+void
+msg_tag_line_time(char *buf, size_t buflen)
+{
+  const struct MsgTag *tag;
+
+  if (!buf || buflen < 2)
+    return;
+
+  /* What upstream called it, if anything did.  A message that crossed a
+   * link was stamped where it started, and a store that restamped it on
+   * arrival would order the same conversation differently on every
+   * server.
+   */
+  tag = msg_tag_find(parse_tags(), "time");
+  if (tag && tag->value && tag->value[0]) {
+    ircd_strncpy(buf, tag->value, buflen - 1);
+    buf[buflen - 1] = '\0';
+    return;
+  }
+
+  msg_tag_format_time(buf, buflen, CurrentTime);
+}
+
+const char *
+msg_tag_line_msgid(const char *tok)
+{
+  if (!msgid_line_open || !msgid_line_wanted)
+    return NULL;
+
+  /* The identifier names the message this line carried.  A numeric sent
+   * back while handling it, or a notice the server puts out in passing,
+   * happen during the same line but are not that message, and giving them
+   * its name would have anything that stores messages record the wrong
+   * thing under it.
+   */
+  if (tok && ircd_strcmp(tok, msgid_line_tok))
+    return NULL;
+
+  if (!msgid_line_value[0]) {
+    ircd_strncpy(msgid_line_value, msgid_new(), sizeof(msgid_line_value) - 1);
+    msgid_line_value[sizeof(msgid_line_value) - 1] = '\0';
+  }
+
+  return msgid_line_value;
+}
+
 int
 msg_tag_key_server(const char *key)
 {
   if (!key)
     return 0;
   return !ircd_strcmp(key, "time") || !ircd_strcmp(key, "account")
-    || !ircd_strcmp(key, "batch");
+    || !ircd_strcmp(key, "batch") || !ircd_strcmp(key, "msgid");
 }
 
 int
@@ -299,6 +582,34 @@ msg_tag_have_client_relay(struct MsgTag *tags)
   return 0;
 }
 
+/** Return non-zero if a client is allowed to send \a key.
+ *
+ * Everything else a client puts in front of a line is dropped before the
+ * command is dispatched: a client may not set a server tag, because a tag
+ * the server vouches for is worth nothing if anybody can write it.
+ *
+ * The one non-client tag a client may send is @c label.  It is the whole
+ * point of labeled-response -- the client names its own request so the
+ * server can name the answer -- and it goes no further than the command it
+ * arrived on: msg_tag_format() forwards only client-only tags to other
+ * clients, and msg_tag_format_s2s() only federated ones, so a label never
+ * reaches anybody but the client that wrote it.
+ */
+static int
+msg_tag_client_may_send(const char *key)
+{
+  if (msg_tag_key_client_only(key))
+    return msg_tag_client_allowed(key);
+
+  /* A client sends @batch= to say which of its own batches a line belongs
+   * to: that is how a message longer than a line is sent.  Like the label,
+   * it is consumed here and goes no further -- see msg_tag_format_s2s().
+   */
+  return key && (!ircd_strcmp(key, "label")
+                 || !ircd_strcmp(key, "batch")
+                 || !ircd_strcmp(key, "draft/multiline-concat"));
+}
+
 struct MsgTag *
 msg_tag_filter_client(struct MsgTag *tags)
 {
@@ -306,8 +617,7 @@ msg_tag_filter_client(struct MsgTag *tags)
   struct MsgTag **tail = &head;
 
   for (; tags; tags = tags->next) {
-    if (msg_tag_key_client_only(tags->key)
-        && msg_tag_client_allowed(tags->key)) {
+    if (msg_tag_client_may_send(tags->key)) {
       *tail = tags;
       tail = &tags->next;
     }
@@ -325,21 +635,13 @@ msg_tag_wants_time(struct Client *to)
     || CapHas(cli_active(to), CAP_MESSAGE_TAGS);
 }
 
-static int
-msg_tag_wants_account(struct Client *to)
-{
-  if (!to || IsServer(to))
-    return 0;
-  return CapHas(cli_active(to), CAP_ACCOUNT_TAG)
-    || CapHas(cli_active(to), CAP_MESSAGE_TAGS);
-}
-
 int
 msg_tag_key_federated(const char *key)
 {
   if (!key)
     return 0;
-  return !ircd_strcmp(key, "time") || !ircd_strcmp(key, "batch");
+  return !ircd_strcmp(key, "time") || !ircd_strcmp(key, "batch")
+    || !ircd_strcmp(key, "msgid");
 }
 
 int
@@ -411,7 +713,7 @@ msg_tag_append(char *pos, char *end, int *wrote, const char *key,
 
 unsigned int
 msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
-                   time_t local_time, int invent_time)
+                   time_t local_time, int invent_time, const char *msgid)
 {
   char *pos = buf;
   char *end = buf + buflen;
@@ -438,8 +740,29 @@ msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
       return 0;
   }
 
+  /* msgid, so that every server on the network calls this message by the
+   * same name.  Taken from the line rather than forwarded out of \a tags:
+   * upstream's identifier is already there when the message came from a
+   * server, and a client's own is not trusted (see msg_tag_line_begin).
+   */
+  if (msgid) {
+    pos = msg_tag_append(pos, end, &wrote, "msgid", msgid);
+    if (!pos)
+      return 0;
+  }
+
   for (tag = tags; tag; tag = tag->next) {
     if (!ircd_strcmp(tag->key, "time") || !ircd_strcmp(tag->key, "account"))
+      continue;
+    /* Handled above, from the line: never forwarded straight through. */
+    if (!ircd_strcmp(tag->key, "msgid"))
+      continue;
+    /* A batch is between one server and one client: the identifier means
+     * nothing on the next link, and a client's own would be forwarded as
+     * if this server had vouched for it.  Long messages cross P10 as the
+     * separate messages they are made of.
+     */
+    if (!ircd_strcmp(tag->key, "batch"))
       continue;
     if (msg_tag_key_client_only(tag->key))
       continue;
@@ -461,7 +784,7 @@ msg_tag_format_s2s(char *buf, size_t buflen, struct MsgTag *tags,
 }
 
 unsigned int
-msg_tag_profile(struct Client *to)
+msg_tag_profile(struct Client *to, const char *msgid)
 {
   unsigned int profile = TAGP_NONE;
 
@@ -470,15 +793,36 @@ msg_tag_profile(struct Client *to)
 
   if (msg_tag_wants_time(to))
     profile |= TAGP_TIME;
-  if (msg_tag_wants_account(to))
-    profile |= TAGP_ACCOUNT;
+
+  /* Its own bucket: the prefix cache reuses a rendered prefix across
+   * recipients with the same profile, and a client that gets a msgid does
+   * not get the same bytes as one that does not.
+   */
+  if (msgid && CapHas(cli_active(to), CAP_MESSAGE_TAGS))
+    profile |= TAGP_MSGID;
+
+  /* Likewise for a client that is inside a batch.  At most one client is,
+   * so this never collapses two recipients into one bucket wrongly.
+   */
+  if (CapHas(cli_active(to), CAP_BATCH)
+      && (batch_current(to) || batch_label_tag(to)))
+    profile |= TAGP_BATCH;
+
+  /* And for a client being sent the continuation of a line it is putting
+   * back together: the ones that did not ask for draft/multiline are sent
+   * the same piece without the tag, and the cache must not hand them one
+   * recipient's bytes for the other's.
+   */
+  if (CapHas(cli_active(to), CAP_MESSAGE_TAGS) && multiline_concat_for(to))
+    profile |= TAGP_CONCAT;
 
   return profile;
 }
 
 unsigned int
 msg_tag_format(char *buf, size_t buflen, struct Client *to,
-               struct Client *from, struct MsgTag *tags, time_t local_time)
+               struct Client *from, struct MsgTag *tags, time_t local_time,
+               const char *msgid)
 {
   char *pos = buf;
   char *end = buf + buflen;
@@ -497,7 +841,14 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
   if (msg_tag_wants_time(to)) {
     char tbuf[32];
 
-    if (feature_bool(FEAT_NETWORK_TIME) && time_tag && time_tag->value)
+    /* A stored message carries the time it was sent, not the time it is
+     * being read back: a history that stamped every line with "now" would
+     * be a list of when somebody scrolled, unordered against everything
+     * they already have.
+     */
+    if (replay_open)
+      ircd_strncpy(tbuf, replay_time, sizeof(tbuf) - 1);
+    else if (feature_bool(FEAT_NETWORK_TIME) && time_tag && time_tag->value)
       ircd_strncpy(tbuf, time_tag->value, sizeof(tbuf) - 1);
     else
       msg_tag_format_time(tbuf, sizeof(tbuf), local_time);
@@ -508,23 +859,105 @@ msg_tag_format(char *buf, size_t buflen, struct Client *to,
       return 0;
   }
 
-  /* account-tag (local edge only) */
-  if (msg_tag_wants_account(to)
-      && from && IsUser(from) && cli_user(from) && IsAccount(from)) {
-    char esc[ACCOUNTLEN * 2 + 16];
+  /* msgid, for a client that asked for message-tags.
+   *
+   * Nothing else may see it.  A client that negotiated nothing gets the
+   * line it has always got: an identifier is an addition for the clients
+   * that asked to be told about tags, never a change to what a
+   * traditional client is sent.
+   */
+  if (msgid && CapHas(cli_active(to), CAP_MESSAGE_TAGS)) {
+    pos = msg_tag_append(pos, end, &wrote, "msgid", msgid);
+    if (!pos)
+      return 0;
+  }
 
-    msg_tag_escape(cli_user(from)->account, esc, sizeof(esc));
-    pos = msg_tag_append(pos, end, &wrote, "account", esc);
+  /* batch and label.
+   *
+   * A client that did not ask for batches is sent neither: it gets the
+   * messages loose, which is the line it has always got.  The label rides
+   * only on the BATCH line that opens a labeled response, or on the bare
+   * ACK; the messages inside are identified by the batch.
+   */
+  if (CapHas(cli_active(to), CAP_BATCH)) {
+    const char *id = batch_current(to);
+    const char *label = batch_label_tag(to);
+
+    if (label) {
+      pos = msg_tag_append(pos, end, &wrote, "label", label);
+      if (!pos)
+        return 0;
+    }
+    if (id) {
+      pos = msg_tag_append(pos, end, &wrote, "batch", id);
+      if (!pos)
+        return 0;
+    }
+  }
+
+  /* draft/multiline-concat: this piece continues the line before it.
+   *
+   * The server's own statement about how it framed the message, like
+   * batch above, so CLIENTTAGDENY has no say in it -- that policy is
+   * about what one client may relay to another.  It reaches only a client
+   * that negotiated draft/multiline; everybody else is sent the pieces as
+   * the separate messages they have always been.
+   */
+  if (CapHas(cli_active(to), CAP_MESSAGE_TAGS) && multiline_concat_for(to)) {
+    pos = msg_tag_append(pos, end, &wrote, "draft/multiline-concat", 0);
+    if (!pos)
+      return 0;
+  }
+
+  /* What the store has to say about a replayed message, which is not
+   * something the message carried: a server tag, so CLIENTTAGDENY has no
+   * say in it for the reason it has none over batch above. */
+  if (CapHas(cli_active(to), CAP_MESSAGE_TAGS) && replay_open
+      && replay_note_key[0]) {
+    pos = msg_tag_append(pos, end, &wrote, replay_note_key,
+                         replay_note_value[0] ? replay_note_value : 0);
     if (!pos)
       return 0;
   }
 
   /* client-only tags */
   if (CapHas(cli_active(to), CAP_MESSAGE_TAGS)) {
+    /* A stored message being sent again carries the client tags it had,
+     * already rendered by whatever stored them: the core never learned
+     * what any of them mean and is not going to start here.  They still
+     * go only to a client that asked for message-tags, and they still go
+     * out under CLIENTTAGDENY -- the replay is subject to the same policy
+     * the live message was, because the policy may have changed since. */
+    if (replay_open && replay_tags[0]) {
+      char copy[sizeof(replay_tags)];
+      char *p;
+      char *entry;
+
+      ircd_strncpy(copy, replay_tags, sizeof(copy) - 1);
+      copy[sizeof(copy) - 1] = '\0';
+
+      for (p = copy; (entry = strtok(p, ";")) != NULL; p = NULL) {
+        char *value = strchr(entry, '=');
+
+        if (value)
+          *value++ = '\0';
+
+        if (!msg_tag_key_client_only(entry)
+            || !msg_tag_client_allowed(entry))
+          continue;
+
+        pos = msg_tag_append(pos, end, &wrote, entry, value);
+        if (!pos)
+          return 0;
+      }
+    }
+
     for (tag = tags; tag; tag = tag->next) {
       if (!msg_tag_key_client_only(tag->key))
         continue;
       if (!msg_tag_client_allowed(tag->key))
+        continue;
+      if (suppress_key[0] && !ircd_strcmp(tag->key, suppress_key))
         continue;
       pos = msg_tag_append(pos, end, &wrote, tag->key, tag->value);
       if (!pos)

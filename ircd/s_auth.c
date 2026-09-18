@@ -38,12 +38,14 @@
 #include "s_auth.h"
 #include "class.h"
 #include "client.h"
+#include "hooks.h"
 #include "IPcheck.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_osdep.h"
 #include "listener.h"
@@ -81,6 +83,7 @@ enum AuthRequestFlag {
     AR_AUTH_PENDING,    /**< ident connecting or waiting for response */
     AR_DNS_PENDING,     /**< dns request sent, waiting for response */
     AR_CAP_PENDING,     /**< in middle of CAP negotiations */
+    AR_SASL_PENDING,    /**< SASL exchange under way, see auth_sasl_start() */
     AR_NEEDS_PONG,      /**< user has not PONGed */
     AR_NEEDS_USER,      /**< user must send USER command */
     AR_NEEDS_NICK,      /**< user must send NICK command */
@@ -91,6 +94,8 @@ enum AuthRequestFlag {
     AR_IAUTH_FUSERNAME, /**< iauth sent a forced username */
     AR_IAUTH_SOFT_DONE, /**< iauth has no objection to client */
     AR_GLINE_CHECKED,   /**< checked for a G-line banning the client */
+    AR_MODULE_PENDING,  /**< a module is deciding, see auth_module_check() */
+    AR_MODULE_CHECKED,  /**< the modules have had their say */
     AR_FREE_PENDING,    /**< destroy during timer MARKED; freelist on ET_DESTROY */
     AR_NUM_FLAGS
 };
@@ -111,26 +116,25 @@ struct AuthRequest {
   unsigned short      port;       /**< client's remote port number */
 };
 
-/** Array of message text (with length) pairs for AUTH status
- * messages.  Indexed using #ReportType.
+/** Array of AUTH status messages, indexed using #ReportType.  Sent
+ * before registration, so a client that negotiated a language with
+ * LANGUAGE -- or a server with DEFAULT_LANGUAGE -- sees them translated;
+ * sendheader() looks each one up and adds the line ending.
  */
-static struct {
-  const char*  message;
-  unsigned int length;
-} HeaderMessages [] = {
-#define MSG(STR) { STR, sizeof(STR) - 1 }
-  MSG("NOTICE AUTH :*** Looking up your hostname\r\n"),
-  MSG("NOTICE AUTH :*** Found your hostname\r\n"),
-  MSG("NOTICE AUTH :*** Couldn't look up your hostname\r\n"),
-  MSG("NOTICE AUTH :*** Checking Ident\r\n"),
-  MSG("NOTICE AUTH :*** Got ident response\r\n"),
-  MSG("NOTICE AUTH :*** No ident response\r\n"),
-  MSG("NOTICE AUTH :*** \r\n"),
-  MSG("NOTICE AUTH :*** Your forward and reverse DNS do not match, "
-    "ignoring hostname.\r\n"),
-  MSG("NOTICE AUTH :*** Invalid hostname\r\n")
-#undef MSG
+static const char* HeaderMessages [] = {
+  N_("Looking up your hostname"),
+  N_("Found your hostname"),
+  N_("Couldn't look up your hostname"),
+  N_("Checking Ident"),
+  N_("Got ident response"),
+  N_("No ident response"),
+  "",
+  N_("Your forward and reverse DNS do not match, ignoring hostname."),
+  N_("Invalid hostname")
 };
+
+/** What every AUTH status message starts with; not for translation. */
+static const char HeaderPrefix[] = "NOTICE AUTH :*** ";
 
 /** Enum used to index messages in the HeaderMessages[] array. */
 typedef enum {
@@ -217,21 +221,36 @@ static void iauth_sock_callback(struct Event *ev);
 static void iauth_stderr_callback(struct Event *ev);
 static int sendto_iauth(struct Client *cptr, const char *format, ...);
 static int preregister_user(struct Client *cptr);
+static int check_auth_finished(struct AuthRequest *auth, int bitclr);
+static void auth_module_resume(void *data, enum HookResult result,
+                               const char *reason);
 typedef int (*iauth_cmd_handler)(struct IAuth *iauth, struct Client *cli,
 				 int parc, char **params);
 
 /** Sends response \a r (from #ReportType) to client \a cptr. */
 static void sendheader(struct Client *cptr, ReportType r)
 {
+  const char *message = _(cptr, HeaderMessages[r]);
+
   if (IsTLS(cptr) || IsWebsocket(cptr))
   {
-    sendrawto_one(cptr, "%.*s", HeaderMessages[r].length - 2,
-      HeaderMessages[r].message);
+    sendrawto_one(cptr, "%s%s", HeaderPrefix, message);
     send_queued(cptr);
   }
   else
   {
-   send(cli_fd(cptr), HeaderMessages[r].message, HeaderMessages[r].length, 0);
+    char line[BUFSIZE];
+    size_t len = sizeof(HeaderPrefix) - 1;
+    size_t mlen = strlen(message);
+
+    if (mlen > sizeof(line) - len - 2)
+      mlen = sizeof(line) - len - 2;
+    memcpy(line, HeaderPrefix, len);
+    memcpy(line + len, message, mlen);
+    len += mlen;
+    line[len++] = '\r';
+    line[len++] = '\n';
+    send(cli_fd(cptr), line, len, 0);
   }
 }
 
@@ -368,67 +387,13 @@ badid:
 
   ++ServerStats->is_bad_username;
   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-             ":Your username is invalid.");
+             N_(":Your username is invalid."));
   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-             ":Connect with your real username, in lowercase.");
+             N_(":Connect with your real username, in lowercase."));
   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-             ":If your mail address were foo@bar.com, your username "
-             "would be foo.");
+             N_(":If your mail address were foo@bar.com, your username "
+             "would be foo."));
   return exit_client(sptr, sptr, &me, "USER: Bad username");
-}
-
-/** Set account for user associated with \a auth.
- * @param[in] auth Authorization request for client.
- */
-int auth_set_account(struct AuthRequest *auth, const char *account_info)
-{
-  struct Client *sptr;
-  char *account_copy = NULL, *account = NULL, *id_str = NULL, *flags_str = NULL, *extra = NULL;
-
-  assert(auth != NULL);
-
-  sptr = auth->client;
-  if (!cli_user(sptr) || EmptyString(account_info))
-    return 1;
-
-  /* Parse account information: username:id:flags */
-  DupString(account_copy, account_info);
-  if (!account_copy)
-    return 1;
-
-  account = strtok(account_copy, ":");
-  id_str = strtok(NULL, ":");
-  flags_str = strtok(NULL, " ");
-  extra = strtok(NULL, "");
-
-  /* A malformed reply may contain no account name at all. */
-  if (EmptyString(account)) {
-    MyFree(account_copy);
-    return 1;
-  }
-
-  /* Copy account name to User structure */
-  ircd_strncpy(cli_user(sptr)->account, account, ACCOUNTLEN);
-
-  /* Parse account ID if provided */
-  if (id_str) {
-    cli_user(sptr)->acc_id = strtoul(id_str, NULL, 10);
-  }
-
-  if (flags_str) {
-    cli_user(sptr)->acc_flags = strtoul(flags_str, NULL, 10);
-  }
-
-  SetAccount(sptr);
-
-  /* Check for +x flag (host hiding) */
-  if (extra && strstr(extra, "+x") && feature_bool(FEAT_HOST_HIDING)) {
-    SetHiddenHost(sptr);
-  }
-
-  sendto_iauth(sptr, "A %s", cli_user(sptr)->account);
-  MyFree(account_copy);
-  return 0;
 }
 
 /** Notifies IAuth of a status change for the client.
@@ -474,6 +439,135 @@ static void iauth_notify(struct AuthRequest *auth, enum AuthRequestFlag flag)
   default:
     break;
   }
+}
+
+/** What auth_module_check() decided. */
+enum AuthModuleResult {
+  AMC_OK,       /**< Registration may go ahead. */
+  AMC_PENDING,  /**< A module is still deciding; the client waits. */
+  AMC_KILLED    /**< The client was refused and is gone. */
+};
+
+/** Let modules have the last word on a client that is about to register.
+ *
+ * #HOOK_CLIENT_PRE_REGISTER runs here, and not inside register_user(),
+ * because this is where the server can wait.  Registration is already a
+ * state machine that holds a connection until ident, DNS, CAP negotiation,
+ * the PING cookie and iauth are all done; a module that needs to ask
+ * something slow is one more of those, with a flag of its own and the same
+ * timeout watching over it.  Inside register_user() there would be nothing
+ * to come back to.
+ *
+ * Everything the hook is shown is settled by now -- nick, username, host,
+ * TLS state, connection class -- and nothing has been committed: the
+ * client is still unregistered and on no channel.
+ *
+ * @param[in] auth Authorization request for the client.
+ * @return A value from #AuthModuleResult.
+ */
+static int auth_module_check(struct AuthRequest *auth)
+{
+  struct Client *cptr = auth->client;
+  struct HookContext hc;
+  enum HookResult res;
+
+  /* Re-entered while a module is still deciding: a late DNS reply, a PONG,
+   * anything that calls check_auth_finished() again.  The answer is the
+   * one already being waited for, not a second question.
+   */
+  if (FlagHas(&auth->flags, AR_MODULE_PENDING))
+    return AMC_PENDING;
+
+  if (FlagHas(&auth->flags, AR_MODULE_CHECKED))
+    return AMC_OK;
+
+  if (!hook_is_active(HOOK_CLIENT_PRE_REGISTER)) {
+    FlagSet(&auth->flags, AR_MODULE_CHECKED);
+    return AMC_OK;
+  }
+
+  hook_context_init(&hc);
+  hc.hc_client = cptr;
+  hc.hc_source = cptr;
+  hc.hc_arg = cli_name(cptr);
+
+  res = hook_run_suspendable(HOOK_CLIENT_PRE_REGISTER, &hc, cptr,
+                             auth_module_resume, auth,
+                             CurrentTime + feature_int(FEAT_HOOK_TIMEOUT));
+
+  if (res == HOOK_PENDING) {
+    FlagSet(&auth->flags, AR_MODULE_PENDING);
+    return AMC_PENDING;
+  }
+
+  FlagSet(&auth->flags, AR_MODULE_CHECKED);
+
+  if (res == HOOK_DENY) {
+    exit_client(cptr, cptr, &me,
+                hc.hc_reason[0] ? hc.hc_reason : "Refused by a module");
+    return AMC_KILLED;
+  }
+
+  return AMC_OK;
+}
+
+/** Take the answer to a suspended #HOOK_CLIENT_PRE_REGISTER.
+ *
+ * Called from hooks.c on the main thread: by the module itself through
+ * hook_resume(), by the deadline, or because the module was unloaded while
+ * it owed an answer.  The last two arrive as #HOOK_DENY, which is why a
+ * module that holds a registration and then stops answering keeps nobody
+ * out but the client it was asked about.
+ *
+ * @param[in] data The struct AuthRequest that was held.
+ * @param[in] result #HOOK_DENY to refuse, anything else to let it in.
+ * @param[in] reason Why it was refused, or NULL.
+ */
+static void auth_module_resume(void *data, enum HookResult result,
+                               const char *reason)
+{
+  struct AuthRequest *auth = (struct AuthRequest *) data;
+  struct Client *cptr;
+
+  assert(auth != NULL);
+
+  /* destroy_auth_request() detaches the client and cancels the hold, so
+   * this should not be reachable with the client already gone; it costs
+   * one comparison to be sure, because the alternative is dereferencing a
+   * freed struct Client.
+   */
+  if (!auth->client)
+    return;
+
+  cptr = auth->client;
+  FlagClr(&auth->flags, AR_MODULE_PENDING);
+  FlagSet(&auth->flags, AR_MODULE_CHECKED);
+
+  if (result == HOOK_DENY) {
+    exit_client(cptr, cptr, &me,
+                (reason && *reason) ? reason : "Refused by a module");
+    return;
+  }
+
+  check_auth_finished(auth, AR_MODULE_PENDING);
+}
+
+/** Return non-zero if a module is deciding whether \a cptr may register.
+ *
+ * While that is true the client is frozen: the question a module was asked
+ * is about this connection with this nickname, and letting the nickname
+ * change underneath would make the answer be about somebody else.
+ *
+ * @param[in] cptr Client to test.
+ */
+int auth_module_held(struct Client *cptr)
+{
+  struct AuthRequest *auth;
+
+  assert(cptr != NULL);
+  auth = cli_auth(cptr);
+
+  return auth && FlagHas(&auth->flags, AR_MODULE_PENDING);
 }
 
 /** Check whether an authorization request is complete.
@@ -647,14 +741,29 @@ static int check_auth_finished(struct AuthRequest *auth, int bitclr)
       }
     }
 
+    /* Last word to the modules, and the one step here that may take its
+     * time: a module can hold the client and answer later.
+     */
     if (res == 0)
     {
-      if (HasFlag(auth->client, FLAG_SASL)) {
-        send_reply(auth->client, RPL_LOGGEDIN,
-          cli_name(auth->client), cli_user(auth->client)->username,
-          cli_user(auth->client)->host, cli_user(auth->client)->account,
-          cli_user(auth->client)->account);
+      switch (auth_module_check(auth))
+      {
+      case AMC_PENDING:
+        /* Held.  The auth request stays alive -- its timeout, and the
+         * registration timeout in check_pings(), are still watching this
+         * connection -- and auth_module_resume() picks up from here.
+         */
+        return 0;
+      case AMC_KILLED:
+        res = CPTR_KILLED;
+        break;
+      default:
+        break;
       }
+    }
+
+    if (res == 0)
+    {
       memset(cli_passwd(cptr), 0, sizeof(cli_passwd(cptr)));
       res = register_user(cptr, cptr);
     }
@@ -957,6 +1066,14 @@ void destroy_auth_request(struct AuthRequest* auth)
     delete_resolver_queries(auth);
   }
 
+  /* A module may still owe an answer about this client.  Dropping the hold
+   * rather than refusing it is deliberate: there is no longer anybody to
+   * refuse, and auth_module_resume() must not run on a struct AuthRequest
+   * that is going back on the freelist.
+   */
+  if (auth->client)
+    hook_pending_cancel(auth->client);
+
   if (-1 < s_fd(&auth->socket)) {
     close(s_fd(&auth->socket));
     socket_del(&auth->socket);
@@ -1013,9 +1130,9 @@ int auth_ping_timeout(struct Client *cptr)
        */
       if (*(cli_name(cptr)) && cli_user(cptr) && *(cli_user(cptr))->username) {
         send_reply(cptr, SND_EXPLICIT | ERR_BADPING,
-                   ":Your client may not be compatible with this server.");
+                   N_(":Your client may not be compatible with this server."));
         send_reply(cptr, SND_EXPLICIT | ERR_BADPING,
-                   ":Compatible clients are available at %s",
+                   N_(":Compatible clients are available at %s"),
                    feature_str(FEAT_URL_CLIENTS));
       }
       return exit_client_msg(cptr, cptr, &me, "Registration Timeout");
@@ -1412,7 +1529,7 @@ int auth_set_pong(struct AuthRequest *auth, unsigned int cookie)
   if (cookie != auth->cookie)
   {
     send_reply(auth->client, SND_EXPLICIT | ERR_BADPING,
-               ":To connect, type /QUOTE PONG %u", auth->cookie);
+               N_(":To connect, type /QUOTE PONG %u"), auth->cookie);
     return 0;
   }
   cli_lasttime(auth->client) = CurrentTime;
@@ -1524,6 +1641,55 @@ int auth_cap_done(struct AuthRequest *auth)
   if (FlagHas(&auth->flags, AR_CAP_PENDING))
     sendto_iauth(auth->client, "e");
   return check_auth_finished(auth, AR_CAP_PENDING);
+}
+
+/** Mark that a SASL exchange is under way.
+ *
+ * One more thing registration waits for, beside ident, DNS, CAP and the
+ * PING cookie.  A client may finish CAP negotiation while its credential
+ * is still being checked -- the check is a database query, and the whole
+ * point of its being asynchronous is that the server does not stop -- so
+ * without this the client would be registered before the answer arrived
+ * and would be logged in a moment after it was let in.
+ *
+ * @param[in] auth Authorization request for client.
+ * @return Zero; the client is always kept.
+ */
+int auth_sasl_start(struct AuthRequest *auth)
+{
+  assert(auth != NULL);
+  FlagSet(&auth->flags, AR_SASL_PENDING);
+  return 0;
+}
+
+/** Mark that the SASL exchange is over, whatever it decided.
+ *
+ * Failing is not a reason to keep waiting: the client is let in without
+ * +r, under whatever nickname it is entitled to.  Which nickname that is
+ * belongs to m_authenticate.c and not to this file.
+ *
+ * @param[in] auth Authorization request for client.
+ * @return Zero if client should be kept, CPTR_KILLED if rejected.
+ */
+int auth_sasl_done(struct AuthRequest *auth)
+{
+  assert(auth != NULL);
+  if (!FlagHas(&auth->flags, AR_SASL_PENDING))
+    return 0;
+  return check_auth_finished(auth, AR_SASL_PENDING);
+}
+
+/** Return non-zero if \a cptr is still waiting for a SASL answer.
+ * @param[in] cptr Client to test.
+ */
+int auth_sasl_pending(struct Client *cptr)
+{
+  struct AuthRequest *auth;
+
+  assert(cptr != NULL);
+  auth = cli_auth(cptr);
+
+  return auth && FlagHas(&auth->flags, AR_SASL_PENDING);
 }
 
 /** Set a client's username, hostname and IP with minimal checking.
@@ -2075,7 +2241,7 @@ static int iauth_cmd_stats(struct IAuth *iauth, struct Client *cli,
     for (node = iauth_stats_clients; node; node = node->next)
     {
       struct Client *cptr = node->value.cptr;
-      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s", line);
+      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":%s"), line);
     }
   }
   else
@@ -2330,7 +2496,15 @@ static int iauth_cmd_done_client(struct IAuth *iauth, struct Client *cli,
   return AR_IAUTH_PENDING;
 }
 
-/** Accept a client in IAuth and assign them to an account.
+/** Accept a client that an old iauth instance wants pre-authenticated.
+ *
+ * The R command used to stamp the client with an account before it was
+ * registered.  Accounts are no longer the server's to grant on a hint
+ * from iauth -- +r comes from a server or a service bot once the user
+ * exists (doc/readme.accounting) -- so the account is dropped and the
+ * client is let in as by D.  Kept so that an iauth written for the old
+ * protocol still admits users instead of leaving them hanging.
+ *
  * @param[in] iauth Active IAuth session.
  * @param[in] cli Client referenced by command.
  * @param[in] parc Number of parameters.
@@ -2342,36 +2516,16 @@ static int iauth_cmd_done_client(struct IAuth *iauth, struct Client *cli,
 static int iauth_cmd_done_account(struct IAuth *iauth, struct Client *cli,
 				  int parc, char **params)
 {
-  size_t len;
+  static time_t warn_time;
 
-  /* Sanity check. */
   if (EmptyString(params[0])) {
     sendto_iauth(cli, "E Missing :Missing account parameter");
     return 0;
   }
-  /* Check length of account name. */
-  len = strcspn(params[0], ": ");
-  if (len > ACCOUNTLEN) {
-    sendto_iauth(cli, "E Invalid :Account parameter too long");
-    return 0;
-  }
-  /* If account has an id, use it. */
-  assert(cli_user(cli) != NULL);
-  if (params[0][len] == ':') {
-    cli_user(cli)->acc_id = strtoul(params[0] + len + 1, NULL, 10);
-    params[0][len] = '\0';
-
-    /* If account has flags, use it. */
-    char *flags_start = strchr(params[0] + len + 1, ':');
-    if (flags_start != NULL) {
-        cli_user(cli)->acc_flags = strtoul(flags_start + 1, NULL, 10);
-        *flags_start = '\0';
-    }
-  }
-
-  /* Copy account name to User structure. */
-  ircd_strncpy(cli_user(cli)->account, params[0], ACCOUNTLEN);
-  SetAccount(cli);
+  sendto_opmask_butone_ratelimited(NULL, SNO_AUTH, &warn_time,
+                                   "iauth sent R (account %s) for %s; "
+                                   "accounts are not set by iauth, "
+                                   "treating as D", params[0], cli_name(cli));
 
   /* Fall through to the normal "done" handler. */
   return iauth_cmd_done_client(iauth, cli, parc - 1, params + 1);
@@ -2759,11 +2913,11 @@ void report_iauth_conf(struct Client *cptr, const struct StatDesc *sd, char *par
   if (!iauth)
     return;
 
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, " :%s",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(" :%s"),
     iauth->i_version ? iauth->i_version : "IAuth did not report a version");
   for (link = iauth->i_config; link; link = link->next)
   {
-    send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s", link->value.cp);
+    send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":%s"), link->value.cp);
   }
 
   if (param && !strcmp(param, "get"))
@@ -2805,7 +2959,8 @@ void report_iauth_stats(struct Client *cptr, const struct StatDesc *sd, char *pa
   {
     for (link = iauth->i_stats; link; link = link->next)
     {
-      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s", link->value.cp);
+      send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
+                 N_(":%s"), link->value.cp);
     }
     send_reply(cptr, RPL_ENDOFSTATS, sd->sd_name);
 

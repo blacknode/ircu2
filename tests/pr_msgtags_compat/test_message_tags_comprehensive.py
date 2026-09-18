@@ -88,14 +88,12 @@ async def _restore_clienttagdeny(oper: IRCClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "caps,expect_time,expect_account,expect_client",
+    "caps,expect_time,expect_client",
     [
-        ([], False, False, False),
-        (["server-time"], True, False, False),
-        (["account-tag"], False, True, False),
-        (["message-tags"], True, True, True),
-        (["server-time", "account-tag"], True, True, False),
-        (["server-time", "message-tags"], True, True, True),
+        ([], False, False),
+        (["server-time"], True, False),
+        (["message-tags"], True, True),
+        (["server-time", "message-tags"], True, True),
     ],
 )
 async def test_cap_matrix_delivery(
@@ -103,15 +101,18 @@ async def test_cap_matrix_delivery(
     services,
     caps,
     expect_time,
-    expect_account,
     expect_client,
 ):
-    """Each cap combination receives the correct tag subset."""
+    """Each cap combination receives the correct tag subset.
+
+    The sender is +r (identified to its nick); no account tag is ever
+    attached, the server does not speak account-tag any more.
+    """
     hub = ircd_network["hub"]
 
     sender = await _client(hub["host"], hub["port"], "capmtxsend")
-    numnick = await services.wait_for_user("capmtxsend")
-    await services.send_account(numnick, "CapAcct")
+    await services.wait_for_user("capmtxsend")
+    await services.send_register("capmtxsend")
 
     observer = await _client(
         hub["host"], hub["port"], f"capmtx{len(caps)}", caps=caps or None
@@ -126,7 +127,7 @@ async def test_cap_matrix_delivery(
         assert msg.params[-1] == "cap matrix", msg.raw
 
         assert tag_has(msg.tags, "time") == expect_time, msg.raw
-        assert tag_has(msg.tags, "account") == expect_account, msg.raw
+        assert not tag_has(msg.tags, "account"), msg.raw
         assert tag_has(msg.tags, "+example.com/foo") == expect_client, msg.raw
     finally:
         await _cleanup(sender, observer)
@@ -318,7 +319,7 @@ async def test_client_cannot_forge_server_tags(ircd_network, services):
     sender = await _client(hub["host"], hub["port"], "forgesnd", ["message-tags"])
     observer = await _client(
         hub["host"], hub["port"], "forgeobs",
-        ["message-tags", "server-time", "account-tag"],
+        ["message-tags", "server-time"],
     )
 
     try:
@@ -345,7 +346,7 @@ async def test_s2s_account_tag_never_relayed_from_wire(ircd_network, services):
     hub = ircd_network["hub"]
 
     observer = await _client(
-        hub["host"], hub["port"], "s2saccobs", ["account-tag", "message-tags"]
+        hub["host"], hub["port"], "s2saccobs", ["message-tags"]
     )
 
     try:

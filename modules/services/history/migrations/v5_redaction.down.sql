@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS history_redact(TEXT);

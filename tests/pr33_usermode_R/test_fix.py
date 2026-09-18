@@ -225,12 +225,16 @@ async def test_silenced_sender_still_dropped_after_unset_R_invite(make_client):
 
 
 async def test_authenticated_sender_allowed(make_client, ulined_server):
-    """A sender authenticated to an account (IsAccount() true) bypasses +R."""
+    """A sender identified to its nick (+r, IsAccount() true) bypasses +R.
+
+    +r is granted here the way a services server does it: a MODE for the
+    user on the server's own authority (doc/readme.accounting).
+    """
     target = await make_client("tgt33e")
     await target.set_umode("+R")
 
     fake = await ulined_server.introduce_user("acctsnd33")
-    await ulined_server.send_account(fake, "someaccount")
+    await ulined_server.send_register("acctsnd33")
     target_num = await ulined_server.wait_for_user("tgt33e")
     await asyncio.sleep(0.3)
 

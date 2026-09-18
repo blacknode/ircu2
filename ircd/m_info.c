@@ -83,6 +83,7 @@
 
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -115,12 +116,13 @@ int m_info(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   while (*text && strcmp(*text, "Sources:"))
     send_reply(sptr, RPL_INFO, *text++);
-  send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":Birth Date: %s, compile # %s",
+  send_reply(sptr, SND_EXPLICIT | RPL_INFO, N_(":Birth Date: %s, compile # %s"),
       creation, generation);
-  send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":On-line since %s",
+  send_reply(sptr, SND_EXPLICIT | RPL_INFO, N_(":On-line since %s"),
       myctime(cli_firsttime(&me)));
   if (ircd_tls_version)
-    send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":TLS library: %s", ircd_tls_version);
+    send_reply(sptr, SND_EXPLICIT | RPL_INFO,
+               N_(":TLS library: %s"), ircd_tls_version);
   send_reply(sptr, RPL_ENDOFINFO);
 
   return 0;
@@ -152,12 +154,13 @@ int ms_info(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       send_reply(sptr, RPL_INFO, *text++);
     send_reply(sptr, RPL_INFO, "");
   }
-  send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":Birth Date: %s, compile # %s",
+  send_reply(sptr, SND_EXPLICIT | RPL_INFO, N_(":Birth Date: %s, compile # %s"),
       creation, generation);
-  send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":On-line since %s",
+  send_reply(sptr, SND_EXPLICIT | RPL_INFO, N_(":On-line since %s"),
       myctime(cli_firsttime(&me)));
   if (ircd_tls_version)
-    send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":TLS library: %s", ircd_tls_version);
+    send_reply(sptr, SND_EXPLICIT | RPL_INFO,
+               N_(":TLS library: %s"), ircd_tls_version);
   send_reply(sptr, RPL_ENDOFINFO);
   return 0;
 }
@@ -187,12 +190,14 @@ int mo_info(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 	send_reply(sptr, RPL_INFO, *text++);
       send_reply(sptr, RPL_INFO, "");
     }
-    send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":Birth Date: %s, compile # %s",
+    send_reply(sptr, SND_EXPLICIT | RPL_INFO,
+               N_(":Birth Date: %s, compile # %s"),
 	       creation, generation);
-    send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":On-line since %s",
+    send_reply(sptr, SND_EXPLICIT | RPL_INFO, N_(":On-line since %s"),
 	       myctime(cli_firsttime(&me)));
     if (ircd_tls_version)
-      send_reply(sptr, SND_EXPLICIT | RPL_INFO, ":TLS library: %s", ircd_tls_version);
+      send_reply(sptr, SND_EXPLICIT | RPL_INFO,
+                 N_(":TLS library: %s"), ircd_tls_version);
     send_reply(sptr, RPL_ENDOFINFO);
   }
   return 0;

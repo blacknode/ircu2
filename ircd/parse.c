@@ -25,9 +25,11 @@
 
 #include "parse.h"
 #include "client.h"
+#include "batch.h"
 #include "channel.h"
 #include "handlers.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_chattr.h"
@@ -48,6 +50,7 @@
 #include "s_debug.h"
 #include "s_misc.h"
 #include "s_numeric.h"
+#include "sasl.h"
 #include "s_user.h"
 #include "msg_tag.h"
 #include "send.h"
@@ -112,23 +115,30 @@ struct Message msgtab[] = {
   {
     MSG_PRIVATE,
     TOK_PRIVATE,
-    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_unregistered, m_privmsg, ms_privmsg, mo_privmsg, m_ignore }
   },
   {
     MSG_NICK,
     TOK_NICK,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_nick, m_nick, ms_nick, m_nick, m_ignore }
   },
   {
     MSG_NOTICE,
     TOK_NOTICE,
-    0, MAXPARA, MFLG_SLOW | MFLG_IGNORE, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_IGNORE | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_ignore, m_notice, ms_notice, mo_notice, m_ignore }
+  },
+  {
+    MSG_IRCBATCH,
+    TOK_IRCBATCH,
+    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_unregistered, m_batch, m_ignore, m_batch, m_ignore }
   },
   {
     MSG_TAGMSG,
@@ -177,7 +187,9 @@ struct Message msgtab[] = {
     TOK_MODE,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_mode, ms_mode, m_mode, m_ignore }
+    { m_unregistered, m_mode, ms_mode, m_mode, m_ignore },
+    /* parv[1] is a nick or a channel; it is looked up as both */
+    { 1, 1, 0, 0 }
   },
   {
     MSG_BURST,
@@ -203,7 +215,7 @@ struct Message msgtab[] = {
   {
     MSG_QUIT,
     TOK_QUIT,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_quit, m_quit, ms_quit, m_quit, m_ignore }
   },
@@ -226,14 +238,18 @@ struct Message msgtab[] = {
     TOK_INVITE,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_invite, ms_invite, m_invite, m_ignore }
+    { m_unregistered, m_invite, ms_invite, m_invite, m_ignore },
+    /* <nick> <channel> */
+    { 1, 2, 0, 0 }
   },
   {
     MSG_KICK,
     TOK_KICK,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_kick, ms_kick, m_kick, m_ignore }
+    { m_unregistered, m_kick, ms_kick, m_kick, m_ignore },
+    /* <channel> <user> [<reason>] */
+    { 2, 1, 0, 3 }
   },
   {
     MSG_WALLOPS,
@@ -259,21 +275,21 @@ struct Message msgtab[] = {
   {
     MSG_PING,
     TOK_PING,
-    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_unregistered, m_ping, ms_ping, mo_ping, m_ignore }
   },
   {
     MSG_PONG,
     TOK_PONG,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { mr_pong, m_pong, ms_pong, m_pong, m_ignore }
   },
   {
     MSG_ERROR,
     TOK_ERROR,
-    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { mr_error, m_ignore, ms_error, m_ignore, m_ignore }
   },
@@ -282,7 +298,9 @@ struct Message msgtab[] = {
     TOK_KILL,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_not_oper, ms_kill, mo_kill, m_ignore }
+    { m_unregistered, m_not_oper, ms_kill, mo_kill, m_ignore },
+    /* <victim> <reason> */
+    { 1, 0, 0, 2 }
   },
   {
     MSG_USER,
@@ -324,7 +342,9 @@ struct Message msgtab[] = {
     TOK_WHOIS,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_whois, ms_whois, m_whois, m_ignore }
+    { m_unregistered, m_whois, ms_whois, m_whois, m_ignore },
+    /* <nick>, or <server> <nick>: the nick is last either way */
+    { MS_LAST, 0, 0, 0 }
   },
   {
     MSG_WHO,
@@ -481,6 +501,13 @@ struct Message msgtab[] = {
     { m_unregistered, m_info, ms_info, mo_info, m_ignore }
   },
   {
+    MSG_MODULE,
+    TOK_MODULE,
+    0, MAXPARA, MFLG_SLOW, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_unregistered, m_module, m_ignore, mo_module, m_ignore }
+  },
+  {
     MSG_MOTD,
     TOK_MOTD,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
@@ -499,28 +526,36 @@ struct Message msgtab[] = {
     TOK_SILENCE,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_silence, ms_silence, m_silence, m_ignore }
+    { m_unregistered, m_silence, ms_silence, m_silence, m_ignore },
+    /* from a client: <mask>.  From a server: <numnick> <masks> */
+    { 0, 0, 1, 0 }, { 1, 0, 2, 0 }
   },
   {
     MSG_GLINE,
     TOK_GLINE,
     0, MAXPARA,         0, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_gline, ms_gline, mo_gline, m_ignore }
+    { m_unregistered, m_gline, ms_gline, mo_gline, m_ignore },
+    /* from an oper: <mask> ...  From a server: <target> <mask> ... */
+    { 0, 0, 1, 0 }, { 0, 0, 2, 0 }
   },
   {
     MSG_SLINE,
     TOK_SLINE,
     0, MAXPARA,         0, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_ignore, ms_sline, m_ignore, m_ignore }
+    { m_unregistered, m_ignore, ms_sline, m_ignore, m_ignore },
+    /* server only: (+|-) <lastmod> <expire> <type> <pattern> */
+    { 0, 0, 0, 0 }, { 0, 0, 5, 0 }
   },
   {
     MSG_JUPE,
     TOK_JUPE,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_not_oper, ms_jupe, mo_jupe, m_ignore }
+    { m_unregistered, m_not_oper, ms_jupe, mo_jupe, m_ignore },
+    /* from an oper: <server> ...  From a server: <target> <server> ... */
+    { 0, 0, 1, 0 }, { 0, 0, 2, 0 }
   },
   {
     MSG_OPMODE,
@@ -621,13 +656,6 @@ struct Message msgtab[] = {
     { m_unregistered, m_not_oper, ms_privs, mo_privs, m_ignore }
   },
   {
-    MSG_ACCOUNT,
-    TOK_ACCOUNT,
-    0, MAXPARA, MFLG_SLOW, 0, NULL,
-    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_ignore, m_ignore, ms_account, m_ignore, m_ignore }
-  },
-  {
     MSG_ASLL,
     TOK_ASLL,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
@@ -658,9 +686,23 @@ struct Message msgtab[] = {
   {
     MSG_CAP,
     TOK_CAP,
-    0, MAXPARA, 0, 0, NULL,
+    0, MAXPARA, MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_cap, m_cap, m_ignore, m_cap, m_ignore }
+  },
+  {
+    MSG_AUTHENTICATE,
+    TOK_AUTHENTICATE,
+    0, MAXPARA, MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_authenticate, m_authenticate, m_ignore, m_authenticate, m_ignore }
+  },
+  {
+    MSG_ACCOUNT,
+    TOK_ACCOUNT,
+    0, MAXPARA, MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_account, m_account, m_ignore, m_account, m_ignore }
   },
   /* This command is an alias for QUIT during the unregistered part of
    * of the server.  This is because someone jumping via a broken web
@@ -676,19 +718,22 @@ struct Message msgtab[] = {
     { m_quit, m_ignore, m_ignore, m_ignore, m_ignore }
   },
   {
-    MSG_AUTHENTICATE,
-    TOK_AUTHENTICATE,
-    0, MAXPARA, 0, 0, NULL,
-    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_sasl, m_sasl, m_ignore, m_sasl, m_ignore }
-  },
-  {
     MSG_CONFIG,
     TOK_CONFIG,
     0, MAXPARA, 0, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
     { m_ignore, m_ignore, ms_config, m_ignore, m_ignore }
   }, 
+  /* Before registration too: the language is negotiated before NICK and
+   * USER so that the welcome comes out translated (doc/readme.translations).
+   */
+  {
+    MSG_LANGUAGE,
+    TOK_LANGUAGE,
+    0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+    { m_language, m_language, ms_language, m_language, m_ignore }
+  },
   { 0 }
 };
 
@@ -824,6 +869,75 @@ msg_tree_parse(char *cmd, struct MessageTree *root)
   return NULL;
 }
 
+/** Add a command to the message and token tries at run time.
+ *
+ * The strings are copied: a module supplies pointers into its own shared
+ * object, and that memory goes away when the module is unloaded while the
+ * trie would still be pointing at it.
+ *
+ * @param[in] cmd Command name, e.g. "SPAMFILTER".
+ * @param[in] tok P10 token for the command, or NULL to reuse \a cmd.
+ * @param[in] parameters Maximum number of parameters to split the line
+ *   into; use MAXPARA unless the command takes free-form trailing text.
+ *   The handler checks its own minimum with need_more_params().
+ * @param[in] flags Bitwise combination of MFLG_* values.
+ * @param[in] handlers Handler for each HandlerType, in order.
+ * @return The new message, or NULL if the name or token is already taken.
+ */
+struct Message *parse_add_command(const char *cmd, const char *tok,
+                                  unsigned int parameters, unsigned int flags,
+                                  MessageHandler handlers[LAST_HANDLER_TYPE])
+{
+  struct Message *msg;
+  int i;
+
+  assert(0 != cmd);
+  assert(0 != handlers);
+
+  if (!tok)
+    tok = cmd;
+
+  /* Commands from modules never replace core commands.  Overriding PRIVMSG
+   * from a shared object is exactly the kind of thing that makes a server
+   * impossible to reason about.
+   */
+  if (msg_tree_parse((char *)cmd, &msg_tree) ||
+      msg_tree_parse((char *)tok, &tok_tree))
+    return NULL;
+
+  msg = (struct Message *)MyCalloc(1, sizeof(struct Message));
+  DupString(msg->cmd, cmd);
+  DupString(msg->tok, tok);
+  msg->count = 0;
+  msg->parameters = parameters;
+  msg->flags = flags;
+  msg->bytes = 0;
+  msg->extra = NULL;
+
+  for (i = 0; i < LAST_HANDLER_TYPE; i++)
+    msg->handlers[i] = handlers[i] ? handlers[i] : m_ignore;
+
+  add_msg_element(&msg_tree, msg, msg->cmd);
+  add_msg_element(&tok_tree, msg, msg->tok);
+
+  return msg;
+}
+
+/** Remove a command previously added by parse_add_command().
+ * @param[in] msg Message to remove; freed by this call.
+ */
+void parse_del_command(struct Message *msg)
+{
+  assert(0 != msg);
+
+  del_msg_element(&msg_tree, msg->cmd);
+  del_msg_element(&tok_tree, msg->tok);
+
+  MyFree(msg->cmd);
+  MyFree(msg->tok);
+  MyFree(msg);
+}
+
 /** Registers a service mapping to the pseudocommand handler.
  * @param[in] map Service mapping to add.
  * @return Non-zero on success; zero if a command already used the name.
@@ -878,6 +992,255 @@ int unregister_mapping(struct s_map *map)
   map->msg = NULL;
 
   return 1;
+}
+
+/** Read one subject index out of a command's parameters.
+ * @param[in] idx parv[] index from the command's #MsgSubject, or 0.
+ * @param[in] parc Number of parameters.
+ * @param[in] parv The parameters.
+ * @return The parameter, or NULL if the command declared none or this
+ *   invocation did not carry it.
+ */
+static const char *parse_subject(unsigned char idx, int parc, char *parv[])
+{
+  if (idx == 0)
+    return 0;
+
+  if (idx == MS_LAST)
+    return (parc > 1) ? parv[parc - 1] : 0;
+
+  if ((int) idx >= parc)
+    return 0;
+
+  return parv[idx];
+}
+
+/** Fill a hook context with what a command says it acts on.
+ *
+ * Resolving the subject here, once, is the point of a command declaring
+ * one: otherwise every module that watches KICK would parse parv for
+ * itself, and would get the index wrong for one command in ten.  Which
+ * lookup to use depends on where the line came from and not on the
+ * command -- the same KICK carries a nick from a client and a numnick
+ * from a server -- which is the other thing a module should not have to
+ * know.
+ *
+ * @param[in,out] ctx Context to fill.
+ * @param[in] mptr The command's table entry.
+ * @param[in] handler Which handler is about to run, or ran.
+ * @param[in] parc Number of parameters.
+ * @param[in] parv The parameters.
+ */
+static void parse_hook_subject(struct HookContext *ctx,
+                               const struct Message *mptr,
+                               enum HandlerType handler,
+                               int parc, char *parv[])
+{
+  static const struct MsgSubject none;
+  const struct MsgSubject *ms = &mptr->subject;
+  const char *subject;
+
+  /* A command does not always have the same shape on both sides; an
+   * all-zero server description means it does.
+   */
+  if (handler == SERVER_HANDLER
+      && memcmp(&mptr->subject_s, &none, sizeof(none)))
+    ms = &mptr->subject_s;
+
+  if ((subject = parse_subject(ms->ms_target, parc, parv)))
+    ctx->hc_client = (handler == SERVER_HANDLER)
+                     ? findNUser(subject) : FindClient(subject);
+
+  if ((subject = parse_subject(ms->ms_channel, parc, parv)))
+    ctx->hc_channel = FindChannel(subject);
+
+  /* hc_arg is what the action says about itself: the reason where there is
+   * one, and otherwise the mask a *-line names, which is the closest thing
+   * those commands have to a subject in words.
+   */
+  if (!(subject = parse_subject(ms->ms_reason, parc, parv)))
+    subject = parse_subject(ms->ms_mask, parc, parv);
+  ctx->hc_arg = subject;
+}
+
+/** Return non-zero if a frozen client may not send this command.
+ *
+ * A frozen client (+f) is carrying a registered nickname it has not proved
+ * is its own, so everything it does it does under somebody else's name.
+ * What it may still send is what leads out of that state -- identify,
+ * change nick -- plus what keeps the connection alive, and each of those
+ * commands says so itself with #MFLG_FROZEN_OK rather than being named in
+ * a list here; a command a module registers can say so too.
+ *
+ * PRIVMSG and NOTICE carry the flag but are narrowed here, because what
+ * the state has to allow is talking to the service that will unfreeze it,
+ * not talking.  The target is resolved the same way the command's own
+ * handler will resolve it, and anything that is not a local service bot is
+ * refused.
+ *
+ * @param[in] from Client that sent the command.
+ * @param[in] mptr Message table entry.
+ * @param[in] parc Number of parameters.
+ * @param[in] parv The parameters.
+ * @return Non-zero if the command must be refused.
+ */
+static int parse_frozen_blocks(struct Client *from, struct Message *mptr,
+                               int parc, char *parv[])
+{
+  struct Client *acptr;
+
+  if (!(mptr->flags & MFLG_FROZEN_OK))
+    return 1;
+
+  if (strcmp(mptr->cmd, MSG_PRIVATE) && strcmp(mptr->cmd, MSG_NOTICE))
+    return 0;
+
+  /* No target, or more than one: a frozen client talks to one service and
+   * to nobody else, so a target list is refused rather than filtered.
+   */
+  if (parc < 3 || EmptyString(parv[1]) || strchr(parv[1], ','))
+    return 1;
+
+  acptr = FindUser(parv[1]);
+
+  return !(acptr && IsServiceBot(acptr));
+}
+
+/** Run the command hooks around one handler.
+ *
+ * Both parsers funnel their single dispatch through here, so the rules in
+ * hooks.h are applied in one place: a veto stops the command before it
+ * runs, and the notification afterwards is skipped when the handler
+ * destroyed the client, because the context would then be pointing at
+ * freed memory.
+ *
+ * @param[in] cptr Client the line arrived on.
+ * @param[in] from Source of the command.
+ * @param[in] mptr The command's table entry.
+ * @param[in] handler Handler to call.
+ * @param[in] parc Number of parameters.
+ * @param[in] parv The parameters.
+ * @return What the handler returned, or 0 if a hook refused the command.
+ */
+/** The command being dispatched, for a handler that has to ask.
+ *
+ * parv never carries the command's own name -- parv[0] is the source --
+ * so a handler shared by several commands has no way to tell which one it
+ * is.  Almost nothing needs to: a command has a handler of its own.  The
+ * exception is ircd/modhost.c, whose one proxy handler stands in for
+ * every command an isolated module registered.
+ */
+static const char *parse_command;
+
+const char *parse_current_command(void)
+{
+  return parse_command ? parse_command : "";
+}
+
+static int parse_dispatch(struct Client *cptr, struct Client *from,
+                          struct Message *mptr, MessageHandler handler,
+                          int parc, char *parv[])
+{
+  struct HookCommand hcc;
+  struct HookContext ctx;
+  enum HandlerType htype = cli_handler(cptr);
+  const char *outer = parse_command;
+  int ret;
+
+  parse_command = mptr->cmd;
+
+  /* One line in is one message, however many sends it turns into: the
+   * fan-out to a channel, the echo back to its sender and the copy that
+   * crosses every link all have to carry the same identifier.  So it
+   * belongs to the line, and this is where the line is.
+   */
+  msg_tag_line_begin(mptr->tok, parse_tags(), htype == SERVER_HANDLER);
+
+  /* A labeled command is answered under its label, so the label is opened
+   * around the handler for the same reason the identifier is: everything
+   * the command sends belongs to it.
+   */
+  if (htype != SERVER_HANDLER) {
+    struct MsgTag *label = msg_tag_find(parse_tags(), "label");
+
+    if (label && label->value)
+      label_begin(from, label->value);
+  }
+
+  /* A frozen client is stopped here, before the hooks and before the
+   * handler: this is the one place both dispatch paths pass through, and
+   * it is past the point where the parameters are laid out, which is what
+   * deciding about a PRIVMSG target needs.  Only a client of this server
+   * is frozen in a way this can act on -- a +f that arrived from another
+   * server was already enforced where the client is connected, and
+   * refusing its commands here would desynchronise this server.
+   */
+  if (htype != SERVER_HANDLER && MyUser(from) && IsFrozen(from)
+      && parse_frozen_blocks(from, mptr, parc, parv)) {
+    send_reply(from, ERR_FROZEN, cli_name(from));
+    label_end();
+    msg_tag_line_end();
+    return 0;
+  }
+
+  if (hook_command_active(HOOK_COMMAND_PRE)) {
+    memset(&hcc, 0, sizeof(hcc));
+    hcc.hcc_cmd = mptr->cmd;
+    hcc.hcc_tok = mptr->tok;
+    hcc.hcc_handler = htype;
+    hcc.hcc_parc = parc;
+    hcc.hcc_parv = parv;
+
+    hook_context_init(&ctx);
+    ctx.hc_source = from;
+    ctx.hc_command = &hcc;
+    parse_hook_subject(&ctx, mptr, htype, parc, parv);
+
+    if (hook_run_command(HOOK_COMMAND_PRE, &ctx) == HOOK_DENY) {
+      /* hook_deny_reply() is what every other veto point uses, so a module
+       * that refuses a command explains itself the same way it would when
+       * refusing a join or a nick.
+       */
+      hook_deny_reply(from, &ctx, ERR_UNKNOWNCOMMAND, mptr->cmd);
+      label_end();
+      msg_tag_line_end();
+      return 0;
+    }
+  }
+
+  ret = (*handler) (cptr, from, parc, parv);
+
+  /* CPTR_KILLED means the handler destroyed the client: cptr and from are
+   * freed memory from here on, and a module has no business being handed
+   * them.  It hears about the exit from HOOK_CLIENT_EXITING instead.
+   */
+  if (ret != CPTR_KILLED && hook_command_active(HOOK_COMMAND_POST)) {
+    memset(&hcc, 0, sizeof(hcc));
+    hcc.hcc_cmd = mptr->cmd;
+    hcc.hcc_tok = mptr->tok;
+    hcc.hcc_handler = htype;
+    hcc.hcc_parc = parc;
+    hcc.hcc_parv = parv;
+    hcc.hcc_result = ret;
+
+    hook_context_init(&ctx);
+    ctx.hc_source = from;
+    ctx.hc_command = &hcc;
+    parse_hook_subject(&ctx, mptr, htype, parc, parv);
+
+    hook_run_command(HOOK_COMMAND_POST, &ctx);
+  }
+
+  /* Before msg_tag_line_end(), so the BATCH line that closes a labeled
+   * response is still part of the line that opened it.
+   */
+  label_end();
+
+  msg_tag_line_end();
+
+  parse_command = outer;
+
+  return ret;
 }
 
 /** Parse a line of data from a user.
@@ -982,8 +1345,27 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
   i = bufend - ((s) ? s : ch);
   mptr->bytes += i;
   /* Coarser tag divisor: one max client-tag line must not stall follow-ups. */
-  if ((mptr->flags & MFLG_SLOW) || !IsAnOper(cptr))
-    cli_since(cptr) += (2 + i / 120 + tag_len / 512);
+  if ((mptr->flags & MFLG_SLOW) || !IsAnOper(cptr)) {
+    /* A line that is part of an open batch is a piece of one message, not
+     * a message: charging each piece the flat per-command penalty would
+     * make a long message cost its length in lines times two seconds, and
+     * a client sending the twenty-four the specification allows would be
+     * throttled off the server for sending one message.  The bytes are
+     * still charged, which is what actually bounds a client dumping data,
+     * and multiline's own max-bytes bounds the total.
+     *
+     * A continuation of a SASL exchange is a piece of one authentication
+     * in exactly the same way: a credential arrives in four-hundred-byte
+     * chunks, and a long one would cost its length in chunks times two
+     * seconds before the client had even finished connecting.  Starting
+     * an exchange is charged in full, and there are only so many of those
+     * (SASL_MAX_ATTEMPTS), so the exemption cannot be had for free.
+     */
+    if (multiline_in_progress(cptr) || sasl_in_progress(cptr))
+      cli_since(cptr) += (i / 120 + tag_len / 512);
+    else
+      cli_since(cptr) += (2 + i / 120 + tag_len / 512);
+  }
   /*
    * Allow only 1 msg per 2 seconds
    * (on average) to prevent dumping.
@@ -1050,7 +1432,7 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
       handler != m_ping && handler != m_ignore)
     cli_user(from)->last = CurrentTime;
 
-  return (*handler) (cptr, from, i, para);
+  return parse_dispatch(cptr, from, mptr, handler, i, para);
 }
 
 /** Parse a line of data from a server.
@@ -1358,5 +1740,6 @@ int parse_server(struct Client *cptr, char *buffer, char *bufend)
     return (do_numeric(numeric, (*buffer != ':'), cptr, from, i, para));
   mptr->count++;
 
-  return (*mptr->handlers[cli_handler(cptr)]) (cptr, from, i, para);
+  return parse_dispatch(cptr, from, mptr,
+                        mptr->handlers[cli_handler(cptr)], i, para);
 }

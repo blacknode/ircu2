@@ -26,6 +26,7 @@
 #include "send.h"
 #include "channel.h"
 #include "class.h"
+#include "batch.h"
 #include "client.h"
 #include "ircd.h"
 #include "ircd_features.h"
@@ -267,6 +268,10 @@ struct MsgTagCtx {
   const char    *tok;         /**< Command token for S2S policy (or NULL). */
   int            client_relay;   /**< Has relayable client-only (+) tags. */
   int            s2s_needs_time; /**< Invent/forward @time= on S2S for this command. */
+  const char    *msgid;       /**< This message's identifier, or NULL.  Taken
+                                   from the line being handled, and only when
+                                   this send is the relay of that line's own
+                                   command: see msg_tag_line_msgid(). */
 };
 
 /** Per-fan-out prefix cache: amortizes prefix formatting across many local
@@ -290,6 +295,7 @@ msgtagctx_init(struct MsgTagCtx *ctx, const char *tok)
   ctx->tok = tok;
   ctx->client_relay = msg_tag_have_client_relay(ctx->tags);
   ctx->s2s_needs_time = tok ? msg_tag_s2s_needs_time(tok) : 0;
+  ctx->msgid = tok ? msg_tag_line_msgid(tok) : 0;
 }
 
 static void
@@ -330,7 +336,7 @@ make_wire_msgbuf(struct Client *to, struct MsgBuf *body,
 
 /** Try to send a buffer to a client, queueing it if needed.
  * @param[in,out] to Client to send message to.
- * @param[in] from Message source (for account-tag; may be NULL).
+ * @param[in] from Message source (may be NULL).
  * @param[in] buf Message body (without tags).
  * @param[in] prio If non-zero, send as high priority.
  * @param[in] ctx Optional per-message tag context (may be NULL).  Ignored
@@ -362,6 +368,16 @@ void send_buffer(struct Client* to, struct Client* from, struct MsgBuf* buf, int
      */
     return;
 
+  /* If this is the first message of a labeled response, the BATCH line
+   * that opens it has to go out before this one does.  Costs one
+   * comparison when no label is in flight, which is nearly always.
+   *
+   * Here and not in send_raw_buffer(): that one is the websocket framing
+   * path, which carries no tags and so cannot be inside a batch.
+   */
+  if (!IsServer(to))
+    label_before_send(to);
+
   if (MsgQLength(&(cli_sendQ(to))) > get_sendq(to)) {
     if (IsServer(to))
       sendto_opmask_butone(0, SNO_OLDSNO, "Max SendQ limit exceeded for %C: "
@@ -380,29 +396,32 @@ void send_buffer(struct Client* to, struct Client* from, struct MsgBuf* buf, int
     } else {
       int invent = tctx ? tctx->s2s_needs_time : 0;
       taglen = msg_tag_format_s2s(tagbuf, sizeof(tagbuf), tags, local_time,
-                                  invent);
+                                  invent, tctx ? tctx->msgid : 0);
       prefix = taglen ? tagbuf : 0;
     }
   } else if (cache) {
     if (cache->ctx.client_relay) {
       taglen = msg_tag_format(cache->prefix, sizeof(cache->prefix),
-                              to, from, cache->ctx.tags, cache->ctx.local_time);
+                              to, from, cache->ctx.tags, cache->ctx.local_time,
+                              cache->ctx.msgid);
       prefix = taglen ? cache->prefix : 0;
     } else {
-      unsigned int profile = msg_tag_profile(to);
+      unsigned int profile = msg_tag_profile(to, cache->ctx.msgid);
 
       if (profile != cache->profile) {
         cache->profile = profile;
         cache->prefix_len = profile
           ? msg_tag_format(cache->prefix, sizeof(cache->prefix),
-                           to, from, cache->ctx.tags, cache->ctx.local_time)
+                           to, from, cache->ctx.tags, cache->ctx.local_time,
+                           cache->ctx.msgid)
           : 0;
       }
       taglen = cache->prefix_len;
       prefix = taglen ? cache->prefix : 0;
     }
   } else {
-    taglen = msg_tag_format(tagbuf, sizeof(tagbuf), to, from, tags, local_time);
+    taglen = msg_tag_format(tagbuf, sizeof(tagbuf), to, from, tags, local_time,
+                            tctx ? tctx->msgid : 0);
     prefix = taglen ? tagbuf : 0;
   }
 
@@ -500,6 +519,41 @@ void sendrawto_one(struct Client *to, const char *pattern, ...)
   va_end(vl);
 
   send_buffer(to, NULL, mb, 0, NULL, NULL);
+
+  msgq_clean(mb);
+}
+
+/** Send a line with a prefix the caller supplies, with tags.
+ *
+ * For a message the server did not originate and cannot name a sender
+ * for: one read back out of a history store, whose sender may have
+ * changed nickname, changed host or never come back.  The prefix is
+ * whatever the caller writes into \a pattern, and the tags -- the batch
+ * it belongs to, the time and the identifier it already had, each only
+ * for a client that asked to be told about them -- are rendered the same
+ * way they are for any other message.
+ *
+ * sendrawto_one() is the same thing without tags; use that when there are
+ * none to render.
+ *
+ * @param[in] to Client to send to.  One of this server's.
+ * @param[in] tok The command's token, for the tag policy: only the relay
+ *   of the same command carries the line's identifier.
+ * @param[in] pattern Format string for the whole line, prefix included.
+ */
+void sendrawto_one_tagged(struct Client *to, const char *tok,
+                          const char *pattern, ...)
+{
+  struct MsgBuf *mb;
+  struct MsgTagCtx mctx;
+  va_list vl;
+
+  va_start(vl, pattern);
+  mb = msgq_vmake(to, pattern, vl);
+  va_end(vl);
+
+  msgtagctx_init(&mctx, tok);
+  send_buffer(to, NULL, mb, 0, &mctx, NULL);
 
   msgq_clean(mb);
 }
@@ -732,7 +786,7 @@ void sendcmdto_common_channels_butone(struct Client *from, const char *cmd,
  */
 void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *cmd,
 					      const char *tok, struct Client *one,
-					      capset_t require, capset_t forbid, const char *pattern, ...)
+					      int require, int forbid, const char *pattern, ...)
 {
   struct VarData vd;
   struct MsgBuf *mb;
@@ -769,8 +823,8 @@ void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *c
           && -1 < cli_fd(cli_from(member->user))
           && member->user != one
           && cli_sentalong(member->user) != sentalong_marker
-          && (require == 0 || CapHas(cli_active(member->user), require))
-          && (forbid == 0 || !CapHas(cli_active(member->user), forbid)))
+          && (require == CAP_NONE || CapHas(cli_active(member->user), require))
+          && (forbid == CAP_NONE || !CapHas(cli_active(member->user), forbid)))
       {
           cli_sentalong(member->user) = sentalong_marker;
           send_buffer(member->user, from, mb, 0, NULL, &tcache);
@@ -780,8 +834,8 @@ void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *c
 
   if (MyConnect(from)
       && from != one
-      && (require == 0 || CapHas(cli_active(from), require))
-      && (forbid == 0 || !CapHas(cli_active(from), forbid)))
+      && (require == CAP_NONE || CapHas(cli_active(from), require))
+      && (forbid == CAP_NONE || !CapHas(cli_active(from), forbid)))
     send_buffer(from, from, mb, 0, NULL, &tcache);
 
   msgq_clean(mb);
@@ -801,7 +855,7 @@ void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *c
 void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *cmd,
 					      const char *tok, struct Channel *to,
 					      struct Client *one, unsigned int skip,
-					      capset_t require, capset_t forbid,
+					      int require, int forbid,
 					      const char *pattern, ...)
 {
   struct VarData vd;
@@ -816,7 +870,12 @@ void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *c
   mb = msgq_make(0, "%:#C %s %v", from, cmd, &vd);
   va_end(vd.vd_args);
 
-  tagsendcache_init(&tcache);
+  /* With the token: this one never reaches a server -- it walks the
+   * members and skips everything that is not MyConnect() -- so the only
+   * thing the token changes here is that the line can carry the message
+   * identifier the command gave it.
+   */
+  tagsendcache_init_cmd(&tcache, tok);
   /* send the buffer to each local channel member */
   for (member = to->members; member; member = member->next_member) {
     if (!MyConnect(member->user)
@@ -825,8 +884,8 @@ void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *c
         || (skip & SKIP_DEAF && IsDeaf(member->user))
         || (skip & SKIP_NONOPS && !IsChanOp(member))
         || (skip & SKIP_NONVOICES && !IsChanOp(member) && !HasVoice(member))
-        || (require && !CapHas(cli_active(member->user), require))
-        || (forbid && CapHas(cli_active(member->user), forbid)))
+        || (require != CAP_NONE && !CapHas(cli_active(member->user), require))
+        || (forbid != CAP_NONE && CapHas(cli_active(member->user), forbid)))
         continue;
 
     send_buffer(member->user, from, mb, 0, NULL, &tcache);
@@ -843,14 +902,11 @@ void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *c
  * @param[in] forbid Capability mask to block this message for.
  */
 void sendjointo_channel_butserv(struct Client *from, struct Channel *chptr,
-				capset_t require,
-				capset_t forbid)
+				int require,
+				int forbid)
 {
   sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
-    0, require | CAP_EXTJOIN, forbid, "%H %s :%s", chptr,
-    IsAccount(from) ? cli_account(from) : "*", cli_info(from));
-  sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
-    0, require, forbid | CAP_EXTJOIN, "%H", chptr);
+    0, require, forbid, "%H", chptr);
 }
 
 /* Send JOIN to a single user.
@@ -862,11 +918,7 @@ void sendjointo_one(struct Client *from,
 		    struct Channel *chptr,
 		    struct Client *one)
 {
-  if (CapHas(cli_active(one), CAP_EXTJOIN))
-    sendcmdto_one(from, CMD_JOIN, one, "%H %s :%s", chptr,
-      IsAccount(from) ? cli_account(from) : "*", cli_info(from));
-  else
-    sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
+  sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
 }
 
 /** Send a (prefixed) command to all local users on a channel.

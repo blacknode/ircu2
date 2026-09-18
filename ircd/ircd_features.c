@@ -30,6 +30,7 @@
 #include "hash.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -47,6 +48,7 @@
 #include "struct.h"
 #include "sys.h"    /* FALSE bleah */
 #include "whowas.h"	/* whowas_realloc */
+#include "worker.h"	/* worker_feature_notify */
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <stdlib.h>
@@ -171,6 +173,14 @@ feature_notify_clienttagdeny(void)
   msg_tag_clienttagdeny_rebuild();
 }
 
+/** Handle an update to FEAT_DEFAULT_LANGUAGE: the lookup chains and the
+ * draft/languages capability value depend on it. */
+static void
+feature_notify_default_language(void)
+{
+  i18n_resolve();
+}
+
 /** Handle an update to FEAT_HIS_SERVERNAME. */
 static void
 feature_notify_servername(void)
@@ -199,7 +209,7 @@ feature_log_get(struct Client* from, const char* const* fields, int count)
   assert(0 != from); /* never called by .conf parser */
 
   if (count < 1) /* return default facility */
-    send_reply(from, SND_EXPLICIT | RPL_FEATURE, ":Log facility: %s",
+    send_reply(from, SND_EXPLICIT | RPL_FEATURE, N_(":Log facility: %s"),
 	       log_get_default());
   else if (count < 2)
     need_more_params(from, "GET");
@@ -208,11 +218,11 @@ feature_log_get(struct Client* from, const char* const* fields, int count)
   } else if ((desc = feature_log_desc(from, fields[1]))) {
     if ((value = (*desc->get)(fields[0]))) /* send along value */
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":Log %s for subsystem %s: %s", desc->type, subsys,
+		 N_(":Log %s for subsystem %s: %s"), desc->type, subsys,
 		 (*desc->get)(subsys));
     else
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":No log %s is set for subsystem %s", desc->type, subsys);
+		 N_(":No log %s is set for subsystem %s"), desc->type, subsys);
   }
 }
 
@@ -325,9 +335,7 @@ static struct FeatureDesc {
   F_N(RANDOM_SEED, FEAT_NODISP, random_seed_set, 0, 0, 0, 0, 0, 0),
   F_S(DEFAULT_LIST_PARAM, FEAT_NULL, 0, list_set_default),
   F_I(NICKNAMEHISTORYLENGTH, 0, 800, whowas_realloc),
-  F_B(HOST_HIDING, 0, 1, 0),
   F_B(TRUST_USERNAME, 0, 1, 0),
-  F_S(HIDDEN_HOST, FEAT_CASE, "users.undernet.org", 0),
   F_S(HIDDEN_IP, 0, "127.0.0.1", 0),
   F_B(CONNEXIT_NOTICES, 0, 0, 0),
   F_B(OPLEVELS, 0, 0, 0),
@@ -384,25 +392,132 @@ static struct FeatureDesc {
   F_B(NETWORK_FEATURES, 0, 1, 0),
   F_B(NETWORK_TIME, 0, 1, 0),
 
+  /* Worker threads.  Zero is the master switch: no threads, no queues, no
+   * pipe, and the server behaves exactly as it did before workers existed.
+   */
+  F_I(WORKER_THREADS, FEAT_OPER, 0, worker_feature_notify),
+  F_I(WORKER_QUEUE_MAX, FEAT_OPER, 1024, worker_feature_notify),
+
+  /* How long a module may hold an operation after returning HOOK_PENDING
+   * before the server answers for it, in seconds.  It bounds a question
+   * asked of something outside the server -- a database, a hash on a
+   * worker -- so it is short: what it protects is the client waiting at
+   * the other end.  Expiring counts as a refusal; see include/hooks.h.
+   */
+  F_I(HOOK_TIMEOUT, FEAT_OPER, 10, 0),
+
+  /* Accounts.  The timeout bounds a question asked of a database, so it
+   * is short: what waits on it is somebody trying to log in.  Requiring
+   * TLS is on by default because both PLAIN and ACCOUNT LOGIN put the
+   * password on the wire as it is.
+   */
+  F_I(ACCOUNT_TIMEOUT, FEAT_OPER, 10, 0),
+  F_B(ACCOUNT_REQUIRE_TLS, FEAT_OPER, 1, 0),
+  F_S(GUEST_PREFIX, FEAT_OPER, "guest-", 0),
+
+  /* History.  Retention is in days and 0 means "keep everything", which
+   * is a choice an operator has to make rather than one the server makes
+   * for them: what is stored here is what people said.  Private messages
+   * are stored by default because a direct message a user cannot scroll
+   * back to is the first thing anyone notices missing, and turning it off
+   * is how a deployment that may not keep them says so.
+   */
+  F_I(HISTORY_RETENTION, FEAT_OPER, 90, 0),
+  F_B(HISTORY_PRIVATE, FEAT_OPER, 1, 0),
+  F_I(HISTORY_MAX_LIMIT, FEAT_OPER, 100, 0),
+  /* Empty, so an export has nowhere to go until an operator names a
+   * directory.  Writing files is a thing a server should be told to do
+   * rather than something it is able to do by default. */
+  F_S(HISTORY_EXPORT_DIR, FEAT_OPER | FEAT_NULL, 0, 0),
+  /* How long somebody may take their own message back.  Long enough to
+   * fix a mistake, short enough that a conversation stays a record of
+   * what was said: an hour by default.  0 is for ever, which is a
+   * network saying a message belongs to whoever sent it.  Channel
+   * operators are not bounded by it -- moderating is not undoing. */
+  F_I(HISTORY_REDACT_WINDOW, FEAT_OPER, 3600, 0),
+  /* And how long they may rewrite one.  Shorter than the redaction
+   * window on purpose: taking a message back leaves a hole everybody can
+   * see, while changing it leaves a sentence nobody can tell was ever
+   * different -- so the time in which that can happen is the time in
+   * which somebody is fixing a typo, not the time in which they are
+   * revising what they said.  0 is for ever; nobody but the author may
+   * do it at all. */
+  F_I(HISTORY_EDIT_WINDOW, FEAT_OPER, 900, 0),
+
+  /* How long a route's handler has to answer, in milliseconds.  Five
+   * seconds: long enough for a database and a worker, short enough that a
+   * client is not holding a socket open for a module that forgot. */
+  F_I(HTTP_TIMEOUT, FEAT_OPER, 5000, 0),
+  /* Where the provider listens.  0 is off, which is the default: a
+   * server does not open a second port because a module was loaded. */
+  F_I(HTTP_PORT, FEAT_OPER, 0, 0),
+  F_S(HTTP_BIND, FEAT_OPER | FEAT_NULL, 0, 0),
+  F_I(HTTP_MAX_CLIENTS, FEAT_OPER, 64, 0),
+  /* TLS for the HTTP listener, which is Mongoose's and not the ircd's:
+   * IRCU_TLS picks the backend the *IRC* ports use and can be gnutls or
+   * none, so the HTTP side reads its own PEM files.  Both set, or
+   * neither; one alone is not half of a configuration. */
+  F_S(HTTP_TLS_CERT, FEAT_OPER | FEAT_NULL, 0, 0),
+  F_S(HTTP_TLS_KEY, FEAT_OPER | FEAT_NULL, 0, 0),
+  /* The largest body that may be streamed to disk instead of being
+   * refused, and where it is streamed to.  Zero is off, which is the
+   * default: a server that was not asked to take uploads does not take
+   * them, and a request with a body bigger than HTTP_BODY_MAX is 413 as
+   * it always was.  Nothing over HTTP_BODY_MAX ever crosses into the
+   * main thread either way -- what a handler is given is the path of a
+   * file the worker wrote and its size. */
+  F_I(HTTP_UPLOAD_MAX, FEAT_OPER, 0, 0),
+  F_S(HTTP_SPOOL_DIR, FEAT_OPER | FEAT_NULL, 0, 0),
+
+  /* The file host (modules/services/filehost).  Empty and zero by
+   * default, which is a server that hosts no files: the module says so
+   * at load and claims no routes rather than answering 500 to everything.
+   * The directory holds the objects; the base URL is what a link looks
+   * like from outside, which only the operator knows -- a server behind a
+   * proxy cannot work it out from its own port. */
+  F_S(FILEHOST_DIR, FEAT_OPER | FEAT_NULL, 0, 0),
+  F_S(FILEHOST_BASE_URL, FEAT_OPER | FEAT_NULL, 0, 0),
+  /* Days to keep a file, or 0 to keep it until somebody deletes it. */
+  F_I(FILEHOST_RETENTION, FEAT_OPER, 30, 0),
+  /* Bytes one account may hold at once, or 0 for no limit. */
+  F_I(FILEHOST_QUOTA, FEAT_OPER, 64 * 1024 * 1024, 0),
+
   /* features that affect all operators */
   F_B(CONFIG_OPERCMDS, 0, 0, 0),
 
   /* IRCv3 capabilities */
-  F_B(CAP_ACCOUNTNOTIFY, 0, 1, 0),
   F_B(CAP_AWAYNOTIFY, 0, 1, 0),
   F_B(CAP_CHGHOST, 0, 1, 0),
   F_B(CAP_ECHOMESSAGE, 0, 1, 0),
-  F_B(CAP_EXTJOIN, 0, 1, 0),
   F_B(CAP_INVITENOTIFY, 0, 1, 0),
   F_B(CAP_UHNAMES, 0, 1, 0),
   F_B(CAP_MESSAGE_TAGS, 0, 1, 0),
   F_B(CAP_SERVER_TIME, 0, 1, 0),
-  F_B(CAP_ACCOUNT_TAG, 0, 1, 0),
+  F_B(CAP_LANGUAGES, 0, 1, 0),
+  F_B(CAP_BATCH, 0, 1, 0),
+  F_B(CAP_LABELEDRESPONSE, 0, 1, 0),
+  F_B(CAP_MULTILINE, 0, 1, 0),
   F_B(CAP_SASL, 0, 1, 0),
+  F_B(CAP_STANDARDREPLIES, 0, 1, 0),
+
+  /* Translations: the language a client gets when it asked for none.
+   * Empty means the original text.  See doc/readme.translations. */
+  F_S(DEFAULT_LANGUAGE, FEAT_NULL, 0, feature_notify_default_language),
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags.
-   * Default "*" denies all; empty (FEAT_NULL) allows all. Rebuilds via notify. */
-  F_S(CLIENTTAGDENY, FEAT_NULL, "*", feature_notify_clienttagdeny),
+   * Default "*" denies all; empty (FEAT_NULL) allows all. Rebuilds via notify.
+   *
+   * The three exceptions are the ones the conversation model is built out
+   * of (proposal 006 section 7.2): which message this one answers, the
+   * reaction a TAGMSG carries, and whether somebody is typing.  Deny-all
+   * stays the base, because a tag nobody has defined is a tag nobody
+   * should be relaying; these are named because the server itself now
+   * knows what they mean -- history stores the first two. */
+  F_I(MULTILINE_MAX_BYTES, 0, 4096, 0),
+  F_I(MULTILINE_MAX_LINES, 0, 24, 0),
+
+  F_S(CLIENTTAGDENY, FEAT_NULL, "*,-draft/reply,-draft/react,-typing",
+      feature_notify_clienttagdeny),
 
   /* HEAD_IN_SAND Features */
   F_B(HIS_SNOTICES, 0, 1, 0),
@@ -427,13 +542,13 @@ static struct FeatureDesc {
   F_B(HIS_STATS_L, 0, 1, 0),
   F_B(HIS_STATS_m, 0, 1, 0),
   F_B(HIS_STATS_M, 0, 1, 0),
+  F_B(HIS_STATS_n, 0, 1, 0),
   F_B(HIS_STATS_o, 0, 1, 0),
   F_B(HIS_STATS_p, 0, 1, 0),
   F_B(HIS_STATS_q, 0, 1, 0),
   F_B(HIS_STATS_r, 0, 1, 0),
   F_B(HIS_STATS_R, 0, 1, 0),
   F_B(HIS_STATS_s, 0, 1, 0),
-  F_B(HIS_STATS_S, 0, 1, 0),
   F_B(HIS_STATS_t, 0, 1, 0),
   F_B(HIS_STATS_T, 0, 1, 0),
   F_B(HIS_STATS_u, 0, 0, 0),
@@ -457,14 +572,20 @@ static struct FeatureDesc {
   F_B(HIS_REWRITE, 0, 1, 0),
   F_B(HIS_REMOTE, 0, 1, 0),
   F_B(HIS_NETSPLIT, 0, 1, 0),
-  F_S(HIS_SERVERNAME, 0, "*.undernet.org", feature_notify_servername),
-  F_S(HIS_SERVERINFO, 0, "The Undernet Underworld", feature_notify_serverinfo),
+  F_S(HIS_SERVERNAME, 0, "*.undernode.org", feature_notify_servername),
+  F_S(HIS_SERVERINFO, 0, "UnderNode Networks", feature_notify_serverinfo),
   F_S(HIS_URLSERVERS, 0, "http://www.undernet.org/servers.php", 0),
 
   /* Misc. random stuff */
-  F_S(NETWORK, 0, "UnderNet", 0),
+  F_S(NETWORK, 0, "UnderNode", 0),
   F_S(URL_CLIENTS, 0, "ftp://ftp.undernet.org/pub/irc/clients", 0),
   F_S(URLREG, 0, "http://cservice.undernet.org/live/", 0),
+
+  /* Network bots.  The suffix of every bot's virtual host: a bot created
+   * by modules/commands/m_bot.c as "helper" gets helper.<BOT_HOSTNAME>.  Read at
+   * creation; changing it later leaves existing bots as they are.
+   */
+  F_S(BOT_HOSTNAME, 0, "bots.undernode.org", 0),
 
 #undef F_S
 #undef F_B
@@ -496,6 +617,28 @@ feature_desc(struct Client* from, const char *feature)
     log_write(LS_CONFIG, L_ERROR, 0, "Unknown feature \"%s\"", feature);
 
   return 0; /* not found */
+}
+
+/** What kind of value a feature holds.
+ *
+ * For code that has an #enum #Feature from somewhere it cannot trust to
+ * be the right kind -- ircd/modhost.c, where the number came out of
+ * another process.  Reading a string feature's integer would be reading
+ * whatever is at that offset.
+ * @param[in] feat Feature to inspect.
+ * @return One of the FEATURE_TYPE_* values in include/ircd_features.h.
+ */
+int feature_type(int feat)
+{
+  if (feat < 0 || feat >= FEAT_LAST_F)
+    return FEATURE_TYPE_NONE;
+
+  switch (features[feat].flags & FEAT_MASK) {
+  case FEAT_INT:  return FEATURE_TYPE_INT;
+  case FEAT_BOOL: return FEATURE_TYPE_BOOL;
+  case FEAT_STR:  return FEATURE_TYPE_STR;
+  default:        return FEATURE_TYPE_NONE;
+  }
 }
 
 /** Given a feature vector string, set the value of a feature.
@@ -751,22 +894,22 @@ feature_get(struct Client* from, const char* const* fields, int count)
 
     case FEAT_INT: /* integer, report integer value */
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":Integer value of %s: %d", feat->type, feat->v_int);
+		 N_(":Integer value of %s: %d"), feat->type, feat->v_int);
       break;
 
     case FEAT_BOOL: /* boolean, report boolean value */
       send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		 ":Boolean value of %s: %s", feat->type,
+		 N_(":Boolean value of %s: %s"), feat->type,
 		 feat->v_int ? "TRUE" : "FALSE");
       break;
 
     case FEAT_STR: /* string, report string value */
       if (feat->v_str) /* deal with null case */
 	send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		   ":String value of %s: %s", feat->type, feat->v_str);
+		   N_(":String value of %s: %s"), feat->type, feat->v_str);
       else
 	send_reply(from, SND_EXPLICIT | RPL_FEATURE,
-		   ":String value for %s not set", feat->type);
+		   N_(":String value for %s not set"), feat->type);
       break;
     }
   }
@@ -889,23 +1032,23 @@ feature_report(struct Client* to, const struct StatDesc* sd, char* param)
 
     case FEAT_INT: /* Report an F-line with integer values */
       if (report) /* it's been changed */
-	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s %d",
+	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s %d"),
 		   changed, features[i].type, features[i].v_int);
       break;
 
     case FEAT_BOOL: /* Report an F-line with boolean values */
       if (report) /* it's been changed */
-	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s %s",
+	send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s %s"),
 		   changed, features[i].type, features[i].v_int ? "TRUE" : "FALSE");
       break;
 
     case FEAT_STR: /* Report an F-line with string values */
       if (report) { /* it's been changed */
 	if (features[i].v_str)
-	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s %s",
+	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s %s"),
 		     changed, features[i].type, features[i].v_str);
 	else /* Actually, F:<type> would reset it; you want F:<type>: */
-	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "%c %s",
+	  send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("%c %s"),
 		     changed, features[i].type);
       }
       break;

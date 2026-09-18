@@ -1,0 +1,548 @@
+What was said, kept
+===================
+
+The history module stores the messages this server delivers and, later,
+hands them back.  It is phase 2 of doc/proposals/006-comunicaciones-
+unificadas.md, and this file is what an operator needs to run it.
+
+It is one module, modules/services/history/, over PostgreSQL through
+include/db.h.  It owns its schema and ships it as migrations, so it is a
+directory module and an operator applies them by hand:
+
+  /MODULE MIGRATION APPLY history
+
+Nothing is stored until that has been done.  A server whose schema is
+missing logs one error a minute and delivers messages exactly as before;
+history is a thing that is added to a network, never a thing whose
+absence breaks one.
+
+
+WHAT IT NEEDS
+=============
+
+  Module { name = "postgres"; };        the driver
+  Module { name = "history"; };         this
+  Database { dsn = "..."; pool = 4; };  where
+
+and two features, on every server of the network:
+
+  NETWORK_FEATURES   carries msgid over P10
+  NETWORK_TIME       carries the time a message was sent over P10
+
+Both are what make one message one row -- see TOPOLOGY below.  The module
+says so in the log at load time if either is off; it still runs, and the
+result is one copy of every message per server, which is not something
+anybody notices until they read the history back.
+
+Worker threads are not optional in practice: the database driver is built
+on them (WORKER_THREADS, doc/readme.workers).
+
+
+WHAT IS STORED
+==============
+
+Channel messages, always.  PRIVMSG and NOTICE alike, from a local client
+or from a link.
+
+Direct messages, when HISTORY_PRIVATE is on (it is by default) **and both
+ends have identified**.  The second condition is not a judgement about
+guests.  A direct message is shown back to the two people in it and to
+nobody else, and the only durable handle on a person this server has is
+the nickname they proved is theirs: filing a message under a bare
+nickname would show it to whoever is wearing that nickname next week.
+With nobody it can safely be shown to, there is no reason to keep it.
+
+Reactions, as TAGMSGs.  A TAGMSG carries tags and no text of its own, so
+most of them are nothing to keep -- a typing indicator is true for four
+seconds and then is not, and a row saying somebody was typing in March is
+not history.  A reaction is different, and not really an exception: it has
+its own identifier, its own time, and it says something about a message
+that is still there.  So it is stored as a message -- kind 2, the reaction
+in the body, and reply_to naming what it is about -- which is what makes
+removing one and reading them back in order the same operations as for
+anything else, and what keeps a message with four hundred reactions from
+being a four-hundred-element array nobody can index.
+
+Never stored:
+
+  - Anything sent to a service (+S or +k).  That is where IDENTIFY,
+    REGISTER and DROP send a password.  The core does not even report
+    those to the module; see HOOK_MESSAGE_DELIVERED in
+    doc/readme.modules.
+  - Masked messages ($#mask, $host).  An operator addressing a whole
+    server is an announcement, not a conversation, and there is no target
+    to file it under.
+  - CTCP that is not an ACTION.  A VERSION, a PING or a DCC handshake is
+    two clients talking about themselves.
+  - TAGMSG.  It carries tags and no text, and tags are phase 3.
+
+
+TOPOLOGY: EVERY SERVER WRITES WHAT IT DELIVERS
+==============================================
+
+There is no designated archivist.  A designated archivist is a server
+whose split takes the record with it, and a network that has to agree on
+which server that is.
+
+Instead, every server that relays a message writes it, and the database
+throws away the copies.  That works because the two things identifying a
+row travel with the message rather than being invented by whichever
+server is handling it:
+
+  msgid   the name the whole network calls this message by
+  time    when its origin server said it was sent
+
+So the second, third and fourth writer are all inserting the same row,
+and the insert is written to do nothing when it is already there.  This
+is why the two features above are not optional: without msgid each server
+invents its own name, and without time each server records its own clock
+reading, and either one makes the rows different.
+
+
+THE SCHEMA
+==========
+
+One table, message, partitioned by month.
+
+A partitioned table in PostgreSQL will not take a unique constraint that
+does not include the partition key, so the key of a message is
+(sent_at, msgid) rather than msgid alone.  That is not a workaround --
+it is the same statement as the paragraph above, written down: two
+servers only agree on the key if they agree on the timestamp.
+
+  sent_at            when, from the message
+  msgid              what the network calls it
+  kind               0 PRIVMSG, 1 NOTICE, 2 TAGMSG
+  is_channel         whether target is a channel
+  target             the channel or nickname as the sender wrote it
+  target_canon       lower-cased the way IRC lower-cases a name
+  sender_nick        the nickname they were wearing
+  sender_account     the nickname they proved, canonical, or NULL
+  recipient_account  for a direct message; NULL for a channel
+  body               the text, or the reaction for a kind-2 row
+  reply_to           the message this one answers, or NULL
+  edited_at          when the author last rewrote it, or NULL
+  body_search        tsvector over body, maintained by the database
+
+Three indexes do the reading: BRIN over sent_at (the rows inside one
+month arrive in time order, which is the case BRIN exists for), a
+(target_canon, sent_at DESC) index for a channel, and a pair of them for
+a conversation -- two, because either end may be the sender and the query
+is an OR.  GIN over body_search does the searching.
+
+'simple' is the text-search configuration, not a language: the server
+does not know what language a channel speaks, and stemming the wrong one
+is worse than not stemming at all.
+
+Partitions are created ahead of time, for this month and next, at load
+and every six hours -- every five minutes until the schema answers, since
+a module is loaded from ircd.conf and its migrations are applied by an
+operator some time afterwards.  A message that lands outside every
+partition goes to message_default rather than being refused: a safety net,
+not a place to keep things.
+
+The net needed a floor under it.  PostgreSQL will not create a partition
+whose range the default already holds rows for, so every message stored
+before the schema was migrated permanently blocked its own month, and
+that month's traffic stayed in the default for ever -- where retention
+cannot drop it as a partition and the time-ordered locality BRIN depends
+on is gone.  Since v3 of the schema, history_ensure_partition() moves
+those rows out of the default, creates the partition and puts them back,
+all inside the one statement it is called by.
+
+
+THREADS AND REACTIONS
+=====================
+
+Both are the same tag pointing at the same thing.  +draft/reply says
+"this follows that"; a reaction is a TAGMSG carrying +draft/react as well,
+which says "this is about that".  The identifier they point at is the
+msgid the whole network already agrees on, so nothing new had to be
+invented for either.
+
+The tag is the client's claim and is kept verbatim.  "This is a reply to
+that" is exactly the sort of thing only the person writing it can say, and
+the server has no way to be more right about it.  There is no foreign key
+on reply_to for the same reason: a message may reply to one the retention
+already dropped, or to one from a server this one never heard from.
+
+They are stored only if CLIENTTAGDENY allows them -- a tag the network
+refuses to carry is not one to write down either -- and they go back out
+the same way, under whatever the policy is at the time of the read rather
+than at the time of the write.
+
+READING IT BACK: CHATHISTORY
+============================
+
+The IRCv3 command, in all six of its shapes:
+
+  CHATHISTORY LATEST  <target> <*|point> <limit>
+  CHATHISTORY BEFORE  <target> <point> <limit>
+  CHATHISTORY AFTER   <target> <point> <limit>
+  CHATHISTORY AROUND  <target> <point> <limit>
+  CHATHISTORY BETWEEN <target> <point> <point> <limit>
+  CHATHISTORY TARGETS <point> <point> <limit>
+
+A point is timestamp=<ISO 8601>, msgid=<id>, or * for "from the end".
+BETWEEN's two points may be given in either order; which is earlier is
+decided by the database, because it is the thing comparing them.
+
+The answer is a batch of type "chathistory" whose parameter is the
+target, holding the messages oldest first -- whichever end they were
+asked for from -- as the PRIVMSGs and NOTICEs they were, with the prefix
+that was stored and the @msgid and @time they already had.  That last
+part is the point: a client is shown the same message everybody else saw,
+and can put it in order against what it already has.  An empty answer is
+an empty batch, not silence: "there is nothing there" is a different
+thing from "the server ignored you".
+
+TARGETS lists conversations, not channels: a client already knows which
+channels it is on, and the ones it is not on it may not read.  Each one
+is a line of the form
+
+  CHATHISTORY TARGETS <nickname> <when it was last spoken to>
+
+inside a batch of type draft/chathistory-targets.
+
+The client needs the batch capability.  Without it the messages would
+arrive loose and indistinguishable from the ones happening now, which is
+worse than no answer, so the request is refused -- and a client with no
+standard-replies is refused in words, as a NOTICE, rather than with a
+FAIL it could not read.
+
+Errors are FAIL CHATHISTORY, with the codes the specification names:
+UNKNOWN_COMMAND for a subcommand that is not one of the six,
+INVALID_PARAMS for a selector that is not one of the three forms or a
+subcommand with nowhere to start from, INVALID_TARGET for a channel the
+client is not on or a conversation it is not in, and MESSAGE_ERROR when
+the store could not answer.
+
+The capability's value is the largest answer this server will give
+(HISTORY_MAX_LIMIT), so a client knows the ceiling before it asks rather
+than by having its limit quietly cut down:
+
+  draft/chathistory=100
+
+WHO MAY READ WHAT
+=================
+
+A channel: whoever is on it.  A channel's history is exactly as private
+as the channel, and somebody who is not in it was not there for the
+conversation either.
+
+A conversation: the two people in it, by account.  The query is on the
+pair of accounts, so a third party asking about somebody else's
+conversation gets an empty answer rather than a refusal -- a refusal with
+a different shape would itself say the conversation exists.  A client
+that has not identified has no account, so it has no conversations, and
+is told so.
+
+An asynchronous note: the answer comes back from a database a round trip
+later, so a client that labelled the command (IRCv3 labeled-response)
+gets its ACK straight away and the batch afterwards, outside the label.
+That is the honest shape of an asynchronous answer; the batch names its
+target and identifies itself well enough to be matched without one.
+
+
+FINDING SOMETHING: SEARCH
+=========================
+
+  SEARCH <target|*> [from=<nick>] [after=<time>] [before=<time>]
+                    [limit=<n>] :<what to look for>
+
+The GIN index has been in the schema since v1 and this is what uses it.
+There is no IRCv3 specification for searching -- the protocol has never
+had a word for it -- so the command and its capability are this server's
+own (blacknode/search).  What comes back is an ordinary batch of ordinary
+messages, replayed exactly the way CHATHISTORY replays them, so a client
+that can read one can read this; the capability says the command exists,
+not that the answer needs anything new.
+
+**What may be searched is what may be read, asked at the moment it is
+asked.**  A channel this connection is on now, a conversation it is in,
+or `*` for both at once.  There is no scope that means the network, and a
+client with no channels and no account is told there is nowhere to look
+rather than handed an empty answer that reads as "nothing matched".  A
+channel somebody is not on is refused in words; a `*` search simply does
+not reach it, which is the same answer for the same reason a stranger is
+not told what is in a channel they cannot see.
+
+Each result carries the target it was *sent* to and not the one that was
+searched: a `*` search answers with messages from several places, and a
+client has to be able to tell which is which.  They arrive oldest first,
+inside a `blacknode/search` batch, under the names and times they always
+had.
+
+**What to look for is the last parameter**, not a `key=value` like the
+rest, because it is the one thing here that is a sentence -- as the
+trailing parameter it may hold spaces, quotes and anything else somebody
+types, which is where IRC has put the free-form argument since PRIVMSG.
+
+It is `websearch_to_tsquery` underneath and not `to_tsquery`: quotes make
+a phrase, `or` is a choice, a leading `-` excludes, and nothing a person
+can type into a box makes it fail.  `to_tsquery` raises an error on an
+apostrophe, a stray bracket or two words with no operator between them,
+and a search box that can be made to error is a search box that will be.
+
+The text is the first condition in the WHERE clause, always.  It is the
+only one the index can answer; narrowing by channel first would read
+every message that channel has ever had and test each one, which is the
+difference between a search and a table scan.
+
+
+CHANGING A MESSAGE: EDIT
+========================
+
+  EDIT <target> <msgid> :<new text>
+
+The other half of REDACT, here for the same reason: **you cannot edit
+what nobody stored**.  A server with no history has no copy to change and
+no way to know who wrote the message being pointed at.  Nothing is
+relayed until the row has been updated -- a client showing the new text
+while the store still holds the old one is the one outcome worse than not
+having this.
+
+**The identifier does not change**, which is the whole reason an edit is
+not simply another message.  The replies and the reactions point at it,
+the read markers are ordered against it, and a message that was edited is
+still the message they are about.
+
+**Only the author, ever.**  A channel operator may REDACT, because
+moderating is taking something out of a room; nobody may EDIT somebody
+else's message, because that is putting words in their mouth under their
+own prefix, and there is no version of that which is moderation.  Not an
+operator with history_admin either -- they can delete the message, which
+leaves a hole everybody can see.
+
+HISTORY_EDIT_WINDOW is how long the author has, and it is shorter than
+the redaction window on purpose: a redaction leaves a hole, while a
+change leaves a sentence nobody can tell was ever different, so the time
+in which that can happen is the time in which somebody is fixing a typo.
+0 is for ever.
+
+An empty new text is refused rather than treated as a deletion.  There is
+a command for that and this is not it -- and an edit that emptied a
+message would be a redaction that left the reactions and the replies
+pointing at nothing.  A TAGMSG is refused too: what a reaction carries
+*is* the reaction, so there is no text in it to rewrite; taking one back
+and adding another is what changing a reaction is.
+
+The target named has to be the one the message was sent to, for the
+reason REDACT checks the same thing.  The refusals are FAIL EDIT with
+UNKNOWN_TARGET, UNKNOWN_MSGID, EDIT_FORBIDDEN and EDIT_FAILED.
+
+Live, a change reaches only clients that asked for
+blacknode/message-edit, the way a redaction does.  It crosses a link --
+P10 token ED -- because every server's clients were shown the message;
+what arrives from a peer is an announcement, since the store it would
+have checked is the same one.
+
+Read back afterwards, the message carries **blacknode/edited** with the
+time it was last changed.  That is a *server* tag, with no leading `+`:
+it is what the store says about the message rather than something the
+message carried, nobody claimed it when it was sent, and no client may
+claim it about somebody else's message -- so CLIENTTAGDENY has no say in
+it, the way it has none over batch.
+
+
+TAKING A MESSAGE BACK: REDACT
+=============================
+
+  REDACT <target> <msgid> [:<reason>]
+
+IRCv3 draft/message-redaction, and it lives in this module rather than in
+the core for one reason: **you cannot redact what nobody stored**.  A
+server with no history has nothing to delete and no way to know who wrote
+the message being pointed at, so the command would be an announcement that
+something was withdrawn with nothing withdrawn.
+
+That is also what makes the policy checkable.  Whether somebody may take a
+message back depends on who wrote it, and the only thing that knows is the
+row -- so the answer is a database round trip away, and the command waits
+for it.  **Nothing is relayed until the deletion has happened**: a client
+that removed the message from its view while the store kept it would be
+the one outcome worse than not supporting this at all.
+
+Who may:
+
+  - the person who wrote it, within HISTORY_REDACT_WINDOW seconds (0
+    means for ever);
+  - anybody with ops on the channel it was said in, with no window,
+    because moderating is not undoing and a moderator who had to be quick
+    about it would not be one;
+  - an operator with history_admin, for the same reason they can delete an
+    account's whole record.
+
+A direct message is the first case only.  There is nobody with ops on a
+conversation.
+
+The target named has to be the one the message was actually sent to.
+Otherwise naming any channel you have ops on would let you delete a
+message from any other.
+
+Redacting a message takes the reactions to it with it -- a reaction to a
+message that is gone is a reference to nothing.  It does **not** take the
+replies: a reply is a message of its own, somebody else said it, and
+redacting one message is not permission to redact the conversation that
+followed.  Their reply_to is left pointing at a message that is no longer
+there, which is exactly what happened.
+
+It reaches only clients that asked for draft/message-redaction.  To
+anybody else REDACT is a command they have never heard of, and a line they
+cannot parse is not an improvement on a message they still have; what they
+keep is what they were shown, which is the honest outcome for a client
+that does not implement this.  The refusals are FAIL REDACT with the
+specification's codes: UNKNOWN_TARGET, UNKNOWN_MSGID, REDACT_FORBIDDEN and
+REDACT_FAILED.
+
+It is the one thing here that crosses a link -- P10 token RD -- because
+every server's clients were shown the message.  What arrives from another
+server is an announcement: the deletion has happened already, every server
+reads the same store, and there is nothing left to check.
+
+
+HOW FAR SOMEBODY HAS READ: MARKREAD
+===================================
+
+  MARKREAD <target>                       what is my marker?
+  MARKREAD <target> timestamp=<ISO 8601>  move it here
+  MARKREAD <target> *                     I have read nothing
+
+and the answer to all three is the same line, saying where the marker
+*is*:
+
+  MARKREAD <target> timestamp=<ISO 8601>
+  MARKREAD <target> *
+
+IRCv3 draft/read-marker.  It is what turns a history into an inbox:
+without it a client reconnecting can fetch everything it missed but cannot
+tell which of it it has already seen, so either everything is unread or
+nothing is.
+
+**Per account, not per connection.**  A person reads on their phone and
+expects their laptop to know, which is the whole point.  A client with no
+account has no person for this to belong to and is told so
+(FAIL MARKREAD NEED_REGISTRATION).
+
+**It only moves forward.**  Two clients of the same person race
+constantly -- one is catching up while the other is at the bottom -- and a
+marker that could move backwards would make messages unread again every
+time the slower one reported in.  So a request to move it back is not an
+error: the answer is where the marker is, which is where it already was.
+
+Moving it tells **every one of that person's clients**, not only the one
+that moved it, because that is how a laptop finds out what a phone did.
+Asking answers the client that asked.
+
+The marker is a timestamp and not a msgid.  "Everything up to here" is a
+point in time, and a message arriving late -- from a server that was
+split -- is behind the marker if it was *sent* behind it, which is the
+answer a person means.  A msgid would name one message and say nothing
+about the ones around it.
+
+It never crosses a link: the marker lives in the store every server
+reads, so the other servers' copies of that person are told by their own
+server.
+
+
+RETENTION, PURGING, EXPORT AND DELETION
+=======================================
+
+An operator does all four through one command, and they are all the same
+thing seen from different sides -- what is kept, for how long, how it is
+handed over, and how it is destroyed:
+
+  HISTORY STATUS [<account>]   how much there is
+  HISTORY PURGE                apply the retention now
+  HISTORY EXPORT <account>     write out everything about one person
+  HISTORY FORGET <account>     and delete it
+
+All four need `history_admin` in the Operator{} block.  It is not a
+default for anybody, which is deliberate: it is the difference between an
+operator and somebody who can read every conversation on the network, and
+that has to be written down rather than arrived at by being an operator at
+all.
+
+HISTORY_RETENTION is how many days are kept; 0 keeps everything.  Every
+six hours the module drops whole monthly partitions that end before the
+cutoff, which costs nothing whatever they hold, and deletes what is left
+straddling it.  PURGE runs that pass now.
+
+EXPORT and FORGET read and delete by the same predicate -- every message
+the account sent and every direct message it received -- and that is the
+point.  What a person is handed has to be what a person can have
+destroyed, or one of the two is lying about what "their data" means.
+
+A direct message is one row, not two, so forgetting an account takes the
+other end's copy of that conversation with it.  That is the answer being
+asked for and not a side effect: what is being deleted is the message,
+and there is only one of it.  The delete is logged at NOTICE with the
+count and the account, because which operator destroyed somebody's record
+is the part nobody can reconstruct afterwards.
+
+The export is a file, not something sent over IRC: what it is for is a
+request that arrives by post and is answered by post, and an operator
+hands the file over.  It goes to HISTORY_EXPORT_DIR, which is empty by
+default -- a server writes no files until it has been told where to.  The
+name is the account and the moment, the mode is 0600, and it is never
+written over an existing file.
+
+The format is JSON Lines, one message per line:
+
+  {"time":"2026-09-16T15:43:52.000Z","msgid":"AB8aqtoa5z9","kind":0,
+   "channel":false,"target":"ben","from":"ana!ana@xxxxxx.yyyyyy.v4",
+   "from_account":"ana","to_account":"ben","text":"a private one"}
+
+It is read in pages of five hundred, by keyset -- everything after the
+last row handed over -- rather than by offset, so a long export is a
+series of index range scans and never re-reads what it has already
+written.  There is no cursor held open: db.h has no transactions, and a
+pooled connection is not the caller's to keep.  One export runs at a
+time; a second is told to wait.
+
+
+FEATURES
+========
+
+  HISTORY_RETENTION   days to keep, 0 for forever      (default 90)
+  HISTORY_PRIVATE     store direct messages            (default TRUE)
+  HISTORY_MAX_LIMIT   cap on one CHATHISTORY request   (default 100)
+  HISTORY_EXPORT_DIR  where HISTORY EXPORT writes      (default none)
+  HISTORY_REDACT_WINDOW  seconds to take back your own (default 3600)
+  HISTORY_EDIT_WINDOW    seconds to rewrite your own    (default 900)
+
+See doc/readme.features.
+
+
+HOW IT IS PUT TOGETHER
+======================
+
+  history.c        the module: the hook, the command, the capability, the
+                   maintenance timer, and the warnings an operator needs
+                   before the first user does
+  hist_admin.c     /HISTORY: what an operator does about what is stored
+  hist_capture.c   which of what the server delivers is a conversation,
+                   and which of its tags are part of the message
+  hist_read.c      what a client asked for, whether it may see it, and
+                   how the answer goes on the wire
+  hist_redact.c    REDACT: who may take a message back, and what goes
+                   with it
+  hist_edit.c      EDIT: who may change one, which is only ever its author
+  hist_search.c    SEARCH: what may be looked through, and how a person's
+                   words become a query
+  hist_marker.c    MARKREAD: how far somebody has read
+  hist_store.c     every statement this module sends, and nothing else
+  hist_store.h     the store as the rest of the module sees it
+  migrations/      the schema
+
+The split between the last two is the point.  The code that answers a
+client has no business knowing SQL, and retention, purging and deletion
+by account need one place where they happen rather than a DELETE in
+whichever file first needed one.  It is not a door left open for a second
+database engine: proposal 006 section 7.1 closes that question.
+
+Nothing here blocks.  Every statement goes out through db.h, which hands
+it to the driver's own threads and calls back in the main thread; a
+database that is slow or down costs nothing but the rows it did not
+store, and the failures are logged at most once a minute because a
+database that is down fails one insert per message on the whole network.

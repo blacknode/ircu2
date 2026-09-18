@@ -26,6 +26,7 @@
 
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "numeric.h"
@@ -100,7 +101,7 @@ int m_not_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
 int m_unregistered(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 {
-  send_reply(cptr, SND_EXPLICIT | ERR_NOTREGISTERED, "%s :Register first.",
+  send_reply(cptr, SND_EXPLICIT | ERR_NOTREGISTERED, N_("%s :Register first."),
 	     parv[0]);
   return 0;
 }

@@ -28,7 +28,9 @@
 
 #include "ircd_reply.h"
 #include "client.h"
+#include "capab.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_snprintf.h"
 #include "msg.h"
@@ -77,6 +79,13 @@ int need_more_params(struct Client* cptr, const char* cmd)
 }
 
 /** Send a generic reply to a user.
+ *
+ * This is the one place that knows the numeric, the format and the
+ * recipient at once, so it is where the format is translated: a numeric's
+ * own format is looked up in the core domain with the numeric's code as
+ * context, an explicit one (SND_EXPLICIT) with no context.  A client with
+ * no language preference on a server with no DEFAULT_LANGUAGE pays one
+ * comparison for this; see ircd_i18n.h.
  * @param[in] to Client that wants a reply.
  * @param[in] reply Numeric of message to send.
  * @return Zero.
@@ -95,9 +104,10 @@ int send_reply(struct Client *to, int reply, ...)
   va_start(vd.vd_args, reply);
 
   if (reply & SND_EXPLICIT) /* get right pattern */
-    vd.vd_format = (const char *) va_arg(vd.vd_args, char *);
+    vd.vd_format = i18n_text(i18n_core, to,
+                             (const char *) va_arg(vd.vd_args, char *));
   else
-    vd.vd_format = num->format;
+    vd.vd_format = i18n_ctext(i18n_core, to, num->str, num->format);
 
   assert(0 != vd.vd_format);
 
@@ -116,3 +126,43 @@ int send_reply(struct Client *to, int reply, ...)
 
 
 
+
+/** Send an IRCv3 standard reply, or the notice that stands in for one.
+ * @param[in] to Client to answer.
+ * @param[in] kind MSG_FAIL, MSG_WARN or MSG_NOTE.
+ * @param[in] command The command being answered.
+ * @param[in] code Machine-readable code.
+ * @param[in] context One extra word of context, or NULL.
+ * @param[in] text Human-readable description, already translated.
+ * @return Non-zero if the standard reply went out.
+ */
+int send_std_reply(struct Client* to, const char* kind, const char* command,
+                   const char* code, const char* context, const char* text)
+{
+  assert(0 != to);
+  assert(0 != kind);
+  assert(0 != command);
+  assert(0 != code);
+
+  if (!text)
+    text = "";
+
+  /* A client that never asked for standard-replies has never heard of
+   * FAIL, and sending it one would be a line it cannot parse.  It gets the
+   * words, which is the half of this a person needed anyway.
+   */
+  if (!MyConnect(to) || !CapActive(to, CAP_STANDARDREPLIES)) {
+    sendcmdto_one(&me, CMD_NOTICE, to, "%C :%s", to, text);
+    return 0;
+  }
+
+  /* The name is the token too: no server sends one of these, so there is
+   * nothing to agree on and nothing to claim in the P10 table. */
+  if (context && *context)
+    sendcmdto_one(&me, kind, kind, to, "%s %s %s :%s", command, code,
+                  context, text);
+  else
+    sendcmdto_one(&me, kind, kind, to, "%s %s :%s", command, code, text);
+
+  return 1;
+}

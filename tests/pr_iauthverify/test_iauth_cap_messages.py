@@ -92,6 +92,9 @@ General {{
         description = "iauth cap test server";
         numeric = 99;
 }};
+Security {{
+        virtual_host_key = "AbCdEfGhIjKl";
+}};
 Admin {{
         Location = "test";
         Location = "test";

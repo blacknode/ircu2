@@ -18,23 +18,193 @@ on:
 
 jobs:
   build:
+    name: ${{ matrix.tls }} / ${{ matrix.build_type }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        tls: [openssl, gnutls, none]
+        build_type: [RelWithDebInfo]
+        include:
+          # One debug configuration to keep DEBUGMODE compiling.
+          - tls: openssl
+            build_type: Debug
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake bison flex
-
-      - name: Generate configure
-        run: ./autogen.sh
+          sudo apt-get install -y cmake ninja-build bison pkg-config
+          # libpq and jansson are not the ircd's dependencies; they belong
+          # to modules/workers/postgres and modules/services/identity, which
+          # declare them in their own CMake fragments and are skipped when
+          # they are missing.  Installed here so that CI compiles them
+          # rather than silently skipping them.
+          sudo apt-get install -y libpq-dev libjansson-dev
+          if [ "${{ matrix.tls }}" = "openssl" ]; then
+            sudo apt-get install -y libssl-dev
+          elif [ "${{ matrix.tls }}" = "gnutls" ]; then
+            sudo apt-get install -y libgnutls28-dev
+          fi
 
       - name: Configure
-        run: ./configure
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DIRCU_TLS=${{ matrix.tls }}
+          -DIRCU_DOMAIN=example.com
+          -DIRCU_ENABLE_WARNINGS=ON
+          ${{ matrix.build_type == 'Debug' && '-DIRCU_ENABLE_DEBUG=ON' || '' }}
 
       - name: Build
-        run: make -j$(nproc)
+        run: cmake --build build -j$(nproc)
 
       - name: Run unit tests
-        run: make check
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke-test the server binary
+        run: ./build/ircd/ircd -v
+
+      # doc/example.conf is what an operator starts from, and a block it
+      # documents that the grammar does not accept is a syntax error that
+      # stops the whole file -- so it looks like whatever the operator was
+      # editing at the time.  Checking it here is what catches that.
+      - name: Check that the example configuration parses
+        run: ./build/ircd/ircd -k -f doc/example.conf
+
+      - name: Check the example modules built and resolve only core symbols
+        run: |
+          set -e
+          # Modules mirror the source tree: build/modules/<type>/<name>.so,
+          # or <type>/<name>/<name>.so for one built from a directory.
+          test -n "$(find build/modules -mindepth 2 -name '*.so')"
+
+          # The postgres module needs libpq and jansson and the identity
+          # module needs jansson, both installed above; a skipped module
+          # here means its dependencies went missing.
+          test -f build/modules/workers/postgres/postgres.so
+          test -f build/modules/services/identity/identity.so
+
+          # The history and richtext modules need nothing beyond the core,
+          # so they are never skipped; if one is missing, the build is what
+          # went wrong.
+          test -f build/modules/services/history/history.so
+          test -f build/modules/hooks/richtext.so
+
+          # The host an isolated module runs in, and the reference module
+          # that runs in it.  Neither needs anything beyond the core.
+          test -x build/ircd/ircu-modhost
+          test -f build/modules/commands/isolated_demo.so
+
+          # An isolated module resolves its symbols against ircu-modhost,
+          # exactly as a native one does against the ircd.  If the
+          # reference module cannot, the profile in
+          # ircd/modhost/modhost_api.c has lost something.
+          hostsyms=$(mktemp)
+          nm -D --defined-only build/ircd/ircu-modhost | awk '{print $NF}' \
+            | sed 's/@.*//' | sort -u > "$hostsyms"
+          for sym in $(nm -u build/modules/commands/isolated_demo.so \
+                       | awk '{print $NF}' | sed 's/@.*//' \
+                       | grep -v '^_' | grep -v GLIBC || true); do
+            if ! grep -qx "$sym" "$hostsyms"; then
+              echo "  isolated_demo needs $sym, which ircu-modhost does not have"
+              exit 1
+            fi
+          done
+          rm -f "$hostsyms"
+
+          missing=0
+          for so in $(find build/modules -mindepth 2 -name '*.so' | sort); do
+            echo "== $so"
+            test -f "$so"
+
+            # What the module may resolve against: the ircd's own exports,
+            # the symbols the ircd itself imports from its libraries, and --
+            # for a module with dependencies of its own, declared in its
+            # module.cmake -- whatever those libraries define.  Symbol
+            # versions ("@GLIBC_2.17") are not part of the name.
+            allowed=$(mktemp)
+            nm -D build/ircd/ircd | awk '{print $NF}' > "$allowed"
+            nm -D --undefined-only build/ircd/ircd | awk '{print $NF}' >> "$allowed"
+            for lib in $(ldd "$so" | awk '/=>/ && $3 ~ /^\// {print $3}'); do
+              nm -D --defined-only "$lib" 2>/dev/null | awk '{print $NF}' >> "$allowed"
+            done
+            sed -i 's/@.*//' "$allowed"
+            sort -u -o "$allowed" "$allowed"
+
+            # Anything left over would fail at dlopen with RTLD_NOW, so catch
+            # it here instead.
+            for sym in $(nm -u "$so" | awk '{print $NF}' | sed 's/@.*//' | grep -v '^_' || true); do
+              if ! grep -qx "$sym" "$allowed"; then
+                echo "  $sym is not exported by the ircd and not provided by"
+                echo "  any library the module links against"
+                missing=1
+              fi
+            done
+            rm -f "$allowed"
+          done
+          test "$missing" -eq 0
+
+  # The sanitizer presets, which is where a leak or a race in the unit
+  # tests shows up.  One job: they are the same 25 tests and they take a
+  # second, so running them beside the matrix costs nothing and stops the
+  # presets from quietly rotting between the times somebody runs them by
+  # hand.
+  sanitizers:
+    name: ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [asan, tsan]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build bison pkg-config libssl-dev
+          sudo apt-get install -y libpq-dev libjansson-dev
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DIRCU_DOMAIN=example.com
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} -j$(nproc)
+
+      - name: Run unit tests
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+  sdk:
+    name: sdk
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: sdk
+        run: bun install --frozen-lockfile
+
+      # Strict, with exactOptionalPropertyTypes and noUncheckedIndexedAccess:
+      # the SDK's portability contract is a type-level one (no DOM library,
+      # one file declaring what it needs from the runtime), so a build that
+      # only ran the tests would not check it.
+      - name: Typecheck
+        working-directory: sdk
+        run: bun run typecheck
+
+      # The live test is deliberately not here: it needs an ircd with a
+      # WebSocket port.  See doc/readme.sdk.
+      - name: Run unit tests
+        working-directory: sdk
+        run: bun test

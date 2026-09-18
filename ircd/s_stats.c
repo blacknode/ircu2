@@ -31,6 +31,7 @@
 #include "ircd_netconf.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_crypt.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
@@ -40,6 +41,7 @@
 #include "list.h"
 #include "match.h"
 #include "motd.h"
+#include "module.h"
 #include "msg.h"
 #include "msgq.h"
 #include "numeric.h"
@@ -54,7 +56,6 @@
 #include "s_serv.h"
 #include "s_stats.h"
 #include "s_user.h"
-#include "sasl.h"
 #include "send.h"
 #include "struct.h"
 #include "userload.h"
@@ -309,8 +310,8 @@ stats_links(struct Client* sptr, const struct StatDesc* sd, char* name)
    * are invisible not being visible to 'foreigners' who use
    * a wild card based search to list it.
    */
-  send_reply(sptr, SND_EXPLICIT | RPL_STATSLINKINFO, "Connection SendQ "
-             "SendM SendKBytes RcveM RcveKBytes :Open since");
+  send_reply(sptr, SND_EXPLICIT | RPL_STATSLINKINFO, N_("Connection SendQ "
+             "SendM SendKBytes RcveM RcveKBytes :Open since"));
     for (i = 0; i <= HighestFd; i++)
     {
       if (!(acptr = LocalClientArray[i]))
@@ -329,7 +330,7 @@ stats_links(struct Client* sptr, const struct StatDesc* sd, char* name)
       if (!(!name || wilds) && 0 != ircd_strcmp(name, cli_name(acptr)))
         continue;
       send_reply(sptr, SND_EXPLICIT | RPL_STATSLINKINFO,
-                 "%s %u %u %Lu %u %Lu :%Tu",
+                 N_("%s %u %u %Lu %u %Lu :%Tu"),
                  (*(cli_name(acptr))) ? cli_name(acptr) : "<unregistered>",
                  (int)MsgQLength(&(cli_sendQ(acptr))), (int)cli_sendM(acptr),
                  (cli_sendB(acptr) >> 10), (int)cli_receiveM(acptr),
@@ -348,7 +349,7 @@ stats_modules(struct Client* to, const struct StatDesc* sd, char* param)
 crypt_mechs_t* mechs;
 
   send_reply(to, SND_EXPLICIT | RPL_STATSLLINE, 
-   "Module  Description      Entry Point");
+   N_("Module  Description      Entry Point"));
 
  /* atm the only "modules" we have are the crypto mechanisms,
     eventualy they'll be part of a global dl module list, for now
@@ -365,7 +366,7 @@ crypt_mechs_t* mechs;
    return;
 
   send_reply(to, SND_EXPLICIT | RPL_STATSLLINE, 
-   "%s  %s     0x%X", 
+   N_("%s  %s     0x%X"), 
    mechs->mech->shortname, mechs->mech->description, 
    mechs->mech->crypt_function);
 
@@ -462,7 +463,7 @@ stats_servers_verbose(struct Client* sptr, const struct StatDesc* sd,
    */
   if (sd->sd_funcdata) {
     send_reply(sptr, SND_EXPLICIT | RPL_STATSVERBOSE,
-               ":%-20s %-20s Flags  Hops %-8s %5s %4s %4s %4s %5s %6s %-6s %-10s Info",
+               N_(":%-20s %-20s Flags  Hops %-8s %5s %4s %4s %4s %5s %6s %-6s %-10s Info"),
                "Servername", "Uplink", "Numeric", "Lag", "RTT", "Up", "Down",
                "Users", "Max", "Proto", "LinkTS");
     fmt = ":%-20s %-20s %c%c%c%c%c%c %4i %-8s %5i %4i %4i %4i %5i %6i P%-2i    %10Tu %s";
@@ -583,7 +584,8 @@ stats_help(struct Client* to, const struct StatDesc* sd, char* param)
   if (MyUser(to))
     for (asd = statsinfo; asd->sd_name; asd++)
       if (asd != sd) /* don't send the help for us */
-        sendcmdto_one(&me, CMD_NOTICE, to, "%C :%c (%s) - %s", to, asd->sd_c,
+        sendcmdto_one(&me, CMD_NOTICE, to,
+                      _(to, "%C :%c (%s) - %s"), to, asd->sd_c,
                       asd->sd_name, asd->sd_desc);
 }
 
@@ -636,9 +638,15 @@ struct StatDesc statsinfo[] = {
     FEAT_HIS_STATS_L,
     stats_modules, 0,
     "Dynamically loaded modules." },
+  { 'M', "modules", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_M,
+    module_stats, 0,
+    "Loaded modules and hook activity." },
   { 'm', "commands", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_m,
     stats_commands, 0,
     "Message usage information." },
+  { 'n', "languages", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_n,
+    i18n_stats, 0,
+    "Translation catalogs loaded, per domain and language." },
   { 'o', "operators", STAT_FLAG_OPERFEAT, FEAT_HIS_STATS_o,
     stats_configured_links, CONF_OPERATOR,
     "Operator information." },
@@ -656,9 +664,6 @@ struct StatDesc statsinfo[] = {
     send_usage, 0,
     "System resource usage (Debug only)." },
 #endif
-  { 'S', "sasl", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_S,
-    sasl_stats, 0,
-    "SASL authentication statistics." },
   { 's', "slines", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_s,
     sline_stats, 0,
     "Regex pattern lines (S-lines)." },

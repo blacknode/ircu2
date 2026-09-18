@@ -196,9 +196,51 @@ struct Client;
 #define TOK_NOTICE              "O"
 #define CMD_NOTICE		MSG_NOTICE, TOK_NOTICE
 
+/* Server to client only: opens and closes an IRCv3 batch.  Never crosses a
+ * server link, so the token is the name.
+ *
+ * Spelled IRCBATCH and not BATCH because glibc's <bits/socket.h> already
+ * has an MSG_BATCH, as a flag for sendmsg(): a macro of that name here
+ * expands inside their enum and the file stops compiling, in whichever
+ * translation units happen to include both.  The command on the wire is
+ * BATCH; only the macro is spelled differently. */
+#define MSG_IRCBATCH            "BATCH"
+#define TOK_IRCBATCH            "BATCH"
+#define CMD_IRCBATCH		MSG_IRCBATCH, TOK_IRCBATCH
+
+/* Server to client only: the answer to a labeled command that produced no
+ * messages of its own. */
+#define MSG_ACK                 "ACK"
+#define TOK_ACK                 "ACK"
+#define CMD_ACK			MSG_ACK, TOK_ACK
+
 #define MSG_TAGMSG              "TAGMSG"
 #define TOK_TAGMSG              "TM"
 #define CMD_TAGMSG		MSG_TAGMSG, TOK_TAGMSG
+
+/*
+ * The IRCv3 standard replies: FAIL, WARN and NOTE.
+ *
+ * Server to client and nothing else, which is why they are here as names
+ * to send with rather than as entries in msgtab[]: no client sends one, so
+ * there is nothing to parse, and no server sends one to another, so there
+ * is no P10 token to claim.  The token is the name for the same reason
+ * AUTHENTICATE's is.
+ *
+ * A client that did not ask for standard-replies is sent a NOTICE with the
+ * same words instead; see send_fail() in ircd_reply.c.
+ */
+#define MSG_FAIL                "FAIL"
+#define TOK_FAIL                "FAIL"
+#define CMD_FAIL                MSG_FAIL, TOK_FAIL
+
+#define MSG_WARN                "WARN"
+#define TOK_WARN                "WARN"
+#define CMD_WARN                MSG_WARN, TOK_WARN
+
+#define MSG_NOTE                "NOTE"
+#define TOK_NOTE                "NOTE"
+#define CMD_NOTE                MSG_NOTE, TOK_NOTE
 
 #define MSG_WALLCHOPS           "WALLCHOPS"     /* WC */
 #define TOK_WALLCHOPS           "WC"
@@ -340,9 +382,6 @@ struct Client;
 #define TOK_CLEARMODE           "CM"
 #define CMD_CLEARMODE		MSG_CLEARMODE, TOK_CLEARMODE
 
-#define MSG_ACCOUNT		"ACCOUNT"	/* ACCO */
-#define TOK_ACCOUNT		"AC"
-#define CMD_ACCOUNT		MSG_ACCOUNT, TOK_ACCOUNT
 
 #define MSG_ASLL               "ASLL"          /* ASLL */
 #define TOK_ASLL               "LL"
@@ -372,6 +411,23 @@ struct Client;
 #define TOK_CAP			"CAP"
 #define CMD_CAP			MSG_CAP, TOK_CAP
 
+/* AUTHENTICATE has no P10 token on purpose: it never crosses the link.
+ * Every server runs the identity module against the same store, so there
+ * is nothing to route.  See proposal 007 section 2.
+ */
+#define MSG_AUTHENTICATE	"AUTHENTICATE"
+#define TOK_AUTHENTICATE	"AUTHENTICATE"
+#define CMD_AUTHENTICATE	MSG_AUTHENTICATE, TOK_AUTHENTICATE
+
+/* ACCOUNT has no P10 token either, for AUTHENTICATE's reason and one
+ * more: "AC" is what the historical ircu account burst used, and giving
+ * it a different meaning here would have an old peer's burst land on a
+ * client command.  Nothing about ACCOUNT crosses a link.
+ */
+#define MSG_ACCOUNT		"ACCOUNT"
+#define TOK_ACCOUNT		"ACCOUNT"
+#define CMD_ACCOUNT		MSG_ACCOUNT, TOK_ACCOUNT
+
 #define MSG_XQUERY		"XQUERY"
 #define TOK_XQUERY		"XQ"
 #define CMD_XQUERY		MSG_XQUERY, TOK_XQUERY
@@ -384,13 +440,18 @@ struct Client;
 #define TOK_CHGHOST		"CHGHOST"
 #define CMD_CHGHOST		MSG_CHGHOST, TOK_CHGHOST
 
-#define MSG_AUTHENTICATE	"AUTHENTICATE"
-#define TOK_AUTHENTICATE	"AUTHENTICATE"
-#define CMD_AUTHENTICATE	MSG_AUTHENTICATE, TOK_AUTHENTICATE
+
+#define MSG_MODULE              "MODULE"        /* MODU */
+#define TOK_MODULE              "MODULE"
+#define CMD_MODULE		MSG_MODULE, TOK_MODULE
 
 #define MSG_CONFIG		"CONFIG"
 #define TOK_CONFIG		"CF"
 #define CMD_CONFIG		MSG_CONFIG, TOK_CONFIG
+
+#define MSG_LANGUAGE		"LANGUAGE"	/* LANG */
+#define TOK_LANGUAGE		"LG"
+#define CMD_LANGUAGE		MSG_LANGUAGE, TOK_LANGUAGE
 
 /*
  * Constants
@@ -405,17 +466,67 @@ struct Client;
 #define   MFLG_EXTRA             0x08   /** Handler requests that
                                          * mptr->extra be passed in
                                          * parv[1]. */
+#define   MFLG_FROZEN_OK         0x10   /** Command still works for a
+                                         * frozen client (+f).
+                                         *
+                                         * A frozen client is carrying a
+                                         * registered nickname it has not
+                                         * proved is its own, so what it
+                                         * may still do is exactly what
+                                         * leads out of that: identify,
+                                         * talk to a service, change
+                                         * nick, and keep the connection
+                                         * alive.  Declaring it here and
+                                         * not in a list inside parse.c
+                                         * is what lets a command a
+                                         * module registers say so too.
+                                         * See include/client.h and
+                                         * proposal 007 section 6. */
 
 /*
  * Structures
  */
+
+/** Which parameter of a command names what.
+ *
+ * The dispatcher cannot know, for a command in general, which parameter
+ * names the user an action is aimed at: only the command knows, so the
+ * command says.  What this buys is the command hooks (hooks.h): a module
+ * asked to watch KICK is handed the victim as a struct Client*, resolved
+ * once by the server, instead of every module parsing parv for itself and
+ * getting the index wrong for one command in ten.
+ *
+ * Each field is an index into parv[], or zero for "this command has no
+ * such thing".  Zero is never a real subject -- parv[0] is the source --
+ * so a command that declares nothing gets the right answer by default and
+ * the table below only carries the commands that do act on somebody.
+ */
+struct MsgSubject {
+  unsigned char ms_target;   /**< parv[] naming a nick or numnick. */
+  unsigned char ms_channel;  /**< parv[] naming a channel. */
+  unsigned char ms_mask;     /**< parv[] naming a user@host mask. */
+  unsigned char ms_reason;   /**< parv[] holding free text: a reason. */
+};
+
+/** Subject index meaning "the last parameter this invocation carried".
+ *
+ * A few commands put the target at a position that moves with the
+ * parameter count -- WHOIS is "WHOIS <nick>" and "WHOIS <server> <nick>",
+ * and in both the nick is last.  Writing a fixed index for those would be
+ * right half the time, which is worse than saying nothing.
+ */
+#define MS_LAST 255
 
 /** Information on how to parse a message. */
 struct Message {
   char *cmd;                  /**< command string */
   char *tok;                  /**< token (shorter command string) */
   unsigned int count;         /**< number of times message used */
-  unsigned int parameters;    /**< minimum number of parameters */
+  unsigned int parameters;    /**< maximum number of parameters to split
+                               * the line into; everything past this many
+                               * ends up in the last one, as if it had been
+                               * introduced with ':'.  Handlers check their
+                               * own minimum with need_more_params(). */
   unsigned int flags;         /**< MFLG_* flags for command */
   unsigned int bytes;         /**< bytes received for this message */
   void *extra;                /**< extra pointer to be passed in parv[1] */
@@ -429,6 +540,24 @@ struct Message {
    * UNREGISTERED, CLIENT, SERVER, OPER, SERVICE, LAST
    */
   MessageHandler handlers[LAST_HANDLER_TYPE];
+
+  /** Which parameter names what when the command came from a client; see
+   * #MsgSubject.
+   *
+   * Last on purpose: msgtab[] is written with positional initialisers, so
+   * a command that declares no subject simply stops short and gets zeros,
+   * which is what "none" is.
+   */
+  struct MsgSubject subject;
+
+  /** The same, for a command that came from another server.
+   *
+   * Several commands do not have the same shape on both sides: a GLINE
+   * from an operator begins with the mask, and one from a server begins
+   * with the server it is aimed at and carries the mask one along.  All
+   * zeroes means "the same as #subject", which is the usual case.
+   */
+  struct MsgSubject subject_s;
 };
 
 extern struct Message msgtab[];

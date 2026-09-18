@@ -1,13 +1,9 @@
 /*
  * IRC - Internet Relay Chat, ircd/sasl.c
- * Copyright (C) 2025 MrIron <mriron@undernet.org>
- *
- * See file AUTHORS in IRC package for additional names of
- * the programmers.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 1, or (at your option)
+ * the Free Software Foundation; either version 2, or (at your option)
  * any later version.
  *
  * This program is distributed in the hope that it will be useful,
@@ -19,318 +15,548 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
-
+/** @file
+ * @brief The SASL mechanism register and the exchange with one client.
+ */
 #include "config.h"
 
 #include "sasl.h"
-#include "client.h"
-#include "ircd.h"
 #include "ircd_alloc.h"
-#include "ircd_events.h"
+#include "ircd_base64.h"
+#include "ircd_chattr.h"
 #include "ircd_log.h"
+#include "ircd_sha256.h"
 #include "ircd_string.h"
-#include "ircd_reply.h"
-#include "ircd_netconf.h"
-#include "send.h"
-#include "msg.h"
-#include "capab.h"
-#include "numnicks.h"
-#include "s_auth.h"
-#include "s_debug.h"
-#include "s_bsd.h"
-#include "numeric.h"
 
+/* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <string.h>
 
-/*** SASL session hash table for cookie->client mapping
+/** The register, sorted by name.
  *
- * This table maps SASL session cookies (unsigned long) to client pointers.
- * It is used to efficiently look up a client by its SASL cookie during authentication.
- *
- * The table uses separate chaining for collision resolution and is fixed at 1024 buckets.
- * Only used internally to sasl.c.
+ * Sorted so that the "sasl" capability advertises the same list in the
+ * same order on every server, whatever order the modules loaded in: a
+ * value that depends on load order is one that differs between two
+ * servers of the same network for no reason anybody can see.
  */
-#define SASL_HASH_SIZE 256
+static struct SaslMechanism* sasl_list;
 
-/** Entry in the SASL session hash table. */
-struct SaslSessionEntry {
-  unsigned long cookie;              /**< SASL session cookie (key) */
-  struct Client* client;             /**< Pointer to associated client */
-  struct SaslSessionEntry* next;     /**< Next entry in the bucket (chaining) */
-};
+/** How many are on it. */
+static unsigned int sasl_num;
 
-/** SASL statistics */
-struct SaslStats {
-  unsigned long auth_success; /**< Number of successful authentications */
-  unsigned long auth_failed;  /**< Number of failed authentications */
-};
-
-/** Hash table of SASL session entries. */
-static struct SaslSessionEntry* sasl_session_table[SASL_HASH_SIZE];
-
-/** Global SASL statistics */
-static struct SaslStats sasl_statistics = { 0, 0 };
-
-/** Check if SASL is available
- * @return 1 if SASL server is configured, 0 otherwise
+/** Return non-zero if \a name is usable as a mechanism name.
+ * @param[in] name Name to check.
  */
-int sasl_available(void)
+int sasl_name_valid(const char* name)
 {
-  if (!*netconf_str(NETCONF_SASL_SERVER)
-      || !*netconf_str(NETCONF_SASL_MECHANISMS)
-      || !find_match_server((char*)netconf_str(NETCONF_SASL_SERVER)))
+  size_t len;
+  size_t i;
+
+  if (!name)
     return 0;
+
+  len = strlen(name);
+  if (len < 1 || len > SASLMECHLEN)
+    return 0;
+
+  /* RFC 4422 section 3.1.  Deliberately not accepting lowercase: the name
+   * is uppercased on the way in, so a module that registers "plain" and
+   * one that registers "PLAIN" collide instead of both appearing.
+   */
+  for (i = 0; i < len; i++) {
+    char c = name[i];
+
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+          || c == '-' || c == '_'))
+      return 0;
+  }
 
   return 1;
 }
 
-/** Check if a mechanism exists in a mechanism list
- * @param[in] mechanism The mechanism to find
- * @param[in] mechanism_list Comma-delimited list of mechanisms
- * @return 1 if found, 0 if not
- */
-static int mechanism_in_list(const char* mechanism, const char* mechanism_list)
+/** First registered mechanism, for iteration. */
+const struct SaslMechanism* sasl_first(void)
 {
-  char* mech_list;
-  char* token;
-  int found = 0;
-
-  if (!mechanism_list || !*mechanism_list || !mechanism || !*mechanism)
-    return 0;
-
-  DupString(mech_list, mechanism_list);
-  if (!mech_list)
-    return 0;
-
-  token = strtok(mech_list, ",");
-  while (token) {
-    /* Trim whitespace */
-    while (*token == ' ') token++;
-    char* end = token + strlen(token) - 1;
-    while (end > token && *end == ' ') *end-- = '\0';
-    
-    if (ircd_strcmp(token, mechanism) == 0) {
-      found = 1;
-      break;
-    }
-    token = strtok(NULL, ",");
-  }
-  
-  MyFree(mech_list);
-  return found;
+  return sasl_list;
 }
 
-/** Check if a SASL mechanism is supported
- * @param[in] mechanism The mechanism to check
- * @return 1 if supported, 0 if not
- */
-int sasl_mechanism_supported(const char* mechanism)
+/** Number of mechanisms currently registered. */
+unsigned int sasl_count(void)
 {
-  return mechanism_in_list(mechanism, netconf_str(NETCONF_SASL_MECHANISMS));
+  return sasl_num;
 }
 
-/** Check and update SASL capability availability
- * This function should be called when events occur that might change
- * SASL availability (netjoin/netsplit, config changes)
+/** Find a mechanism by name, case-insensitively.
+ * @param[in] name Name to look for.
+ * @return The mechanism, or NULL.
  */
-void sasl_check_capability(void)
+const struct SaslMechanism* sasl_find(const char* name)
 {
-  cap_update_availability(E_CAP_SASL, sasl_available());
-}
+  struct SaslMechanism* m;
 
-/** Config change callback for SASL-related configuration
- * @param[in] key Configuration key that changed
- * @param[in] old_value Old value (NULL if new key)
- * @param[in] new_value New value
- */
-static void sasl_config_callback(const char *key, const char *old_value, const char *new_value)
-{
-  Debug((DEBUG_DEBUG, "SASL config changed: %s = %s (was: %s)", 
-         key, new_value, old_value ? old_value : "(unset)"));
-  
-  /* Update SASL capability value if mechanisms changed */
-  if (ircd_strcmp(key, "sasl.mechanisms") == 0) {
-    cap_set_value(E_CAP_SASL, new_value);
-  }
-  
-  /* Update SASL capability availability */
-  sasl_check_capability();
-}
+  if (!name || !*name)
+    return NULL;
 
-/** Initialize SASL subsystem and register config callbacks */
-void sasl_init(void)
-{
-  config_register_callback("sasl.", sasl_config_callback);
-}
+  for (m = sasl_list; m; m = m->sm_next)
+    if (!ircd_strcmp(m->sm_name, name))
+      return m;
 
-/** Compute hash bucket index for a given cookie. */
-static unsigned int sasl_cookie_hash(unsigned long cookie) {
-  return (unsigned int)(cookie % SASL_HASH_SIZE);
-}
-
-/** Add a SASL session to the hash table.
- * @param cookie SASL session cookie (key)
- * @param client Pointer to associated client
- */
-void sasl_session_add(unsigned long cookie, struct Client* client) {
-  if (!cookie || !client) return;
-  unsigned int idx = sasl_cookie_hash(cookie);
-  struct SaslSessionEntry* entry = (struct SaslSessionEntry*)MyMalloc(sizeof(struct SaslSessionEntry));
-  entry->cookie = cookie;
-  entry->client = client;
-  entry->next = sasl_session_table[idx];
-  sasl_session_table[idx] = entry;
-}
-
-/** Remove a SASL session from the hash table.
- * @param cookie SASL session cookie to remove
- */
-void sasl_session_remove(unsigned long cookie) {
-  if (!cookie) return;
-  unsigned int idx = sasl_cookie_hash(cookie);
-  struct SaslSessionEntry **pp = &sasl_session_table[idx], *cur;
-  while ((cur = *pp)) {
-    if (cur->cookie == cookie) {
-      *pp = cur->next;
-      MyFree(cur);
-      return;
-    }
-    pp = &cur->next;
-  }
-}
-
-/** Find a client by its SASL session cookie.
- * @param cookie SASL session cookie to look up
- * @return Pointer to associated client, or NULL if not found
- */
-struct Client* find_sasl_client(unsigned long cookie) {
-  if (!cookie) return NULL;
-  unsigned int idx = sasl_cookie_hash(cookie);
-  struct SaslSessionEntry* entry = sasl_session_table[idx];
-  while (entry) {
-    if (entry->cookie == cookie)
-      return entry->client;
-    entry = entry->next;
-  }
   return NULL;
 }
 
-/** Handle SASL extension reply from authentication server
- * @param[in] sptr Server that sent the reply
- * @param[in] routing Routing information (should be SASL cookie)
- * @param[in] reply The SASL reply message
+/** Register a mechanism.
+ * @param[in] mod Module registering it, or NULL for the core.
+ * @param[in] name Name as it goes on the wire.
+ * @param[in] flags SASL_MECH_* flags.
+ * @param[in] step The exchange.
+ * @return Non-zero on success.
  */
-void sasl_send_xreply(struct Client* sptr, const char* routing, const char* reply)
+int sasl_register(struct ModuleHandle* mod, const char* name,
+                  unsigned int flags, SaslStepFn step)
 {
-  struct Client* cli;
-  unsigned long cookie;
-  
-  if (!routing || !reply)
-    return;
-    
-  /* Parse the routing information to get the SASL cookie */
-  cookie = strtoul(routing, NULL, 10);
-  if (!cookie) {
-    Debug((DEBUG_DEBUG, "sasl_send_xreply: Invalid cookie in routing '%s'", routing));
-    return;
-  }
-  
-  /* Find the client with this SASL cookie */
-  cli = find_sasl_client(cookie);
-  if (!cli) {
-    Debug((DEBUG_DEBUG, "sasl_send_xreply: No client found for SASL cookie %lu", cookie));
-    sasl_session_remove(cookie);
-    return;
-  }
-  
-  if (reply[0] == 'O' && reply[1] == 'K'
-               && (reply[2] == '\0' || reply[2] == ' ')) {
-    
-    /* Skip "OK "; a bare "OK" reply carries no account information. */
-    const char *account_info = (reply[2] == ' ') ? reply + 3 : "";
+  char upper[SASLMECHLEN + 1];
+  struct SaslMechanism** m_p;
+  struct SaslMechanism* m;
+  size_t i;
 
-    /**
-     * We only parse this information if the user is not yet registered (i.e. SASL authentication during auth).
-     * If this is a SASL authentication after registration, the username will be set by the service using AC.
-     */
-    if (!IsUser(cli)) {
-      auth_set_account(cli_auth(cli), account_info);
+  if (!name || !step)
+    return 0;
 
-    /**
-     * For already registered users, we send RPL_LOGGEDIN. For non-registered users,
-     * we send RPL_LOGGEDIN in check_auth_finished().
+  if (strlen(name) > SASLMECHLEN)
+    return 0;
+
+  for (i = 0; name[i]; i++)
+    upper[i] = ToUpper(name[i]);
+  upper[i] = '\0';
+
+  if (!sasl_name_valid(upper)) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Refusing SASL mechanism \"%s\": not a valid mechanism name",
+              name);
+    return 0;
+  }
+
+  if (sasl_find(upper)) {
+    log_write(LS_SYSTEM, L_ERROR, 0,
+              "Refusing SASL mechanism %s: already registered", upper);
+    return 0;
+  }
+
+  m = (struct SaslMechanism*) MyCalloc(1, sizeof(struct SaslMechanism));
+  strcpy(m->sm_name, upper);
+  m->sm_flags = flags;
+  m->sm_step = step;
+  m->sm_owner = mod;
+
+  for (m_p = &sasl_list; *m_p; m_p = &(*m_p)->sm_next)
+    if (strcmp((*m_p)->sm_name, upper) > 0)
+      break;
+
+  m->sm_next = *m_p;
+  *m_p = m;
+  sasl_num++;
+
+  sasl_advertise();
+
+  return 1;
+}
+
+/** Remove a mechanism \a mod registered.
+ * @param[in] mod Module that owns it; NULL is the core's.
+ * @param[in] name Mechanism to remove.
+ * @return Non-zero if it was found and removed.
+ */
+int sasl_unregister(struct ModuleHandle* mod, const char* name)
+{
+  struct SaslMechanism** m_p;
+  struct SaslMechanism* m;
+
+  if (!name)
+    return 0;
+
+  for (m_p = &sasl_list; (m = *m_p); m_p = &m->sm_next) {
+    if (ircd_strcmp(m->sm_name, name))
+      continue;
+
+    /* Whoever registered it removes it.  A module that could withdraw
+     * PLAIN could lock the network out of its own accounts.
      */
-    } else {
-      send_reply(cli, RPL_LOGGEDIN,
-        cli_name(cli), cli_user(cli)->username,
-        cli_user(cli)->host, cli_user(cli)->account,
-        cli_user(cli)->account);
+    if (m->sm_owner != mod)
+      return 0;
+
+    *m_p = m->sm_next;
+    sasl_num--;
+    MyFree(m);
+
+    sasl_advertise();
+
+    return 1;
+  }
+
+  return 0;
+}
+
+/** Remove every mechanism \a mod registered.
+ * @param[in] mod Module being torn down.
+ */
+void sasl_drop_module(struct ModuleHandle* mod)
+{
+  struct SaslMechanism** m_p;
+  struct SaslMechanism* m;
+
+  if (!mod)
+    return;
+
+  for (m_p = &sasl_list; (m = *m_p); ) {
+    if (m->sm_owner != mod) {
+      m_p = &m->sm_next;
+      continue;
     }
 
-    sasl_stop_timeout(cli);
-    sasl_session_remove(cookie);
-    cli_sasl(cli) = 0;
-    SetFlag(cli, FLAG_SASL);
-
-    send_reply(cli, RPL_SASLSUCCESS);
-    sasl_statistics.auth_success++;
-  } else if (0 == ircd_strncmp(reply, "NO ", 3)) {
-    /* Authentication failed, send failure message to client */
-    send_reply(cli, ERR_SASLFAIL, reply + 3);
-    
-    /* Stop SASL timeout timer and clear session */
-    sasl_stop_timeout(cli);
-    sasl_session_remove(cookie);
-    cli_sasl(cli) = 0;
-    
-    /* Increment failed authentication counter */
-    sasl_statistics.auth_failed++;
-
-  } else if (0 == ircd_strncmp(reply, "SASL ", 5)) {
-    /* Send the AUTHENTICATE reply to the client */
-    sendcmdto_one(&me, CMD_AUTHENTICATE, cli, "%s", reply + 5);
+    *m_p = m->sm_next;
+    sasl_num--;
+    MyFree(m);
   }
+
+  sasl_advertise();
 }
 
-/** Stop the SASL timeout timer for a client
- * @param[in] cptr Client to stop timeout for
+/** Number of mechanisms \a mod currently has registered.
+ * @param[in] mod Module to count for.
  */
-void sasl_stop_timeout(struct Client* cptr)
+unsigned int sasl_module_count(const struct ModuleHandle* mod)
 {
-  struct Timer* timer;
+  struct SaslMechanism* m;
+  unsigned int n = 0;
 
-  assert(cptr != NULL);
-  assert(MyConnect(cptr));
+  for (m = sasl_list; m; m = m->sm_next)
+    if (m->sm_owner == mod)
+      n++;
 
-  timer = cli_sasl_timer(cptr);
-
-  /* Only delete if timer exists and is active */
-  if (t_active(timer)) {
-    timer_del(timer);
-    Debug((DEBUG_DEBUG, "SASL timeout stopped for client %s", cli_name(cptr)));
-  }
+  return n;
 }
 
-/** Generate SASL statistics for /STATS S
- * @param[in] sptr Client requesting statistics
- * @param[in] sd Stats descriptor (unused)
- * @param[in] param Additional parameter (unused)
+/** Write the mechanism list into \a buf, comma-separated.
+ * @param[out] buf Buffer to write into.
+ * @param[in] len Its size, terminator included.
+ * @return Characters written.
  */
-void sasl_stats(struct Client* sptr, const struct StatDesc* sd, char* param)
+size_t sasl_mechanisms_str(char* buf, size_t len)
 {
-  if (sasl_available()) {
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":SASL server: %s", netconf_str(NETCONF_SASL_SERVER));
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":SASL mechanisms: %s", netconf_str(NETCONF_SASL_MECHANISMS));
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":SASL timeout: %d", netconf_int(NETCONF_SASL_TIMEOUT));
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":SASL successful auths: %lu", sasl_statistics.auth_success);
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":SASL failed auths: %lu", sasl_statistics.auth_failed);
+  struct SaslMechanism* m;
+  size_t o = 0;
+
+  if (!buf || !len)
+    return 0;
+
+  buf[0] = '\0';
+
+  for (m = sasl_list; m; m = m->sm_next) {
+    size_t need = strlen(m->sm_name) + (o ? 1 : 0);
+
+    /* A name that does not fit is left out, not cut in half: half a
+     * mechanism name in a CAP LS is a mechanism a client will ask for and
+     * nobody has.
+     */
+    if (o + need + 1 > len)
+      continue;
+
+    if (o)
+      buf[o++] = ',';
+
+    memcpy(buf + o, m->sm_name, strlen(m->sm_name));
+    o += strlen(m->sm_name);
+    buf[o] = '\0';
+  }
+
+  return o;
+}
+
+/* ------------------------------------------------------------------- *
+ * The core's mechanisms.                                              *
+ * ------------------------------------------------------------------- */
+
+/** Copy a NUL-terminated field out of a SASL message.
+ *
+ * The message is a blob with NULs inside it, so strlen() is the wrong
+ * tool twice over: it would stop at the separator the caller is trying to
+ * find, and it would run off the end of a message that has none.
+ *
+ * @param[in] in The message.
+ * @param[in] inlen Its length.
+ * @param[in,out] pos Offset to read from; advanced past the separator.
+ * @param[out] out Buffer for the field.
+ * @param[in] outlen Its size, terminator included.
+ * @return Non-zero on success; zero if there is no separator or the field
+ *   does not fit.
+ */
+static int sasl_field(const char* in, size_t inlen, size_t* pos,
+                      char* out, size_t outlen)
+{
+  const char* start = in + *pos;
+  const char* nul;
+  size_t len;
+
+  if (*pos > inlen)
+    return 0;
+
+  nul = (const char*) memchr(start, '\0', inlen - *pos);
+  if (!nul)
+    return 0;
+
+  len = (size_t) (nul - start);
+  if (len + 1 > outlen)
+    return 0;
+
+  memcpy(out, start, len);
+  out[len] = '\0';
+  *pos += len + 1;
+
+  return 1;
+}
+
+/** PLAIN, RFC 4616: authzid NUL authcid NUL password.
+ *
+ * Here the authcid is the email and the authzid names which of that
+ * email's accounts to use -- empty for the default one.  That is what the
+ * authorization identity is for, so no syntax of our own is invented for
+ * it (proposal 007 section 4.1).
+ *
+ * @param[in,out] ses Session to fill in.
+ * @param[in] in Decoded message.
+ * @param[in] inlen Its length.
+ * @return What it decided.
+ */
+static enum SaslStep sasl_step_plain(struct SaslSession* ses, const char* in,
+                                     size_t inlen)
+{
+  size_t pos = 0;
+
+  if (!sasl_field(in, inlen, &pos, ses->ss_authzid, sizeof(ses->ss_authzid)))
+    return SASL_STEP_FAIL;
+
+  if (!sasl_field(in, inlen, &pos, ses->ss_authcid, sizeof(ses->ss_authcid)))
+    return SASL_STEP_FAIL;
+
+  /* The rest is the password, and it is the rest: a password may contain
+   * anything, NUL included, so it is taken by length and not by scanning.
+   */
+  ses->ss_secretlen = inlen - pos;
+  if (ses->ss_secretlen + 1 > sizeof(ses->ss_secret))
+    return SASL_STEP_FAIL;
+
+  memcpy(ses->ss_secret, in + pos, ses->ss_secretlen);
+  ses->ss_secret[ses->ss_secretlen] = '\0';
+
+  if (!ses->ss_authcid[0] || !ses->ss_secretlen)
+    return SASL_STEP_FAIL;
+
+  return SASL_STEP_CREDENTIAL;
+}
+
+/** EXTERNAL, RFC 4422 appendix A: the message is the authzid, or empty.
+ *
+ * The credential is the client certificate, which the server has already
+ * seen; what crosses here is only which account to use.  The fingerprint
+ * is the proof and it is in the session already, so a message with a
+ * password in it would be a message this mechanism has no use for.
+ *
+ * @param[in,out] ses Session to fill in.
+ * @param[in] in Decoded message.
+ * @param[in] inlen Its length.
+ * @return What it decided.
+ */
+static enum SaslStep sasl_step_external(struct SaslSession* ses,
+                                        const char* in, size_t inlen)
+{
+  if (inlen + 1 > sizeof(ses->ss_authzid))
+    return SASL_STEP_FAIL;
+
+  if (memchr(in, '\0', inlen))
+    return SASL_STEP_FAIL;
+
+  memcpy(ses->ss_authzid, in, inlen);
+  ses->ss_authzid[inlen] = '\0';
+
+  /* No certificate, no credential.  Failing here rather than letting the
+   * provider decide keeps "authenticated as nobody" from being a state
+   * that exists even for an instant.
+   */
+  if (!ses->ss_fingerprint[0])
+    return SASL_STEP_FAIL;
+
+  ses->ss_authcid[0] = '\0';
+  ses->ss_secretlen = 0;
+
+  return SASL_STEP_CREDENTIAL;
+}
+
+/** Populate the register with the core's mechanisms. */
+void sasl_init(void)
+{
+  sasl_close();
+
+  sasl_register(NULL, "PLAIN", SASL_MECH_NEEDS_TLS, sasl_step_plain);
+  sasl_register(NULL, "EXTERNAL", 0, sasl_step_external);
+}
+
+/** Release the register. */
+void sasl_close(void)
+{
+  while (sasl_list) {
+    struct SaslMechanism* m = sasl_list;
+
+    sasl_list = m->sm_next;
+    MyFree(m);
+  }
+
+  sasl_num = 0;
+}
+
+/* ------------------------------------------------------------------- *
+ * One exchange.                                                       *
+ * ------------------------------------------------------------------- */
+
+/** Start a session with nothing in it.
+ * @param[out] ses Session to initialise.
+ */
+void sasl_session_init(struct SaslSession* ses)
+{
+  assert(0 != ses);
+  memset(ses, 0, sizeof(*ses));
+}
+
+/** End a session, wiping the secret it held.
+ * @param[in,out] ses Session to clear.
+ */
+void sasl_session_clear(struct SaslSession* ses)
+{
+  if (!ses)
+    return;
+
+  /* Not memset(): a compiler is entitled to drop a write to storage
+   * nothing reads again, and what is being dropped here is the erasure of
+   * a password.  See ircd_sha256.h.
+   */
+  ircd_crypto_wipe(ses, sizeof(*ses));
+}
+
+/** Choose the mechanism for \a ses.
+ * @param[in,out] ses Session, with its connection details already set.
+ * @param[in] name Mechanism the client asked for.
+ * @return Zero on success, -1 if unknown, -2 if it needs TLS.
+ */
+int sasl_session_begin(struct SaslSession* ses, const char* name)
+{
+  const struct SaslMechanism* m;
+
+  assert(0 != ses);
+
+  m = sasl_find(name);
+  if (!m)
+    return -1;
+
+  if ((m->sm_flags & SASL_MECH_NEEDS_TLS) && !ses->ss_tls)
+    return -2;
+
+  /* Starting again is allowed -- a client may change its mind after a
+   * failure -- and it must not leave the previous attempt's secret, or
+   * half of its message, lying in the session.
+   */
+  ses->ss_wirelen = 0;
+  ses->ss_wire[0] = '\0';
+  ses->ss_steps = 0;
+  ses->ss_outlen = 0;
+  ircd_crypto_wipe(ses->ss_secret, sizeof(ses->ss_secret));
+  ses->ss_secretlen = 0;
+  ses->ss_authcid[0] = '\0';
+  ses->ss_authzid[0] = '\0';
+
+  ses->ss_mech = m;
+
+  return 0;
+}
+
+/** Feed one AUTHENTICATE parameter to \a ses.
+ * @param[in,out] ses Session, already begun.
+ * @param[in] line The parameter, as it arrived.
+ * @return What to do next.
+ */
+enum SaslResult sasl_session_input(struct SaslSession* ses, const char* line)
+{
+  /* Sized from the wire cap, not from SASL_MESSAGE_MAX: the largest
+   * message SASL_WIRE_MAX characters can carry is a little longer than
+   * SASL_MESSAGE_MAX, and decoding into a buffer that cannot hold it
+   * would report "malformed" for something that is merely too long. */
+  char decoded[IRCD_BASE64_DECLEN(SASL_WIRE_MAX) + 1];
+  enum SaslStep step;
+  size_t linelen;
+  int declen;
+
+  assert(0 != ses);
+
+  if (!line)
+    return SASL_BAD_INPUT;
+
+  if (!strcmp(line, "*"))
+    return SASL_ABORTED;
+
+  if (!ses->ss_mech)
+    return SASL_BAD_INPUT;
+
+  if (!strcmp(line, "+")) {
+    /* Either an empty message, or the terminator of one whose length was
+     * an exact multiple of the chunk size.  Both end the message, so both
+     * fall through to the decode with whatever has been gathered.
+     */
+    linelen = 0;
   } else {
-    send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               ":SASL not available");
+    linelen = strlen(line);
+
+    if (linelen > SASL_CHUNKLEN)
+      return SASL_BAD_INPUT;
+
+    if (ses->ss_wirelen + linelen > SASL_WIRE_MAX)
+      return SASL_TOO_LONG;
+
+    memcpy(ses->ss_wire + ses->ss_wirelen, line, linelen);
+    ses->ss_wirelen += linelen;
+    ses->ss_wire[ses->ss_wirelen] = '\0';
+
+    if (linelen == SASL_CHUNKLEN)
+      return SASL_NEED_MORE;
+  }
+
+  declen = ircd_base64_decode(ses->ss_wire, ses->ss_wirelen, decoded,
+                              sizeof(decoded) - 1);
+
+  ses->ss_wirelen = 0;
+  ses->ss_wire[0] = '\0';
+
+  if (declen < 0)
+    return SASL_BAD_INPUT;
+
+  if (declen > SASL_MESSAGE_MAX) {
+    ircd_crypto_wipe(decoded, sizeof(decoded));
+    return SASL_TOO_LONG;
+  }
+
+  decoded[declen] = '\0';
+
+  /* The message is consumed whatever the mechanism makes of it -- it was
+   * cleared above, before any of the ways out -- because leaving it would
+   * prepend it to the next one. */
+  ses->ss_steps++;
+
+  step = (*ses->ss_mech->sm_step)(ses, decoded, (size_t) declen);
+
+  ircd_crypto_wipe(decoded, sizeof(decoded));
+
+  switch (step) {
+  case SASL_STEP_CHALLENGE:
+    return SASL_CHALLENGE;
+  case SASL_STEP_CREDENTIAL:
+    return SASL_CREDENTIAL;
+  default:
+    return SASL_BAD_INPUT;
   }
 }

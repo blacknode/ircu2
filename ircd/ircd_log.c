@@ -26,6 +26,7 @@
  */
 #include "config.h"
 
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "client.h"
 #include "ircd_alloc.h"
@@ -968,24 +969,24 @@ log_feature_report(struct Client *to, int flag)
   for (i = 0; i < LS_LAST_SYSTEM; i++)
   {
     if (logDesc[i].mark & LOG_MARK_FILE) /* report file */
-      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "F LOG %s FILE %s",
+      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("F LOG %s FILE %s"),
                  logDesc[i].name, (logDesc[i].file && logDesc[i].file->file ?
                                    logDesc[i].file->file : "(terminal)"));
 
     if (logDesc[i].mark & LOG_MARK_FACILITY) /* report facility */
-      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "F LOG %s FACILITY %s",
+      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("F LOG %s FACILITY %s"),
 		 logDesc[i].name, log_fac_name(logDesc[i].facility));
 
     if (logDesc[i].mark & LOG_MARK_SNOMASK) /* report snomask */
-      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "F LOG %s SNOMASK %s",
+      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("F LOG %s SNOMASK %s"),
 		 logDesc[i].name, log_sno_name(logDesc[i].snomask));
 
     if (logDesc[i].mark & LOG_MARK_LEVEL) /* report log level */
-      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "F LOG %s LEVEL %s",
+      send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("F LOG %s LEVEL %s"),
 		 logDesc[i].name, log_lev_name(logDesc[i].level));
   }
 
   if (flag) /* report default facility */
-    send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, "F LOG %s",
+    send_reply(to, SND_EXPLICIT | RPL_STATSFLINE, N_("F LOG %s"),
 	       log_fac_name(logInfo.facility));
 }

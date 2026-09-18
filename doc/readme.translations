@@ -1,0 +1,299 @@
+TRANSLATIONS documentation, last updated on 13 Sep 2026
+
+Everything the server says to one client -- a numeric, a NOTICE from the
+server, a reply from a service bot -- can be translated.  The English text
+stays in the sources; a translation is a plain GNU PO file the server reads
+by itself, one per language, and a client chooses its languages with the
+LANGUAGE command.  The design is doc/proposals/005-traducciones-po.md.
+
+There is no msgfmt step, no .mo file and no libintl: the .po is what is
+installed and what is read, and a /REHASH picks up a corrected one.
+
+
+FOR THE PERSON TRANSLATING
+==========================
+
+A catalog is <code>.po -- es.po, es-ar.po, pt.po -- written with Poedit,
+Weblate, Crowdin, msgmerge or an editor.  The template to start from is
+po/core.pot in the source tree (regenerated with `cmake --build build
+--target pot` when xgettext is installed):
+
+  msginit -l es -i po/core.pot -o po/es.po        # a new language
+  msgmerge -U po/es.po po/core.pot                # after the sources moved
+
+The rules the server checks when it loads the file, entry by entry:
+
+  * A translation is a format for ircd_snprintf().  Its directives -- %s,
+    %d, %C, %Tu, %:#C, %*s and the rest -- must be exactly those of the
+    original, in the same order, byte for byte.  Only the text between
+    them is yours.  %% may appear anywhere.
+
+    This is stricter than gettext's own check: ircd_snprintf has no %1$s,
+    so a translation cannot reorder its arguments.  Rewrite the sentence
+    around the order instead.  (Almost no message has more than two.)
+
+  * No line break in a translation.  An IRC message is one line; a second
+    one would be a second command.
+
+  * The file is UTF-8, and says so in its header (or says nothing).
+    charset=ISO-8859-1 refuses the whole file.
+
+  * A plural entry (msgid_plural) has exactly the number of forms the
+    header's Plural-Forms declares, each meeting the rules above against
+    msgid_plural.  A catalog whose header has no Plural-Forms has no
+    plurals: its plural entries are refused and the original is used.
+
+An entry that fails is dropped -- the English text is used for it -- with a
+line in the log naming the file, the line and the reason; the rest of the
+file loads.  A file that does not parse at all (an unclosed string, a bad
+header) is refused whole, and if a previous version of that language was
+loaded it stays in force.
+
+Two things to know that gettext users might not expect:
+
+  * Numerics carry a context: the numeric's code.  The 401 is
+
+      msgctxt "401"
+      msgid "%s :No such nick"
+      msgstr "%s :No existe ese nick"
+
+    so two numerics with the same English text can be translated apart, and
+    you can see which one you are working on.  Everything else -- explicit
+    formats, notices, bot replies -- has no context.
+
+  * The leading ':' and the parameters before it are part of the IRC line,
+    not of the sentence.  "%s :No such nick" is <nick> then the text;
+    keep the "%s :" and translate what follows.
+
+A `fuzzy` entry is ignored, exactly as msgfmt ignores it; an entry with an
+empty msgstr is untranslated and the original is used; `#~` obsolete
+entries are skipped.
+
+Nothing checks the length.  A translation is usually longer than its
+original, and a line is cut at 512 bytes as it always was; keep the long
+numerics (030-032, 477, 561-566) in mind.
+
+What is never translated, and is not in the template: the log, anything
+sent to several clients at once (channel messages, WALLOPS, server
+notices), anything that crosses a server link as text (KILL and QUIT
+reasons, SQUIT, ERROR), and the server's own command line.
+
+
+FOR THE PERSON RUNNING A SERVER
+===============================
+
+Where the catalogs live
+-----------------------
+
+  $DPATH/po/<code>.po                              the ircd ("core")
+  $DPATH/modules/<type>/<name>/po/<code>.po        a module's own
+
+The first directory is PO_PATH in config.h, set with -DIRCU_POPATH= at
+configure time (default $DPATH/po); `cmake --install` puts po/*.po from
+the source tree there.  A module's catalogs are resources of the module
+and are installed beside its .so; a module built from a single file has
+no directory of its own and no translations.
+
+Every domain -- "core" and one per module -- looks up only its own
+catalogs; a module's text is never found in the ircd's file, nor the
+other way round.  Drop a new pt.po into $DPATH/po/, /REHASH, and pt is
+available; nothing is compiled.
+
+The code is the file name: BCP 47 restricted to [A-Za-z]{2,3}(-[A-Za-z0-9]
+{1,8})*, at most fifteen characters, matched without regard to case.  A
+file whose name is not a code is ignored with a warning.
+
+"en" -- the language of the sources -- is always available and needs no
+catalog.  An en.po is allowed, if you want to reword the English.
+
+How a client's language is chosen
+---------------------------------
+
+For each message, in order:
+
+  1. each code of the client's LANGUAGE preference, and for each one the
+     exact catalog and then its primary subtag (es-ar -> es-ar, es);
+  2. DEFAULT_LANGUAGE, the same way;
+  3. the original text.
+
+"en" anywhere in that chain stops it: a client that asks for "en es" gets
+English even where the server's default is Spanish.
+
+  Features {
+    "DEFAULT_LANGUAGE" = "es";      # what a client gets that asked for
+                                    # nothing; empty (the default) means
+                                    # the original text.  /SET works.
+    "CAP_LANGUAGES" = "TRUE";       # advertise draft/languages
+  };
+
+DEFAULT_LANGUAGE is per server, so irc.es.example.net can speak Spanish
+and irc.us.example.net English from the same image and the same po/.
+
+The negotiation
+---------------
+
+The IRCv3 draft "draft/languages" as Ergo implements it.  CAP LS 302 shows
+the languages available:
+
+  [C] CAP LS 302
+  [S] :irc.example.net CAP * LS :... draft/languages=3,es,en,pt
+
+  <max>,<default>,<the rest alphabetically> -- 3 is the most codes a client
+  may list, and the first code is DEFAULT_LANGUAGE when it is one of them.
+
+  [C] LANGUAGE es-AR es
+  [S] :irc.example.net 687 * es-AR es :Se han fijado tus preferencias de idioma.
+  [C] NICK pepe
+  [C] USER pepe 0 * :Pepe
+  [S] :irc.example.net 001 pepe :Bienvenido a la red de IRC example, pepe
+
+LANGUAGE works before and after registration -- before is what lets the
+001 come out translated -- and the CAP REQ is not needed: the capability
+only advertises.  The replies:
+
+  687 RPL_YOURLANGUAGESARE   <codes> :Language preferences have been set.
+                             (already in the language just chosen)
+  690 RPL_WHOISLANGUAGE      <nick> <codes> :can speak these languages.
+                             (in WHOIS, to the user and to opers)
+  981 ERR_TOOMANYLANGUAGES   <max> :You specified too many languages.
+  982 ERR_NOLANGUAGE         <codes> :Languages are not supported by this server.
+                             (lists only the codes that are not; nothing
+                             changes)
+  461                        no code given
+
+A code is accepted if some domain has a catalog for it or for its primary
+subtag, or if it is "en".  "es-MX" is accepted with only an es.po present.
+
+On the network
+--------------
+
+A reply is translated where it is generated, and that is not always the
+user's own server: a remote WHOIS, a remote STATS, and every answer from a
+service bot that lives on another server.  So the preference travels: a
+new P10 token, LG, with the user as source and the same shape as the
+command,
+
+  ABAAB LG es-ar es
+
+sent when a registered user runs LANGUAGE, right behind the NICK when a
+user who chose before registering is introduced, and in the burst behind
+each user that has one (where the AWAY of AWAY_BURST goes; no feature
+turns it off).  A server stores what it receives without checking it
+against its own catalogs -- a hub with no fr-ca must still pass it on --
+and drops, with a protocol violation, only what is not a code at all.
+Every server on the network has to run this code, as with +r.
+
+Seeing what is loaded
+---------------------
+
+  /STATS n   (or /STATS languages)
+
+lists each domain and language with the entries loaded and rejected at
+the last load, the number of distinct preferences interned, the default
+and the capability value.  At start-up and on /REHASH the log (LS_CONFIG)
+and the opers get one line per rejected entry and per refused file.
+
+  ircd -k
+
+loads the catalogs as well as the configuration and exits with an error if
+any file is refused or any entry rejected, so a deployment can check its
+translations before restarting.  A broken catalog never stops a normal
+start: that language is incomplete or absent, and the server runs.
+
+Limits, all in include/ircd_i18n.h: I18N_LANG_MAX 16 (a code and its
+terminator), I18N_PREF_MAX 3 (codes per client), I18N_PREF_TABLE_MAX 4096
+(distinct preferences interned; past that a new one is reduced to its first
+code, and the log says so once), I18N_NPLURALS_MAX 8, I18N_PO_LINE_MAX
+4096.  A client costs two bytes: the preference is an index into a table
+of interned preferences, not three strings.
+
+
+FOR THE PERSON WRITING CODE
+===========================
+
+Three macros, in include/ircd_i18n.h, with the names xgettext expects:
+
+  _(to, "text")             translate now, for client `to`
+  _n(to, "one", "many", n)  the same, choosing the plural form for n
+  N_("text")                mark only; translated later by whoever
+                            knows the recipient
+
+_() and _n() return a const char* that lives as long as the catalog: use
+it in the same statement, never keep it.
+
+Where the recipient is known and the text goes to one client, mark it:
+
+  sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Bot %s destroyed"),
+                sptr, name);
+
+The whole format is translated, %C and all; the loader guarantees the
+directives survive.  send_reply() translates by itself -- a numeric's own
+format with the numeric's code as context, an SND_EXPLICIT format with
+none -- so an explicit format is only marked:
+
+  send_reply(sptr, SND_EXPLICIT | RPL_REHASHING, N_(":Flushing MOTD cache"));
+
+and the table in s_err.c is written with N(sym, "code", fmt), which
+xgettext reads as msgctxt/msgid.
+
+Do not translate the log, anything rendered once for several recipients,
+or anything that crosses a link as text (see the list for translators
+above).  Do not call any of this from a worker thread: the lookup reads
+struct Client.
+
+The cost for a client that asked for nothing, on a server with no
+DEFAULT_LANGUAGE, is one comparison and a return.  With a preference it is
+at most eight hash probes per message.
+
+In a module
+-----------
+
+  #define I18N_DOMAIN mod_i18n
+  #include "ircd_i18n.h"
+  #include "module.h"
+
+  static struct I18nDomain* mod_i18n;
+
+  static int init(struct ModuleHandle* mod)
+  {
+    mod_i18n = module_i18n(mod);      /* NULL if no po/ was installed */
+    ...
+  }
+
+  static void reply(struct Client* bot, struct Client* to, unsigned int n)
+  {
+    char buf[BUFSIZE];
+    ircd_snprintf(NULL, buf, sizeof(buf),
+                  _n(to, "You have %u pending request",
+                         "You have %u pending requests", n), n);
+    bot_send_user(bot, to, 1, buf);
+  }
+
+The domain is opened from <module dir>/po/ before mi_init and closed after
+mi_fini; /REHASH reloads it with the core's, and /MODULE RELOAD reopens
+it.  i18n_text() with a NULL domain returns the original, so a module with
+no translations never tests for it.  A module translates with its own
+domain before handing text to bot_send_user() or send_reply(); the text it
+passes to send_reply() as SND_EXPLICIT is looked up once more in "core",
+not found, and left alone.
+
+Text in a table (a command's help line) is marked N_() where it is written
+and translated with _() where it is shown.  irc_services' svc_reply()
+translates its format itself, so its call sites are extracted with
+--keyword=svc_reply:2 and carry no _().
+
+The template for a module is written next to its catalogs by the same
+`pot` target: modules/<type>/<name>/po/<name>.pot.
+
+
+TESTING
+=======
+
+  ctest --test-dir build -R ircd_i18n_t
+
+drives the PO reader, the plural evaluator, the format validation and the
+lookup chain without a server -- and loads every .po in the source tree,
+failing if any entry is rejected.  That is the check that runs in CI, in
+place of `msgfmt --check`, which does not understand %C or %Tu (though
+`msgfmt -c` still works on the files, because the entries are flagged
+no-c-format).  The Docker suite has tests/i18n/.

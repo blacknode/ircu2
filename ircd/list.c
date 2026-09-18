@@ -28,6 +28,7 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_events.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -265,7 +266,6 @@ void free_client(struct Client* cptr)
    */
   assert(cli_verify(cptr));
   assert(cli_hnext(cptr) == cptr);
-  assert(cli_sasl(cptr) == 0);
   /* or from linked list? */
   assert(cli_next(cptr) == 0);
   assert(cli_prev(cptr) == 0);
@@ -504,7 +504,8 @@ void remove_dlink(struct DLink **lpp, struct DLink *lp)
 void send_liststats(struct Client *cptr, const struct liststats *lstats,
                     const char *itemname, struct liststats *totals)
 {
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s: inuse %zu(%zu) alloc %zu",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
+             N_(":%s: inuse %zu(%zu) alloc %zu"),
 	     itemname, lstats->inuse, lstats->mem, lstats->alloc);
   if (totals)
   {

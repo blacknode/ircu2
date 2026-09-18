@@ -1,4 +1,4 @@
-"""CAP command edge cases beyond pr66_capsasl coverage.
+"""CAP command edge cases.
 
 Exercises m_cap.c / capab.h: unknown subcommands, post-registration
 behaviour, REQ parsing quirks, feature gating, sticky caps, and
@@ -91,7 +91,7 @@ async def test_client_originated_ack_nak_new_del_ignored(ircd_hub):
     await client.connect(ircd_hub["host"], ircd_hub["port"])
     try:
         for sub in ("ACK", "NAK", "NEW", "DEL"):
-            await client.send(f"CAP {sub} :account-notify")
+            await client.send(f"CAP {sub} :invite-notify")
             await client.assert_no_message("410", timeout=0.3)
             await client.assert_no_message("CAP", timeout=0.2)
         await _alive_unregistered(client, "noop-subs")
@@ -108,7 +108,7 @@ async def test_req_mixed_add_and_remove(ircd_hub):
     try:
         await client.send("CAP LS 302")
         await _collect_cap_ls(client)
-        await client.send("CAP REQ :account-notify away-notify")
+        await client.send("CAP REQ :invite-notify away-notify")
         ack1 = await client.wait_for("CAP", timeout=5.0)
         assert ack1.params[1] == "ACK"
         await client.send("CAP REQ :chghost -away-notify")
@@ -122,7 +122,7 @@ async def test_req_mixed_add_and_remove(ircd_hub):
         listing = await client.wait_for("CAP", timeout=5.0)
         names = set(listing.params[-1].split())
         assert "chghost" in names
-        assert "account-notify" in names
+        assert "invite-notify" in names
         assert "away-notify" not in names
     finally:
         await client.send("CAP END")
@@ -137,11 +137,11 @@ async def test_req_whitespace_and_duplicates(ircd_hub):
     try:
         await client.send("CAP LS 302")
         await _collect_cap_ls(client)
-        await client.send("CAP REQ :  account-notify   account-notify  chghost  ")
+        await client.send("CAP REQ :  invite-notify   invite-notify  chghost  ")
         msg = await client.wait_for("CAP", timeout=5.0)
         assert msg.params[1] == "ACK", msg.raw
         names = set(msg.params[-1].split())
-        assert "account-notify" in names
+        assert "invite-notify" in names
         assert "chghost" in names
     finally:
         await client.send("CAP END")
@@ -172,13 +172,13 @@ async def test_req_unknown_cap_naks_all_or_nothing(ircd_hub):
     try:
         await client.send("CAP LS 302")
         await _collect_cap_ls(client)
-        await client.send("CAP REQ :account-notify not-a-real-cap")
+        await client.send("CAP REQ :invite-notify not-a-real-cap")
         nak = await client.wait_for("CAP", timeout=5.0)
         assert nak.params[1] == "NAK", nak.raw
         await client.send("CAP LIST")
         listing = await client.wait_for("CAP", timeout=5.0)
         names = set(listing.params[-1].split()) if listing.params[-1] else set()
-        assert "account-notify" not in names
+        assert "invite-notify" not in names
     finally:
         await client.send("CAP END")
         await client.send("QUIT :done")
@@ -201,17 +201,28 @@ async def test_sticky_cap_notify_cannot_be_removed_after_302(ircd_hub):
         await client.disconnect()
 
 
-async def test_unavailable_sasl_naks_req(ircd_hub):
-    """SASL starts CAPFL_UNAVAILABLE; REQ must NAK when no agent is present."""
+async def test_removed_caps_are_not_offered_and_nak(ircd_hub):
+    """account-notify, account-tag and extended-join are gone
+    (doc/readme.accounting): not in LS, and a REQ for one NAKs.
+
+    With an account that *is* the nickname all three of them repeat the
+    prefix, which is why they went.  `invite-notify` is not on this list
+    -- it never went anywhere, and tests/invite_notify/ is about it --
+    and `sasl` came back with proposal 007, advertised on a server where
+    a provider is registered.  This hub has no identity module, so it is
+    not advertised here; that is a different statement from "gone", and
+    the suite that makes it is identity_db/.
+    """
     client = IRCClient()
     await client.connect(ircd_hub["host"], ircd_hub["port"])
     try:
         await client.send("CAP LS 302")
         names = _cap_names(await _collect_cap_ls(client))
-        assert "sasl" not in names
-        await client.send("CAP REQ :sasl")
-        nak = await client.wait_for("CAP", timeout=5.0)
-        assert nak.params[1] == "NAK", nak.raw
+        for gone in ("account-notify", "account-tag", "extended-join"):
+            assert gone not in names, f"{gone} still advertised: {names}"
+            await client.send(f"CAP REQ :{gone}")
+            nak = await client.wait_for("CAP", timeout=5.0)
+            assert nak.params[1] == "NAK", nak.raw
     finally:
         await client.send("CAP END")
         await client.send("QUIT :done")
@@ -221,13 +232,13 @@ async def test_unavailable_sasl_naks_req(ircd_hub):
 async def test_post_registration_list_req_ls_still_work(ircd_hub):
     """After CAP END + register, LIST/REQ/LS remain usable; END is a no-op."""
     client = await make_cap_client(
-        ircd_hub["host"], ircd_hub["port"], "cappost1", ["account-notify"]
+        ircd_hub["host"], ircd_hub["port"], "cappost1", ["invite-notify"]
     )
     try:
         await client.send("CAP LIST")
         listing = await client.wait_for("CAP", timeout=5.0)
         assert listing.params[1] == "LIST"
-        assert "account-notify" in listing.params[-1].split()
+        assert "invite-notify" in listing.params[-1].split()
 
         await client.send("CAP LS 302")
         tokens = await _collect_cap_ls(client)

@@ -191,14 +191,20 @@ ms_mode(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
     {
       return 0;
     }
-    else if (sptr != acptr)
-    {
-      sendwallto_group_butone(&me, WALL_WALLOPS, 0, 
-                              "MODE for User %s from %s!%s", parv[1],
-                              cli_name(cptr), cli_name(sptr));
-      return 0;
-    }
-    return set_user_mode(cptr, sptr, parc, parv, ALLOWMODES_ANY);
+    else if (sptr == acptr)
+      return set_user_mode(cptr, sptr, parc, parv, ALLOWMODES_ANY);
+
+    /* Somebody else's modes.  A server may change anyone's, a service
+     * bot anyone's but an operator's (doc/readme.accounting); a MODE for
+     * another user from anything else is a peer misbehaving.
+     */
+    if (IsServer(sptr) || (IsServiceBot(sptr) && !IsAnOper(acptr)))
+      return set_user_mode_on(cptr, sptr, acptr, parc, parv);
+
+    sendwallto_group_butone(&me, WALL_WALLOPS, 0,
+                            "MODE for User %s from %s!%s", parv[1],
+                            cli_name(cptr), cli_name(sptr));
+    return 0;
   }
 
   ClrFlag(sptr, FLAG_TS8);

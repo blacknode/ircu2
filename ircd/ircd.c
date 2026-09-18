@@ -25,14 +25,23 @@
 
 #include "ircd.h"
 #include "IPcheck.h"
+#include "capab.h"
+#include "batch.h"
+#include "account.h"
+#include "cache.h"
+#include "mail.h"
+#include "channel.h"
 #include "class.h"
 #include "client.h"
 #include "crule.h"
+#include "db.h"
 #include "destruct_event.h"
 #include "hash.h"
+#include "http.h"
 #include "ircd_alloc.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_signal.h"
@@ -42,13 +51,18 @@
 #include "jupe.h"
 #include "list.h"
 #include "match.h"
+#include "migration.h"
+#include "hooks.h"
+#include "module.h"
 #include "motd.h"
 #include "msg.h"
+#include "msgid.h"
 #include "numeric.h"
 #include "numnicks.h"
 #include "opercmds.h"
 #include "parse.h"
 #include "res.h"
+#include "sasl.h"
 #include "s_auth.h"
 #include "s_bsd.h"
 #include "s_conf.h"
@@ -56,7 +70,6 @@
 #include "s_misc.h"
 #include "s_serv.h"
 #include "s_stats.h"
-#include "sasl.h"
 #include "send.h"
 #include "sline.h"
 #include "sys.h"
@@ -65,6 +78,9 @@
 #include "version.h"
 #include "websocket.h"
 #include "whowas.h"
+#include "http_server.h"
+#include "modhost.h"
+#include "worker.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
 #include <ctype.h>
@@ -141,6 +157,28 @@ void server_die(const char *message)
 {
   /* log_write will send out message to both log file and as server notice */
   log_write(LS_SYSTEM, L_CRIT, 0, "Server terminating: %s", message);
+
+  /* Every thread the server started holds descriptors of its own -- a stop
+   * pipe, a result pipe, a listening socket -- and close_connections()
+   * closes every descriptor there is, by number, without knowing whose it
+   * is.  Doing that while another thread is in poll() on one of them is a
+   * race in the worst shape there is: the number is freed, the next open
+   * is handed it back, and the thread goes on reading something else
+   * entirely.  So the threads are stopped first, and everything after
+   * this point is single-threaded again.  The modules themselves are
+   * unloaded where they always were, after the event loop, with their
+   * workers already gone -- which the worker API allows for.
+   */
+  http_server_stop();
+  worker_shutdown();
+
+  /* And the host processes, for the same reason and in the same window:
+   * close_connections() would shut their sockets by number without
+   * telling them, and a host whose socket vanished has to guess whether
+   * the server died or dropped it.  Told properly, it runs the module's
+   * mi_fini and leaves. */
+  modhost_shutdown();
+
   flush_connections(0);
   close_connections(1);
   running = 0;
@@ -337,16 +375,16 @@ static void check_pings(struct Event* ev) {
   assert(0 != ev_timer(ev));
 
   next_check += feature_int(FEAT_PINGFREQUENCY);
-  
+
   /* Scan through the client table */
   for (i=0; i <= HighestFd; i++) {
     struct Client *cptr = LocalClientArray[i];
-   
+
     if (!cptr)
       continue;
-     
+
     assert(&me != cptr);  /* I should never be in the local client array! */
-   
+
 
     /* Remove dead clients. */
     if (IsDead(cptr)) {
@@ -356,7 +394,7 @@ static void check_pings(struct Event* ev) {
 
     Debug((DEBUG_DEBUG, "check_pings(%s)=status:%s current: %d",
 	   cli_name(cptr),
-	   IsPingSent(cptr) ? "[Ping Sent]" : "[]", 
+	   IsPingSent(cptr) ? "[Ping Sent]" : "[]",
 	   (int)(CurrentTime - cli_lasttime(cptr))));
 
     /* Unregistered clients pingout after max_ping seconds, they don't
@@ -429,16 +467,16 @@ static void check_pings(struct Event* ev) {
 
     /* Ok, the thing that will happen most frequently, is that someone will
      * have sent something recently.  Cover this first for speed.
-     * -- 
+     * --
      * If it's an unregistered client and hasn't managed to register within
      * max_ping then it's obviously having problems (broken client) or it's
      * just up to no good, so we won't skip it, even if its been sending
-     * data to us. 
+     * data to us.
      * -- hikari
      */
     if ((CurrentTime-cli_lasttime(cptr) < max_ping) && IsRegistered(cptr)) {
       expire = cli_lasttime(cptr) + max_ping;
-      if (expire < next_check) 
+      if (expire < next_check)
 	next_check = expire;
       continue;
     }
@@ -454,7 +492,7 @@ static void check_pings(struct Event* ev) {
       exit_client_msg(cptr, cptr, &me, "Ping timeout");
       continue;
     }
-    
+
     if (!IsPingSent(cptr))
     {
       /* If we haven't PINGed the connection and we haven't heard from it in a
@@ -464,23 +502,23 @@ static void check_pings(struct Event* ev) {
 
       /* If we're late in noticing don't hold it against them :) */
       cli_lasttime(cptr) = CurrentTime - max_ping;
-      
+
       if (IsUser(cptr))
         sendrawto_one(cptr, MSG_PING " :%s", cli_name(&me));
       else
         sendcmdto_prio_one(&me, CMD_PING, cptr, ":%s", cli_name(&me));
     }
-    
+
     expire = cli_lasttime(cptr) + max_ping * 2;
     if (expire < next_check)
       next_check=expire;
   }
-  
+
   assert(next_check >= CurrentTime);
-  
+
   Debug((DEBUG_DEBUG, "[%i] check_pings() again in %is",
 	 CurrentTime, next_check-CurrentTime));
-  
+
   timer_add(&ping_timer, check_pings, 0, TT_ABSOLUTE, next_check);
 }
 
@@ -596,11 +634,11 @@ static char check_file_access(const char *path, char which, int mode) {
   if (!access(path, mode))
     return 1;
 
-  fprintf(stderr, 
+  fprintf(stderr,
 	  "Check on %cPATH (%s) failed: %s\n"
-	  "Please create this file and/or rerun `configure' "
-	  "using --with-%cpath and recompile to correct this.\n",
-	  toupper(which), path, strerror(errno), which);
+	  "Please create this file and/or reconfigure the build "
+	  "using -DIRCU_%cPATH and recompile to correct this.\n",
+	  toupper(which), path, strerror(errno), toupper(which));
 
   return 0;
 }
@@ -671,6 +709,13 @@ int main(int argc, char **argv) {
   umask(077);                   /* better safe than sorry --SRB */
   memset(&me, 0, sizeof(me));
   memset(&me_con, 0, sizeof(me_con));
+  /* The magic makes me_con a Connection make_client() will accept as a
+   * parent: a module introducing a client on the server's own behalf
+   * (modules/commands/m_bot.c) passes &me the way a server link is passed for a
+   * remote user, and the client then shares this descriptor-less
+   * connection, so anything sent to it is dropped in can_send().
+   */
+  con_magic(&me_con) = CONNECTION_MAGIC;
   cli_connect(&me) = &me_con;
   cli_fd(&me) = -1;
 
@@ -727,16 +772,23 @@ int main(int argc, char **argv) {
   init_list();
   init_hash();
   init_class();
+  client_init_user_modes(); /* before module_init(): modules register modes */
+  channel_init_chan_modes(); /* likewise, for the channel modes */
+  cap_init();   /* likewise, for the client capabilities: the core's take
+                   the positions enum Capab names before a module can ask
+                   for a free one */
+  sasl_init();  /* PLAIN and EXTERNAL, before a module adds its own */
   initwhowas();
   initmsgtree();
   initstats();
-  sasl_init();
 
-  /* we need this for now, when we're modular this 
+  /* we need this for now, when we're modular this
      should be removed -- hikari */
   ircd_crypt_init();
 
   motd_init();
+  hooks_init();
+  i18n_init();  /* before module_init(): a module opens its own domain */
 
   if (!init_conf()) {
     log_write(LS_SYSTEM, L_CRIT, 0, "Failed to read configuration file %s",
@@ -749,6 +801,36 @@ int main(int argc, char **argv) {
     return 10;
   }
 
+  debug_init(thisServer.bootopt & BOOT_TTY);
+
+  /* After init_conf() */
+  module_init();
+
+
+
+  /* After init_conf(), so FEAT_WORKER_THREADS has its final value, and so a
+   * module loaded from a Module{} block has already had its chance to ask
+   * for a dedicated worker: those requests are held and started here.  With
+   * the feature at its default of zero this creates nothing at all.
+   */
+  worker_init();
+
+  /* The translation catalogs, after init_conf() so that DEFAULT_LANGUAGE
+   * has its final value and the log goes where the file says.  A broken
+   * catalog does not stop the server -- it is reported and that language
+   * is incomplete or absent -- except under -k, where it is an error, so
+   * that a deployment can check its translations before starting.
+   */
+  {
+    unsigned int problems = i18n_load();
+
+    if (problems && (thisServer.bootopt & BOOT_CHKCONF)) {
+      fprintf(stderr, "Translation catalogs: %u problem%s found.\n", problems,
+              problems == 1 ? "" : "s");
+      return 11;
+    }
+  }
+
   if (thisServer.bootopt & BOOT_CHKCONF) {
     if (dbg_client)
       conf_debug_iline(dbg_client);
@@ -756,7 +838,6 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  debug_init(thisServer.bootopt & BOOT_TTY);
   if (check_pid()) {
     Debug((DEBUG_FATAL, "Failed to acquire PID file lock after fork"));
     exit(2);
@@ -764,12 +845,37 @@ int main(int argc, char **argv) {
 
   init_server_identity();
 
+  /* After init_server_identity(), which is where the numeric from the
+   * configuration file reaches "me": the numeric is what makes this
+   * server's message identifiers its own, and two servers cannot share
+   * one, so nothing further has to be agreed for their identifiers not to
+   * collide.  Seeded here rather than at start-up for that reason alone.
+   */
+  msgid_init(NumServ(&me), CurrentTime);
+
+  /* The multiline limits go in the capability's value, so a client knows
+   * what it may send before it sends it.  They are features, so this runs
+   * again after every rehash (see m_rehash.c).
+   */
+  batch_multiline_advertise();
+
   uping_init();
 
   stats_init();
 
   IPcheck_init();
   sline_init();
+
+  /* The server's own migrations, and only those: they create the table
+   * every other migration is recorded in, so there is nothing to decide
+   * about them.  A module's migrations never run by themselves -- an
+   * operator applies them with /MODULE MIGRATION; see
+   * doc/readme.migrations.
+   *
+   * Does nothing when no database driver is loaded, and the driver calls
+   * this again itself if one is loaded later with /MODULE LOAD.
+   */
+  migration_core_start(1);
   timer_add(timer_init(&connect_timer), try_connections, 0, TT_RELATIVE, 1);
   timer_add(timer_init(&ping_timer), check_pings, 0, TT_RELATIVE, 1);
   timer_add(timer_init(&destruct_event_timer), exec_expired_destruct_events, 0, TT_PERIODIC, 60);
@@ -803,10 +909,36 @@ int main(int argc, char **argv) {
   write_pidfile();
   init_counters();
 
+
   Debug((DEBUG_NOTICE, "Server ready..."));
   log_write(LS_SYSTEM, L_NOTICE, 0, "Server Ready");
 
+  /* The configuration was read long ago, but a module loaded from it ran
+   * its mi_init in the middle of the parse, with the blocks after its own
+   * still unread and &me not yet a server.  This is the first moment both
+   * are true; the same hook fires again after every rehash.
+   */
+  http_server_reconfigure();
+  hook_notify(HOOK_CONFIG_LOADED, NULL, NULL, NULL, NULL);
+
   event_loop();
+
+  /* The event loop has returned, so nothing else is running: unload every
+   * module and release the module system itself.  Modules first, because
+   * unloading one waits for the work it has in flight; worker_shutdown()
+   * then stops whatever the core itself started.
+   */
+  module_close();
+  cap_close();
+  sasl_close();
+  account_close();
+  worker_shutdown();
+  migration_shutdown();
+  db_shutdown();
+  cache_shutdown();
+  mail_close();
+  http_shutdown();
+  i18n_close();
 
   return 0;
 }

@@ -117,8 +117,8 @@ int oper_password_match(const char* to_match, const char* passwd)
   if (!to_match || !passwd)
     return 0;
 
-  /* we no longer do a CRYPT_OPER_PASSWORD check because a clear 
-     text passwords just handled by a fallback mechanism called 
+  /* we no longer do a CRYPT_OPER_PASSWORD check because a clear
+     text passwords just handled by a fallback mechanism called
      crypt_clear if it's enabled -- hikari */
   crypted = ircd_crypt(to_match, passwd);
 
@@ -148,7 +148,7 @@ int m_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     return need_more_params(sptr, "OPER");
 
   aconf = find_conf_exact(name, sptr, CONF_OPERATOR);
-  if (!aconf || IsIllegal(aconf))
+  if (!aconf || IsIllegal(aconf) || ircd_strcmp(cli_name(sptr), name))
   {
     send_reply(sptr, ERR_NOOPERHOST);
     sendto_opmask_butone(0, SNO_OLDREALOP, "Failed OPER attempt by %s (%s@%s)",
@@ -168,7 +168,7 @@ int m_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (oper_password_match(password, aconf->passwd))
   {
-    struct Flags old_mode = cli_flags(sptr);
+    flag_t old_mode = cli_uflags(sptr);
 
     if (ACR_OK != attach_conf(sptr, aconf)) {
       send_reply(sptr, ERR_NOOPERHOST);
@@ -187,17 +187,18 @@ int m_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     }
     cli_handler(cptr) = OPER_HANDLER;
 
-    SetFlag(sptr, FLAG_WALLOP);
-    SetFlag(sptr, FLAG_SERVNOTICE);
-    SetFlag(sptr, FLAG_DEBUG);
-    
+    // SetWallops(sptr);
+    SetChannelService(sptr);
+    SetServNotice(sptr);
+    SetDebug(sptr);
+
     set_snomask(sptr, SNO_OPERDEFAULT, SNO_ADD);
 
     /* Get the sendq and flood limit from the oper's class */
     cli_max_sendq(sptr) = 0;
     cli_max_flood(sptr) = 0;
 
-    send_umode_out(cptr, sptr, &old_mode, HasPriv(sptr, PRIV_PROPAGATE));
+    send_umode_out(cptr, sptr, old_mode, HasPriv(sptr, PRIV_PROPAGATE));
     send_reply(sptr, RPL_YOUREOPER);
 
     sendto_opmask_butone(0, SNO_OLDSNO, "%s (%s@%s) is now operator (%c)",
@@ -228,7 +229,7 @@ int ms_oper(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if (!IsServer(sptr) && !IsOper(sptr))
   {
     ++UserStats.opers;
-    SetFlag(sptr, FLAG_OPER);
+    SetOper(sptr);
     sendcmdto_serv_butone(sptr, CMD_MODE, cptr, "%s :+o", parv[0]);
   }
   return 0;

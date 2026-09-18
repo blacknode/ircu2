@@ -8,6 +8,9 @@
 #include <sys/types.h>
 #define INCLUDED_sys_types_h
 #endif
+#ifndef INCLUDED_client_h
+#include "client.h"      /* flag_t */
+#endif
 
 struct Client;
 struct User;
@@ -66,6 +69,13 @@ typedef void (*InfoFormatter)(struct Client* who, struct Client *sptr, struct Ms
  */
 extern struct User* make_user(struct Client *cptr);
 extern void         free_user(struct User *user);
+
+/** Record the address a client authenticated with.  Local only; see
+ * User::email and proposal 007 section 8.
+ */
+extern void         user_set_email(struct Client *cptr, const char *email);
+/** Forget it.  Safe when there is nothing to forget. */
+extern void         user_clear_email(struct Client *cptr);
 extern int          register_user(struct Client* cptr, struct Client *sptr);
 
 extern void         user_count_memory(size_t* count_out, size_t* bytes_out);
@@ -73,16 +83,20 @@ extern void         user_count_memory(size_t* count_out, size_t* bytes_out);
 extern int set_nick_name(struct Client* cptr, struct Client* sptr,
                          const char* nick, int parc, char* parv[]);
 extern void send_umode_out(struct Client* cptr, struct Client* sptr,
-                          struct Flags* old, int prop);
+                          flag_t old, int prop);
+extern void send_umode_out_by(struct Client* cptr, struct Client* from,
+                              struct Client* sptr, flag_t old, int prop);
 extern int whisper(struct Client* source, const char* nick,
                    const char* channel, const char* text, int is_notice);
 extern void send_user_info(struct Client* to, char* names, int rpl,
                            InfoFormatter fmt);
 
-extern int hide_hostmask(struct Client *cptr, unsigned int flags);
+extern int hide_hostmask(struct Client *cptr);
 extern const char *visible_username(const struct Client *cptr);
 extern int set_user_mode(struct Client *cptr, struct Client *sptr,
                          int parc, char *parv[], int allow_modes);
+extern int set_user_mode_on(struct Client *cptr, struct Client *sptr,
+                            struct Client *acptr, int parc, char *parv[]);
 extern int is_silenced(struct Client *sptr, struct Client *acptr);
 extern int hunt_server_cmd(struct Client *from, const char *cmd,
 			   const char *tok, struct Client *one,
@@ -95,7 +109,9 @@ extern int hunt_server_prio_cmd(struct Client *from, const char *cmd,
 extern struct Client* next_client(struct Client* next, const char* ch);
 extern char *umode_str(struct Client *cptr);
 extern void send_umode(struct Client *cptr, struct Client *sptr,
-                       struct Flags *old, int sendset);
+                       flag_t old, int sendset);
+extern void send_umode_by(struct Client *cptr, struct Client *from,
+                          struct Client *sptr, flag_t old, int sendset);
 extern void set_snomask(struct Client *, unsigned int, int);
 extern int is_snomask(char *);
 extern int check_target_limit(struct Client *sptr, struct Client *acptr,

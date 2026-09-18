@@ -82,6 +82,7 @@
 
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -90,7 +91,6 @@
 #include "numnicks.h"
 #include "s_auth.h"
 #include "send.h"
-#include "sasl.h"
 #include "sline.h"
 
 #include <string.h>
@@ -119,7 +119,7 @@ int ms_xreply(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   acptr = parv[1][2] ? findNUser(parv[1]) : FindNServer(parv[1]);
   if (!acptr)
     return send_reply(sptr, SND_EXPLICIT | ERR_NOSUCHSERVER,
-		      "* :Server has disconnected");
+		      N_("* :Server has disconnected"));
 
   /* If it's not to us, forward the reply */
   if (!IsMe(acptr)) {
@@ -131,8 +131,6 @@ int ms_xreply(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   /* OK, figure out where to route the message */
   if (!ircd_strncmp("iauth:", routing, 6))
     auth_send_xreply(sptr, routing + 6, reply);
-  else if (!ircd_strncmp("sasl:", routing, 5))
-    sasl_send_xreply(sptr, routing + 5, reply);
   else if (!ircd_strncmp("spam:", routing, 5))
     sline_xreply_handler(sptr, routing + 5, reply);
   else

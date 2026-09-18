@@ -34,6 +34,7 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -291,7 +292,7 @@ motd_forward(struct Client *cptr, struct MotdCache *cache)
 
   /* send the motd */
   send_reply(cptr, RPL_MOTDSTART, cli_name(&me));
-  send_reply(cptr, SND_EXPLICIT | RPL_MOTD, ":- %d-%d-%d %d:%02d",
+  send_reply(cptr, SND_EXPLICIT | RPL_MOTD, N_(":- %d-%d-%d %d:%02d"),
 	     cache->modtime.tm_year + 1900, cache->modtime.tm_mon + 1,
 	     cache->modtime.tm_mday, cache->modtime.tm_hour,
 	     cache->modtime.tm_min);
@@ -332,11 +333,11 @@ motd_signon(struct Client* cptr)
   else {
     send_reply(cptr, RPL_MOTDSTART, cli_name(&me));
     if ((banner = feature_str(FEAT_MOTD_BANNER)))
-      send_reply(cptr, SND_EXPLICIT | RPL_MOTD, ":%s", banner);
-    send_reply(cptr, SND_EXPLICIT | RPL_MOTD, ":\002Type /MOTD to read the "
-	       "AUP before continuing using this service.\002");
-    send_reply(cptr, SND_EXPLICIT | RPL_MOTD, ":The message of the day was "
-	       "last changed: %d-%d-%d %d:%d", cache->modtime.tm_year + 1900,
+      send_reply(cptr, SND_EXPLICIT | RPL_MOTD, N_(":%s"), banner);
+    send_reply(cptr, SND_EXPLICIT | RPL_MOTD, N_(":\002Type /MOTD to read the "
+	       "AUP before continuing using this service.\002"));
+    send_reply(cptr, SND_EXPLICIT | RPL_MOTD, N_(":The message of the day was "
+	       "last changed: %d-%d-%d %d:%d"), cache->modtime.tm_year + 1900,
 	       cache->modtime.tm_mon + 1, cache->modtime.tm_mday,
 	       cache->modtime.tm_hour, cache->modtime.tm_min);
     send_reply(cptr, RPL_ENDOFMOTD);
@@ -434,7 +435,7 @@ motd_report(struct Client *to, const struct StatDesc *sd, char *param)
   struct Motd *ptr;
 
   for (ptr = MotdList.other; ptr; ptr = ptr->next)
-    send_reply(to, SND_EXPLICIT | RPL_STATSTLINE, "T %s %s",
+    send_reply(to, SND_EXPLICIT | RPL_STATSTLINE, N_("T %s %s"),
                ptr->hostmask, ptr->path);
 }
 
@@ -485,6 +486,6 @@ motd_memory_count(struct Client *cptr)
       mtf++;
 
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":Motds %d(%zu) Cache %d(%zu) Free %d(%zu)",
+             N_(":Motds %d(%zu) Cache %d(%zu) Free %d(%zu)"),
              mt, mtm, mtc, mtcm, mtf, (mtf * sizeof(struct Motd)));
 }

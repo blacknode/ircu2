@@ -31,6 +31,7 @@
 #include "hash.h"
 #include "ircd_alloc.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_osdep.h"
 #include "ircd_reply.h"
@@ -182,7 +183,7 @@ void debug(int level, const char *form, ...)
 static void debug_enumerator(struct Client* cptr, const char* msg)
 {
   assert(0 != cptr);
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":%s", msg);
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":%s"), msg);
 }
 
 /** Send resource usage statistics to a client.
@@ -195,7 +196,7 @@ void send_usage(struct Client *cptr, const struct StatDesc *sd,
 {
   os_get_rusage(cptr, CurrentTime - cli_since(&me), debug_enumerator);
 
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":DBUF alloc %d used %d",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":DBUF alloc %d used %d"),
 	     DBufAllocCount, DBufUsedCount);
 }
 #endif /* DEBUGMODE */
@@ -314,33 +315,34 @@ void count_memory(struct Client *cptr, const struct StatDesc *sd,
     cl++;
 
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Clients %d(%zu) Connections %d(%zu)", c, cm, cn, cnm);
+	     N_(":Clients %d(%zu) Connections %d(%zu)"), c, cm, cn, cnm);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Users %zu(%zu) Accounts %d(%zu) Invites %d(%zu)",
-             us, usm, acc, acc * (ACCOUNTLEN + 1),
+	     N_(":Users %zu(%zu) Registered %d Invites %d(%zu)"),
+             us, usm, acc,
 	     usi, usi * sizeof(struct SLink));
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":User channels %d(%zu) Aways %d(%zu)", memberships,
+	     N_(":User channels %d(%zu) Aways %d(%zu)"), memberships,
 	     memberships * sizeof(struct Membership), aw, awm);
 
   totcl = cm + cnm + us * sizeof(struct User) + memberships * sizeof(struct Membership) + awm;
   totcl += lcc * sizeof(struct SLink) + usi * sizeof(struct SLink);
 
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":Conflines %d(%zu) Attached %d(%zu) Classes %d(%zu)",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
+             N_(":Conflines %d(%zu) Attached %d(%zu) Classes %d(%zu)"),
              co, com, lcc, lcc * sizeof(struct SLink),
              cl, cl * sizeof(struct ConnectionClass));
 
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Channels %d(%zu) Bans %d(%zu)", ch, chm, chb, chbm);
+	     N_(":Channels %d(%zu) Bans %d(%zu)"), ch, chm, chb, chbm);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Channel Members %d(%zu) Invites %d(%zu)", memberships,
+	     N_(":Channel Members %d(%zu) Invites %d(%zu)"), memberships,
 	     memberships * sizeof(struct Membership), chi,
 	     chi * sizeof(struct SLink));
 
   totch = chm + chbm + chi * sizeof(struct SLink);
 
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Whowas Users %d(%zu) Away %d(%zu) Array %d(%zu)",
+	     N_(":Whowas Users %d(%zu) Away %d(%zu) Array %d(%zu)"),
              wwu, wwu * sizeof(struct User), wwa, wwam,
              feature_int(FEAT_NICKNAMEHISTORYLENGTH), wwm);
 
@@ -351,15 +353,15 @@ void count_memory(struct Client *cptr, const struct StatDesc *sd,
   gl = gline_memory_count(&glm);
   ju = jupe_memory_count(&jum);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Glines %d(%zu) Jupes %d(%zu)", gl, glm, ju, jum);
+	     N_(":Glines %d(%zu) Jupes %d(%zu)"), gl, glm, ju, jum);
 
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Hash: client %d(%zu), chan is the same", HASHSIZE,
+	     N_(":Hash: client %d(%zu), chan is the same"), HASHSIZE,
 	     sizeof(void *) * HASHSIZE);
 
   count_listener_memory(&listeners, &listenersm);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-             ":Listeners allocated %d(%zu)", listeners, listenersm);
+             N_(":Listeners allocated %d(%zu)"), listeners, listenersm);
   /*
    * NOTE: this count will be accurate only for the exact instant that this
    * message is being sent, so the count is affected by the dbufs that
@@ -370,7 +372,7 @@ void count_memory(struct Client *cptr, const struct StatDesc *sd,
    */
   dbuf_count_memory(&dbufs_allocated, &dbufs_used);
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":DBufs allocated %d(%zu) used %d(%zu)", DBufAllocCount,
+	     N_(":DBufs allocated %d(%zu) used %d(%zu)"), DBufAllocCount,
 	     dbufs_allocated, DBufUsedCount, dbufs_used);
 
   /* The DBuf caveats now count for this, but this routine now sends
@@ -386,12 +388,12 @@ void count_memory(struct Client *cptr, const struct StatDesc *sd,
   tot += sizeof(void *) * HASHSIZE * 3;
 
 #if defined(MDEBUG)
-  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":Allocations: %zu(%zu)",
+  send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":Allocations: %zu(%zu)"),
 	     fda_get_block_count(), fda_get_byte_count());
 #endif
 
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Total: tot %zu ww %zu ch %zu cl %zu co %zu db %zu ms %zu mb %zu",
+	     N_(":Total: tot %zu ww %zu ch %zu cl %zu co %zu db %zu ms %zu mb %zu"),
 	     tot, totww, totch, totcl, com, dbufs_allocated, msg_allocated,
 	     msgbuf_allocated);
 }

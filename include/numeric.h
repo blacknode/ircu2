@@ -114,7 +114,7 @@ extern const struct Numeric* get_error_numeric(int err);
  	RPL_STATSELINE	     225	   unreal
  	RPL_STATSCOUNT	     226	   Dalnet
 	RPL_STATSNLINE	     226	   unreal
-	RPL_STATSGLINE	     227	   Dalnet 
+	RPL_STATSGLINE	     227	   Dalnet
 	RPL_STATSVLINE	     227	   unreal */
 #define RPL_STATSALINE       226        /* Hybrid, Undernet */
 #define RPL_STATSQLINE       228        /* Undernet extension */
@@ -212,7 +212,7 @@ extern const struct Numeric* get_error_numeric(int err);
 #define RPL_UNAWAY           305
 #define RPL_NOWAWAY          306
                                         /* NotAway, aircd */
-/*	RPL_WHOISREGNICK     307 	Numeric List: Dalnet */
+#define RPL_WHOISREGNICK     307        /* Dalnet */
 /*	RPL_SUSERHOST	     307	austnet */
 /*      RPL_NOTIFYACTION     308         aircd */
 /*	RPL_WHOISADMIN	     308	Numeric List: Dalnet */
@@ -248,13 +248,14 @@ extern const struct Numeric* get_error_numeric(int err);
 /*      RPL_CHANNEL_URL      328           dalnet, anothernet */
 #define RPL_CREATIONTIME     329
 /*      RPL_WHOWAS_TIME      330               ? */
-#define RPL_WHOISACCOUNT     330
+/*      RPL_WHOISACCOUNT     330        no longer sent; see 307 */
 #define RPL_NOTOPIC          331
 #define RPL_TOPIC            332
 #define RPL_TOPICWHOTIME     333        /* Undernet extension */
 #define RPL_LISTUSAGE        334        /* Undernet extension */
 /*	RPL_COMMANDSYNTAX    334	   Dalnet */
 /*	RPL_LISTSYNTAX	     334	   unreal */
+#define RPL_WHOISBOT         335 /* bot */
 /*      RPL_CHANPASSOK       338           IRCnet extension (?)*/
 #define	RPL_WHOISACTUALLY    338	/* Undernet extension, dalnet */
 /*	RPL_BADCHANPASS	     339           IRCnet extension (?) */
@@ -295,7 +296,7 @@ extern const struct Numeric* get_error_numeric(int err);
 /*      RPL_KICKEXPIRED      377   aircd */
 /*	RPL_SPAM	     377   austnet */
 /*      RPL_BANEXPIRED       378   aircd */
-/*      RPL_KICKLINKED       379   aircd */
+#define RPL_WHOISMODES       379
 /*      RPL_BANLINKED        380   aircd */
 
 #define RPL_YOUREOPER        381
@@ -471,6 +472,10 @@ extern const struct Numeric* get_error_numeric(int err);
 #define ERR_NOMANAGER        566	/* Undernet extension */
 #define ERR_UPASS_SAME_APASS 567        /* Undernet extension */
 #define RPL_WHOISSECURE      671        /* Nefarious, Undernet */
+#define RPL_YOURLANGUAGESARE 687        /* IRCv3 draft/languages */
+#define RPL_WHOISLANGUAGE    690        /* IRCv3 draft/languages */
+#define RPL_WHOISEMAIL       691        /* proposal 007; only to oneself */
+#define RPL_WHOISFROZEN      692        /* proposal 007; umode +f */
 
 /*	RPL_LOGON	     600	dalnet,unreal
 	RPL_LOGOFF           601	dalnet,unreal
@@ -495,19 +500,28 @@ extern const struct Numeric* get_error_numeric(int err);
 	RPL_EODUMP	     642	unreal
 */
 
-/*
- * SASL replies and errors (starting at 900).
- */
-#define RPL_LOGGEDIN         900    /* SASL */
-/* RPL_LOGGEDOUT        901    SASL */
-/* ERR_NICKLOCKED       902    SASL */
-#define RPL_SASLSUCCESS      903    /* SASL */
-#define ERR_SASLFAIL         904    /* SASL */
-#define ERR_SASLTOOLONG      905    /* SASL */
-#define ERR_SASLABORTED      906    /* SASL */
-#define ERR_SASLALREADY      907    /* SASL */
-#define RPL_SASLMECHS        908	/* SASL */
+/* IRCv3 SASL; see doc/readme.accounting and proposal 007. */
+#define RPL_LOGGEDIN         900
+#define RPL_LOGGEDOUT        901
+#define ERR_NICKLOCKED       902
+#define RPL_SASLSUCCESS      903
+#define ERR_SASLFAIL         904
+#define ERR_SASLTOOLONG      905
+#define ERR_SASLABORTED      906
+#define ERR_SASLALREADY      907
+#define RPL_SASLMECHS        908
 
-#define ERR_LASTERROR        909
+#define ERR_TOOMANYLANGUAGES 981        /* IRCv3 draft/languages */
+#define ERR_NOLANGUAGE       982        /* IRCv3 draft/languages */
+
+#define ERR_ACCOUNTFAIL      983        /* proposal 007 */
+#define RPL_ACCOUNTLIST      984        /* proposal 007 */
+#define RPL_ENDOFACCOUNTLIST 985        /* proposal 007 */
+#define ERR_NOTAUTHENTICATED 986        /* proposal 007 */
+#define ERR_FROZEN           987        /* proposal 007; umode +f */
+#define RPL_VERIFYSENT       988        /* proposal 007; mail.h */
+#define RPL_VERIFIED         989        /* proposal 007; mail.h */
+
+#define ERR_LASTERROR        990
 
 #endif /* INCLUDED_numeric_h */

@@ -27,6 +27,7 @@
 #include "ircd_alloc.h"
 #include "ircd_defs.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -671,7 +672,7 @@ msgq_count_memory(struct Client *cptr, size_t *msg_alloc, size_t *msgbuf_alloc)
 
   /* Data for Msg's is simple, so just send it */
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Msgs allocated %d(%zu) used %d(%zu) text %zu",
+	     N_(":Msgs allocated %d(%zu) used %d(%zu) text %zu"),
              MQData.msgs.alloc, MQData.msgs.alloc * sizeof(struct Msg),
              MQData.msgs.used,  MQData.msgs.used * sizeof(struct Msg),
              MQData.tot_bufsize);
@@ -684,7 +685,7 @@ msgq_count_memory(struct Client *cptr, size_t *msg_alloc, size_t *msgbuf_alloc)
 
     /* Send information for this buffer size class */
     send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	       ":MsgBufs of size %zu allocated %d(%zu) used %d(%zu)", 1 << i,
+	       N_(":MsgBufs of size %zu allocated %d(%zu) used %d(%zu)"), 1 << i,
 	       MQData.msgBufs[i - MB_BASE_SHIFT].alloc,
 	       MQData.msgBufs[i - MB_BASE_SHIFT].alloc * size,
 	       MQData.msgBufs[i - MB_BASE_SHIFT].used,
@@ -720,10 +721,10 @@ msgq_histogram(struct Client *cptr, const struct StatDesc *sd, char *param)
   int i;
 
   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Histogram of message lengths (%lu messages)", tmp.msgs);
+	     N_(":Histogram of message lengths (%lu messages)"), tmp.msgs);
   for (i = 0; i + 16 <= BUFSIZE; i += 16)
-    send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, ":% 4d: %u %u %u %u "
-	       "%u %u %u %u %u %u %u %u %u %u %u %u", i + 1,
+    send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":% 4d: %u %u %u %u "
+	       "%u %u %u %u %u %u %u %u %u %u %u %u"), i + 1,
 	       tmp.sizes[i +  0], tmp.sizes[i +  1], tmp.sizes[i +  2],
 	       tmp.sizes[i +  3], tmp.sizes[i +  4], tmp.sizes[i +  5],
 	       tmp.sizes[i +  6], tmp.sizes[i +  7], tmp.sizes[i +  8],

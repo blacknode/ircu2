@@ -1,15 +1,22 @@
-"""Shared helpers for trust-username (+x display) integration tests."""
+"""Shared helpers for trust-username (hidden host display) integration tests.
+
+Every user's host is hidden from registration on: the visible host is the
+cipher of the client's address (tests/vhost.py, doc/readme.accounting) and,
+with TRUST_USERNAME, the visible username loses its leading ``~``.  The hub
+runs an iauth stub that forces the tilde onto every username, so a hub
+client's real identity is always ``~<user>@<ip>``.
+"""
 
 import asyncio
 
 from irc_client import IRCClient
-from p10_server import P10Server
+from vhost import CLIENT_IP, VIS_HOST_CLIENT
 
-HIDDEN_HOST_SUFFIX = "users.undernet.org"
-
-
-def hidden_host(account: str) -> str:
-    return f"{account}.{HIDDEN_HOST_SUFFIX}"
+# The hub does no DNS, so the address a client arrives from is both its
+# real host and what its hidden host is derived from.  See vhost.py for
+# why that address is the compose network's gateway and not loopback.
+REAL_HOST = CLIENT_IP
+VIS_HOST = VIS_HOST_CLIENT
 
 
 def user_from_prefix(prefix: str | None) -> str | None:
@@ -27,74 +34,23 @@ async def oper_up(client: IRCClient, name: str = "testoper", password: str = "op
     return msg
 
 
-async def hide_via_services(
-    services: P10Server,
-    nick: str,
-    account: str = "HideAcct",
-    *,
-    set_x_first: bool = False,
-) -> str:
-    """Set account and +x on a user via the U:lined services server.
-
-    Default path: ACCOUNT (AC) then OPMODE +x.
-    """
-    numnick = await services.wait_for_user(nick)
-    if set_x_first:
-        await services.send_opmode(numnick, "+x")
-        await asyncio.sleep(0.3)
-        await services.send_account(numnick, account)
-    else:
-        await services.send_account(numnick, account)
-        await asyncio.sleep(0.3)
-        await services.send_opmode(numnick, "+x")
-    await asyncio.sleep(0.5)
-    return account
-
-
-async def apply_hide(
-    services: P10Server,
-    nick: str,
-    account: str,
-    *,
-    account_via: str,
-    x_via: str,
-    user: IRCClient | None = None,
-    numnick: str | None = None,
-) -> None:
-    """Fully hide an already-connected local nick using the requested paths.
-
-    account_via:
-      ``ac`` — ACCOUNT (AC) from services.
-    x_via:
-      ``opmode`` — OPMODE +x from services (target must be MyConnect on hub).
-      ``mode`` — local client ``MODE nick +x`` (requires ``user``).
-    """
-    if numnick is None:
-        numnick = await services.wait_for_user(nick)
-
-    if account_via == "ac":
-        await services.send_account(numnick, account)
-        await asyncio.sleep(0.3)
-    else:
-        raise ValueError(f"unknown account_via {account_via!r}")
-
-    if x_via == "opmode":
-        await services.send_opmode(numnick, "+x")
-    elif x_via == "mode":
-        if user is None:
-            raise ValueError("x_via='mode' requires a local IRCClient user")
-        await user.send(f"MODE {nick} +x")
-    else:
-        raise ValueError(f"unknown x_via {x_via!r}")
-    await asyncio.sleep(0.5)
-
-
 async def whois_userline(observer: IRCClient, nick: str) -> tuple[str, str]:
+    """(username, host) as RPL_WHOISUSER shows them to ``observer``."""
     await observer.send(f"WHOIS {nick}")
     msgs = await observer.collect_until("318", timeout=5.0)
     whois = [m for m in msgs if m.command == "311"]
     assert len(whois) == 1, f"Expected one RPL_WHOISUSER, got: {msgs}"
     return whois[0].params[2], whois[0].params[3]
+
+
+async def whois_actual(oper: IRCClient, nick: str) -> tuple[str, str]:
+    """(real username, real host) from RPL_WHOISACTUALLY; opers only."""
+    await oper.send(f"WHOIS {nick}")
+    msgs = await oper.collect_until("318", timeout=5.0)
+    actual = [m for m in msgs if m.command == "338"]
+    assert len(actual) == 1, f"Expected one RPL_WHOISACTUALLY, got: {msgs}"
+    user, _, host = actual[0].params[2].partition("@")
+    return user, host
 
 
 async def add_gline(oper: IRCClient, mask: str, reason: str = "trust username test",

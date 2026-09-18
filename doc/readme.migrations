@@ -1,0 +1,251 @@
+MIGRATION documentation, last updated on 11 Sep 2026
+
+A module that needs tables of its own ships the SQL that makes them.  The
+build compiles that SQL into the shared object, the server checks it when
+the module is loaded, and an operator applies it by hand.
+
+Nothing about it is automatic.  That is the point.
+
+
+READ THIS FIRST
+===============
+
+  A MODULE'S MIGRATIONS NEVER RUN BY THEMSELVES.
+
+Not when the module is loaded.  Not when it is reloaded.  Not when the
+server starts, not on a rehash, not on the first query.  Loading a module
+tells the server what SQL exists; whether the database should run it, and
+when, is an operational decision on a live network, and it stays with the
+operator who is accountable for the database.
+
+There is one exception and it is the server's own set, ircd/migrations/,
+which creates the table the rest are recorded in.  That one runs at
+start-up, because there is nothing to decide about it.  It is recorded
+under the module name "core", which is why no module may be called that.
+
+
+WHAT A MODULE SHIPS
+===================
+
+A module with migrations is a module built from a directory -- a project,
+not a single .c file -- with a migrations/ subdirectory:
+
+  modules/<type>/<name>/
+    <name>.c
+    migrations/
+      v1_create_accounts.up.sql
+      v1_create_accounts.down.sql
+      v2_add_score.up.sql
+      v2_add_score.down.sql
+
+The rules, all of them checked when the module is loaded:
+
+  * The file name is v<N>_<name>.up.sql or v<N>_<name>.down.sql, and
+    nothing else.  A file in migrations/ that is not one of those is an
+    error, not something to ignore -- a README in there is a mistake worth
+    hearing about.
+
+  * <name> is letters, digits and underscores.  Nothing else: it goes into
+    the table and comes back out into a reply to an operator.
+
+  * <N> starts at 1 and runs without gaps or repeats.  "v01" is not "v1";
+    leading zeros are refused, because two spellings of one version is one
+    version too many.
+
+  * Every up has a down, with the same version AND the same name.
+
+The last rule is the one people argue with, so: a migration nobody can undo
+is a migration nobody can safely apply to a live network.  If the revert is
+genuinely "there is nothing to undo", write a down that says so -- the
+server's own v1 does exactly that, and its file explains why.
+
+A module that breaks any of these does not load at all, and the operator
+who typed /MODULE LOAD is told which file is wrong:
+
+  -!- Could not load accounts: migrations/v2_add_score has no down file;
+      every up needs its down and every down needs its up
+
+
+THE .SQL FILES ARE NOT INSTALLED
+================================
+
+They are compiled into the shared object as string literals, by
+cmake/GenerateMigrations.cmake, and never copied: not into the build tree,
+not into the install tree, and not as module resources.
+
+Two things follow, and both are why it is done this way:
+
+  * A module carries its migrations wherever it goes.  A container with no
+    source tree, a binary package, a module copied to another server --
+    /MODULE MIGRATION APPLY works in all of them.
+
+  * The SQL beside a module cannot be a different version from the code
+    inside it, because there is no SQL beside the module.  Nobody can edit
+    a migration after it has been applied and leave the server none the
+    wiser.
+
+The build embeds whatever it finds and asks no questions.  Every rule above
+is enforced at load time, on purpose: a malformed migration should be an
+error the operator reads, not a build failure on somebody else's machine.
+
+
+THE OPERATOR COMMANDS
+=====================
+
+  /MODULE MIGRATION LIST
+      Every row of the migrations table, every module at once.  This is the
+      record of what has actually been applied to this database.
+
+  /MODULE MIGRATION STATUS <module>
+      What the module ships, and which of it is applied:
+
+        Migrations for accounts:
+          v1_create_accounts  applied
+          v2_add_score        pending
+        End of migrations for accounts (2 declared)
+
+  /MODULE MIGRATION APPLY <module> [v<N>]
+      Applies every pending migration in ascending order, stopping at the
+      first failure.  With a version, applies up to and including it.
+
+  /MODULE MIGRATION REVERT <module> [v<N>]
+      Reverts ONE migration: the newest applied.  With a version, reverts
+      down to and including it, newest first.
+
+APPLY and REVERT are deliberately asymmetric.  Going forward is the
+expected operation; going back destroys whatever the migration built, and
+"all of them" is not something to do by leaving an argument off.
+
+LIST and STATUS only read, and need the module_admin privilege.  APPLY and
+REVERT change the schema and additionally need the CONFIG_OPERCMDS feature,
+the same switch that gates LOAD and UNLOAD.
+
+The server's own migrations are not an operator's to drive: APPLY and
+REVERT refuse the name "core".  They are applied when the daemon starts.
+
+Every applied or reverted migration is announced to the other operators and
+written to the server log.  A schema change is not a private act.
+
+
+THE TABLE
+=========
+
+  id                     bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY
+  version                integer
+  module_name            text          -- "core" for the server's own
+  module_migration_name  text          -- the <name> from the file
+  exec_duration          text          -- "840ms", "3.2s", "4m 11s"
+  exec_by                text          -- the operator's nick
+  created_at             timestamptz   -- when it ran
+
+plus a unique index on (module_name, version), which is not decoration: it
+is what stops two operators on two servers from applying the same migration
+at the same moment and each believing they were first.
+
+What is in the table is what is applied.  The server keeps no second
+opinion anywhere, and reverting a migration deletes its row rather than
+marking it -- a reverted migration is not applied, and the table says so.
+
+exec_duration is text because the number of milliseconds is of no use to
+anybody reading the list six months later.  It covers the script and
+nothing else; the connect and the bookkeeping are the driver's overhead,
+not the migration's cost.
+
+
+HOW ONE RUNS
+============
+
+Each migration is one explicit transaction, on a connection opened for it
+and closed after it:
+
+    BEGIN
+    <the whole .sql script>
+    INSERT INTO migrations (...) VALUES ($1, $2, $3, $4, $5) RETURNING ...
+    COMMIT
+
+A script that fails leaves neither the change nor the record, so a recorded
+migration is one that actually happened.  Without that, a crash between the
+two would leave the table claiming a migration that is not there, or hiding
+one that is, and the next operator would apply it twice or never.
+
+Two details of this are worth knowing, because they are exceptions to rules
+the rest of the database code follows absolutely:
+
+  * The script goes out as a string, through PQsendQuery.  It has to:
+    PostgreSQL does not PREPARE DDL -- no CREATE TABLE, no ALTER TABLE, no
+    CREATE INDEX -- and a migration is a script of several statements
+    besides, where a prepared statement is exactly one.  This is the only
+    place in the driver that sends SQL as a string, and it is safe for a
+    reason that does not generalise: the string is a file the module author
+    shipped, embedded at build time, taking no parameters, that nothing a
+    user ever typed can reach.  The row recording it is a different matter
+    -- it carries an operator's nick -- and that one is bound through
+    PQexecPrepared like every other write.
+
+  * A migration may take minutes.  It gets its own timeout, its own
+    connection and a worker task of its own, so it is not held to the five
+    second rule that queries are and no query queues behind it.  See
+    migration_timeout below.
+
+Steps run one at a time, and a failure stops the sequence.  The migrations
+before it stay applied, which is what makes it safe to fix the broken one
+and run the command again.
+
+
+CONFIGURING IT
+==============
+
+    Database {
+      dsn = "host=db.example.org dbname=ircu user=ircu password=secret";
+      migration_timeout = 5 minutes;
+    };
+
+migration_timeout defaults to one minute and is capped at one hour.  It is
+deliberately not the five second query cap: an ALTER TABLE on a table with
+real data in it takes minutes, and the five second rule exists to stop a
+user's command stalling the server, which is not what a migration is.
+There is still a ceiling, because a migration blocked on a lock forever is
+one nobody ever hears about again.
+
+The migrations table is created when the daemon starts, as soon as there is
+a database driver and a Database{} block.  A driver loaded later by hand
+gets the same treatment: /MODULE LOAD postgres creates the table if it is
+not there.
+
+
+WRITING ONE
+===========
+
+  1. Add the pair.  Both halves, same version, same name:
+
+       modules/commands/accounts/migrations/v3_add_email.up.sql
+       modules/commands/accounts/migrations/v3_add_email.down.sql
+
+  2. Make the up idempotent where you can -- CREATE TABLE IF NOT EXISTS,
+     ADD COLUMN IF NOT EXISTS.  It costs nothing and it turns a half-failed
+     migration into one that can simply be run again.
+
+  3. Make the down actually undo the up.  A down that drops a column the up
+     added is right; a down that drops the whole table the up altered is
+     not.
+
+  4. Build.  Nothing to register, nothing to list in a CMakeLists: the
+     directory is found and embedded.
+
+  5. Load the module, then /MODULE MIGRATION STATUS to see v3 pending, then
+     /MODULE MIGRATION APPLY when the network is ready for it.
+
+Do not edit a migration that has been applied anywhere.  Add v4.  An edited
+migration is one that says one thing on the servers that ran it and another
+on the servers that have not.
+
+
+SEE ALSO
+========
+
+  include/migration.h      the API and the rules, for a module author
+  ircd/migration.c         the validator
+  ircd/migration_run.c     the runner
+  ircd/migrations/         the server's own set
+  doc/readme.database      the database API the migrations are recorded with
+  doc/readme.modules       modules in general

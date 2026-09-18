@@ -266,6 +266,12 @@ by reducing the length of common message identifiers.
 </TR>
 
 <TR>
+<TD><FONT SIZE=-1>LANGUAGE</FONT></TD>
+
+<TD><FONT SIZE=-1>LG</FONT></TD>
+</TR>
+
+<TR>
 <TD><FONT SIZE=-1>CONNECT</FONT></TD>
 
 <TD><FONT SIZE=-1>CO</FONT></TD>
@@ -553,11 +559,6 @@ by reducing the length of common message identifiers.
 <TD><FONT SIZE=-1>CM</FONT></TD>
 </TR>
 
-<TR>
-<TD><FONT SIZE=-1>ACCOUNT</FONT></TD>
-
-<TD><FONT SIZE=-1>AC</FONT></TD>
-</TR>
 </TABLE></CENTER>
 <FONT FACE="Arial,Helvetica"><FONT SIZE=-1><B>[</B><A HREF="#top">Back</A><B>]</B></FONT></FONT>
 <BR>
@@ -709,8 +710,9 @@ the "Host" part of the user@host mask.</LI>
 
 <LI>
 [<B>Optional</B>]: User modes. If present, this is always +&lt;user modes
-for this client>.  Note that the special +r usermode is followed by the
-client's account name; see the documentation for ACCOUNT.</LI>
+for this client>.  The +r usermode (identified to the nick in use) takes
+no parameter: the account is the nick itself.  A +z usermode may be
+followed by a TLS certificate fingerprint.  See doc/readme.accounting.</LI>
 
 <LI>
 The real IP address of this client, a Base64 encoded 32bit int.</LI>
@@ -1109,13 +1111,30 @@ succeed never the less.
 <BLOCKQUOTE><B>4.2.1 - NICK</B>
 <BLOCKQUOTE><TT>AZAAA N Nick2 955423230</TT></BLOCKQUOTE>
 <B>4.2.2 - MODE</B>
-<BLOCKQUOTE><TT>AZAAA M Nick2 :+odi</TT></BLOCKQUOTE>
-<B>4.2.3 - ACCOUNT</B>
-<BLOCKQUOTE><TT>AX AC AZAAA oper</TT></BLOCKQUOTE>
-<P>The ACCOUNT message provides a way for servers, such as the channel service
-server, to set the account name information that is associated with a client.
-Once set, it cannot be unset or changed, and will be propagated in NICK during
-net bursts using the special user mode +r followed by the account name.
+<BLOCKQUOTE><TT>AZAAA M Nick2 :+odi</TT>
+<BR><TT>AX M Nick2 :+r</TT>
+<BR><TT>AXAAB M Nick2 :-r</TT></BLOCKQUOTE>
+<P>A MODE for another user is accepted from a server (any mode, on any
+user) and from a service bot with user mode +S (on any user who is not
+an operator, and only the modes a user could set on itself plus +r and
+-r).  The +r usermode marks a user as identified to the nick it uses and
+replaces what the ACCOUNT message used to do; it is carried in NICK
+during net bursts without a parameter, and every server takes it away
+by itself when the user changes nick.  See doc/readme.accounting.
+<P><B>4.2.3 - ACCOUNT</B>
+<P>Removed.  There is no account name apart from the nick; see MODE +r.
+<P><B>4.2.4 - LANGUAGE</B>
+<BLOCKQUOTE><TT>AZAAA LG es-ar es</TT></BLOCKQUOTE>
+<P>The user's language preference, as given to the LANGUAGE command: up
+to three BCP 47 codes, most preferred first, in lower case.  Sent by the
+user's server when a registered user changes it, right after the NICK
+that introduces a user who chose one before registering, and in the net
+burst after the NICK of each user that has one (where AWAY goes).  A
+server stores what it receives without checking the codes against its
+own catalogs and passes it on; a parameter that is not a language code
+at all is dropped with a protocol violation.  Replies are translated by
+the server that generates them, which is why the preference has to be
+known everywhere.  See doc/readme.translations.
 </BLOCKQUOTE>
 <A NAME="chap4.3"></A><B><FONT SIZE=+1>4.3 Channel/Client Messaging.</FONT></B>
 <BLOCKQUOTE><B>4.3.1 - PRIVMSG</B>
@@ -1161,6 +1180,10 @@ from msg.h. -Gte.
 <BR>[2000-06-01]: Changed some info about the max number of clients -Isomer
 <BR>[2002-01-11]: Wrote a specification for ACCOUNT and noted that a usermode
 in a NICK message may have an argument. -Kev
+<BR>[2026-09-11]: Removed ACCOUNT; +r takes no argument and a MODE for another
+user is accepted from servers and +S service bots. See doc/readme.accounting.
+<BR>[2026-09-13]: Added LANGUAGE (LG), the user's language preference. See
+doc/readme.translations.
 <P><A NAME="chap8.1"></A><B><FONT SIZE=+1>8.1 TODO</FONT></B>
 <UL>
 <LI>

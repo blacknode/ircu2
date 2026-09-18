@@ -22,6 +22,7 @@
 
 #include "config.h"
 
+#include "ircd_i18n.h"
 #include "client.h"
 #include "ircd.h"
 #include "ircd_alloc.h"
@@ -70,11 +71,6 @@ static struct NetConfDesc {
   char*         v_str;    /**< string value */
   char*         def_str;  /**< default string value */
 } netconf_descs[] = {
-  /* SASL configuration options */
-  NC_S(SASL_SERVER, "sasl.server", ""),
-  NC_S(SASL_MECHANISMS, "sasl.mechanisms", ""),
-  NC_I(SASL_TIMEOUT, "sasl.timeout", 30),
-
   /* S:line related settings */
   NC_S(SLINE_SERVER, "sline.server", ""),
   NC_I(SLINE_HOLD_TIMEOUT, "sline.hold_timeout", 60),
@@ -223,7 +219,7 @@ static int config_count(void)
 }
 
 /** Register a callback for configuration changes
- * @param[in] key_prefix Key prefix to match (e.g., "sasl.")
+ * @param[in] key_prefix Key prefix to match (e.g., "sline.")
  * @param[in] callback Callback function to call
  */
 void config_register_callback(const char *key_prefix, config_callback_f callback)
@@ -301,7 +297,7 @@ void config_stats(struct Client *sptr, const struct StatDesc *sd, char *param)
   struct ConfigEntry *entry;
   for (entry = config_list; entry; entry = entry->next) {
     send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-               "%Tu %s :%s",
+               N_("%Tu %s :%s"),
                entry->timestamp, entry->key, entry->value);
   }
 }

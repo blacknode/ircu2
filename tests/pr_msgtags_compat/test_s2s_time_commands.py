@@ -13,7 +13,10 @@ from p10_server import P10Server
 
 pytestmark = pytest.mark.multi_server
 
-_TIME_PREFIX = re.compile(r"^@time=\d{4}-\d{2}-\d{2}T[\d:.]+Z ")
+# `time` comes first, but it is no longer the only tag on the wire: a
+# PRIVMSG now carries the msgid the whole network calls it by, so what
+# follows the timestamp is either a space or another tag.
+_TIME_PREFIX = re.compile(r"^@time=\d{4}-\d{2}-\d{2}T[\d:.]+Z[; ]")
 
 
 @pytest.fixture

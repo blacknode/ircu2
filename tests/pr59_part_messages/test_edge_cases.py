@@ -22,7 +22,7 @@ async def test_banned_user_part_no_message(ircd_hub, make_client):
     await chanop.wait_for("JOIN")
 
     await chanop.send("MODE #test_e1 +b bn59e1!*@*")
-    await chanop.wait_for("MODE")
+    await chanop.wait_for_mode("#test_e1")
     await asyncio.sleep(0.2)
 
     await banned.send("PART #test_e1")
@@ -44,7 +44,7 @@ async def test_banned_user_part_empty_message(ircd_hub, make_client):
     await chanop.wait_for("JOIN")
 
     await chanop.send("MODE #test_e2 +b bn59e2!*@*")
-    await chanop.wait_for("MODE")
+    await chanop.wait_for_mode("#test_e2")
     await asyncio.sleep(0.2)
 
     await banned.send("PART #test_e2 :")
@@ -67,7 +67,7 @@ async def test_ban_by_host_part_message_hidden(ircd_hub, make_client):
 
     # Ban by wildcard host
     await chanop.send("MODE #test_e3 +b *!*@*")
-    await chanop.wait_for("MODE")
+    await chanop.wait_for_mode("#test_e3")
     await asyncio.sleep(0.2)
 
     await banned.send("PART #test_e3 :hidden message")
@@ -92,10 +92,10 @@ async def test_ban_then_unban_part_message_visible(ircd_hub, make_client):
 
     # Ban then unban
     await chanop.send("MODE #test_e5 +b us59e5!*@*")
-    await chanop.wait_for("MODE")
+    await chanop.wait_for_mode("#test_e5")
     await asyncio.sleep(0.1)
     await chanop.send("MODE #test_e5 -b us59e5!*@*")
-    await chanop.wait_for("MODE")
+    await chanop.wait_for_mode("#test_e5")
     await asyncio.sleep(0.2)
 
     await user.send("PART #test_e5 :visible message")
@@ -118,7 +118,7 @@ async def test_part_message_visible_to_parting_user(ircd_hub, make_client):
     await chanop.wait_for("JOIN")
 
     await chanop.send("MODE #test_e6 +b bn59e6!*@*")
-    await chanop.wait_for("MODE")
+    await chanop.wait_for_mode("#test_e6")
     await asyncio.sleep(0.2)
 
     await banned.send("PART #test_e6 :my farewell")

@@ -1,0 +1,20 @@
+{
+  "name": "@blacknode/irc-client",
+  "version": "0.1.0",
+  "description": "A connection, the state it carries, and the conversation on top of it",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./worker": "./src/worker/index.ts",
+    "./worker/shared-worker": "./src/worker/shared-worker.ts"
+  },
+  "sideEffects": [
+    "./src/worker/shared-worker.ts"
+  ],
+  "license": "GPL-2.0",
+  "dependencies": {
+    "@blacknode/irc-protocol": "workspace:*"
+  }
+}

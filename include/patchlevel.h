@@ -16,8 +16,8 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * Version components (BASE_VERSION, RELEASE, PATCHLEVEL, MAJOR_PROTOCOL)
- * are defined in config.h, generated from the single source of truth
- * in configure.ac via AC_INIT.
+ * are defined in config.h, derived from the single source of truth in the
+ * top-level CMakeLists.txt via project(... VERSION ...).
  */
 
 #include "config.h"

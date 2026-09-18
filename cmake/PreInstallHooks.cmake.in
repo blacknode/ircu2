@@ -1,0 +1,27 @@
+#
+# Pre-install fixup, run by `cmake --install` before the binaries are copied.
+#
+# A previous install leaves <bindir>/ircd as a symlink to the timestamped
+# binary.  file(INSTALL) writes *through* a symlink, so without this the second
+# install would overwrite the old timestamped binary and then have
+# InstallHooks.cmake rename the symlink on top of it — in the worst case
+# (two installs in the same minute) producing a symlink that points at itself
+# and no binary at all.
+#
+# Removing the stale symlink first makes every install write a fresh regular
+# file, which the post-install hook can safely rename.
+#
+
+set(_bindir  "$ENV{DESTDIR}@CMAKE_INSTALL_FULL_BINDIR@")
+set(_symlink "@IRCU_SYMLINK@")
+
+if(IS_SYMLINK "${_bindir}/ircd")
+  file(REMOVE "${_bindir}/ircd")
+endif()
+
+# Same for the symlink itself when it was given a name of its own.
+if(NOT _symlink STREQUAL "no" AND NOT _symlink STREQUAL "ircd")
+  if(IS_SYMLINK "${_bindir}/${_symlink}")
+    file(REMOVE "${_bindir}/${_symlink}")
+  endif()
+endif()

@@ -1,4 +1,4 @@
-"""Outbound message-tags: server-time and account-tag on PRIVMSG."""
+"""Outbound message-tags: server-time on PRIVMSG."""
 
 import asyncio
 import re

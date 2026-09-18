@@ -25,6 +25,7 @@
 #include "ircd_alloc.h"
 #include "ircd_events.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_osdep.h"
 #include "ircd_reply.h"
@@ -1502,6 +1503,6 @@ cres_mem(struct Client* sptr)
   }
 
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG,
-	     ":Resolver: requests %d(%d)", request_count, request_mem);
+	     N_(":Resolver: requests %d(%d)"), request_count, request_mem);
   return request_mem;
 }

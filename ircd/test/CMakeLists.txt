@@ -1,0 +1,283 @@
+#
+# IRC - Internet Relay Chat, ircd/test/CMakeLists.txt
+#
+# Unit tests, registered with CTest.  Run them with:
+#
+#   ctest --test-dir <build dir> --output-on-failure
+#
+# Each test links the handful of server modules it exercises plus test_stub.c,
+# which supplies the logging and client hooks those modules expect.  The
+# autotools build reused ../*.o for this; recompiling the same sources here is
+# a few seconds of work and keeps the tests independent of the ircd target's
+# object layout.
+#
+
+set(IRCU_IRCD_DIR "${PROJECT_SOURCE_DIR}/ircd")
+
+include(IrcuMigrations)
+
+# ircd_string.c #includes the generated chattr.tab.c; source properties do not
+# cross directories, so the dependency is restated here.
+set_source_files_properties("${IRCU_IRCD_DIR}/ircd_string.c"
+  PROPERTIES OBJECT_DEPENDS "${IRCU_CHATTR_TAB}")
+
+# add_ircu_test(<name> [extra sources...])
+#
+# Builds <name> from <name>.c, test_stub.c and the given server sources, then
+# registers it with CTest.
+function(add_ircu_test name)
+  add_executable(${name} ${name}.c test_stub.c ${ARGN})
+  target_include_directories(${name} PRIVATE
+    "${PROJECT_BINARY_DIR}/ircd")   # chattr.tab.c
+  target_link_libraries(${name} PRIVATE ircu_config ${IRCU_SYSTEM_LIBRARIES})
+  # A test is its assertions.  IRCU_ENABLE_ASSERTS=OFF puts NDEBUG in
+  # config.h, and with it an assert(f(x)) does not merely stop checking --
+  # it stops calling f(x), so every case after it runs against state that
+  # was never set up.  That is how the `release` preset turned capab_t into
+  # a null dereference.  config.h honours this definition and leaves NDEBUG
+  # alone, so the tests keep their asserts whatever the build is configured
+  # for; -UNDEBUG would not do it, because NDEBUG arrives from a header.
+  target_compile_definitions(${name} PRIVATE IRCU_TEST_KEEP_ASSERTS)
+  target_compile_options(${name} PRIVATE -g -Wall)
+  add_dependencies(${name} ircu_chattr)
+  add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+add_ircu_test(cidr_lookups_t
+  "${IRCU_IRCD_DIR}/cidr_lookups.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(ircd_chattr_t
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(ircd_env_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_env.c")
+
+add_ircu_test(ircd_in_addr_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/match.c"
+  "${IRCU_IRCD_DIR}/numnicks.c")
+
+add_ircu_test(vhost_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/ircd_vhost.c"
+  "${IRCU_IRCD_DIR}/match.c"
+  "${IRCU_IRCD_DIR}/numnicks.c")
+
+add_ircu_test(ircd_match_t
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/match.c")
+
+add_ircu_test(ircd_string_t
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(msgid_t
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/msgid.c")
+
+add_ircu_test(msgq_excise_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/msgq.c")
+
+add_ircu_test(cache_t
+  "${IRCU_IRCD_DIR}/cache.c"
+  "${IRCU_IRCD_DIR}/http.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+# The mail register and the signed token underneath it: the register the
+# way cache_t and db_t test theirs, and the token one flipped character at
+# a time, because a signature that accepts something it did not sign is a
+# thing that compiles and runs.
+add_ircu_test(mail_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/ircd_token.c"
+  "${IRCU_IRCD_DIR}/ircd_vhost.c"
+  "${IRCU_IRCD_DIR}/mail.c"
+  "${IRCU_IRCD_DIR}/match.c"
+  "${IRCU_IRCD_DIR}/numnicks.c")
+
+# The frames between the server and an out-of-process module host.  They
+# depend on nothing -- no client, no allocator, no log -- which is what
+# lets the parser be tested on its own; and it is a parser reading bytes
+# from a process that lives somewhere else because it is not trusted.
+add_ircu_test(modhost_t
+  "${IRCU_IRCD_DIR}/modhost_frame.c")
+
+add_ircu_test(http_t
+  "${IRCU_IRCD_DIR}/http.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(account_t
+  "${IRCU_IRCD_DIR}/account.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(sasl_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/sasl.c")
+
+add_ircu_test(hooks_t
+  "${IRCU_IRCD_DIR}/hooks.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(crypto_t
+  "${IRCU_IRCD_DIR}/ircd_aes.c"
+  "${IRCU_IRCD_DIR}/ircd_argon2.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
+  "${IRCU_IRCD_DIR}/ircd_pwhash.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c")
+
+add_ircu_test(db_t
+  "${IRCU_IRCD_DIR}/db.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(migration_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/migration.c")
+
+# Also loads every .po in the source tree and fails if an entry is
+# rejected: the replacement for msgfmt --check, which does not know %C.
+add_ircu_test(ircd_i18n_t
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_i18n.c"
+  "${IRCU_IRCD_DIR}/ircd_po.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+target_compile_definitions(ircd_i18n_t PRIVATE
+  IRCU_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+add_ircu_test(user_modes_t
+  user_modes_stub.c
+  "${IRCU_IRCD_DIR}/client.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c")
+
+add_ircu_test(batch_t
+  batch_stub.c
+  "${IRCU_IRCD_DIR}/batch.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(capab_t
+  capab_stub.c
+  "${IRCU_IRCD_DIR}/capab.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c")
+
+add_ircu_test(chan_modes_t
+  chan_modes_stub.c
+  "${IRCU_IRCD_DIR}/chan_modes.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c")
+
+add_ircu_test(worker_t
+  worker_stub.c
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/worker.c")
+
+# ---------------------------------------------------------------------------
+# Module loader
+#
+# module_t needs real shared objects to load, so the fixtures under modules/
+# are built as MODULE libraries and their directory is handed to the test as
+# argv[1].  The test binary exports its own symbols because one fixture
+# deliberately resolves a symbol out of it, the same way a real module
+# resolves the core's.
+# ---------------------------------------------------------------------------
+add_ircu_test(module_t
+  module_stub.c
+  user_modes_stub.c
+  worker_stub.c
+  "${IRCU_IRCD_DIR}/capab.c"
+  "${IRCU_IRCD_DIR}/chan_modes.c"
+  "${IRCU_IRCD_DIR}/client.c"
+  "${IRCU_IRCD_DIR}/db.c"
+  "${IRCU_IRCD_DIR}/hooks.c"
+  "${IRCU_IRCD_DIR}/ircd_alloc.c"
+  "${IRCU_IRCD_DIR}/ircd_i18n.c"
+  "${IRCU_IRCD_DIR}/ircd_po.c"
+  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
+  "${IRCU_IRCD_DIR}/ircd_string.c"
+  "${IRCU_IRCD_DIR}/migration.c"
+  "${IRCU_IRCD_DIR}/module.c"
+  "${IRCU_IRCD_DIR}/account.c"
+  "${IRCU_IRCD_DIR}/cache.c"
+  "${IRCU_IRCD_DIR}/http.c"
+  "${IRCU_IRCD_DIR}/ircd_base64.c"
+  "${IRCU_IRCD_DIR}/ircd_sha256.c"
+  "${IRCU_IRCD_DIR}/sasl.c"
+  "${IRCU_IRCD_DIR}/worker.c")
+target_link_libraries(module_t PRIVATE ${CMAKE_DL_LIBS})
+set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
+
+set(IRCU_TEST_MODULE_DIR "${CMAKE_CURRENT_BINARY_DIR}/modules")
+
+# The fixtures are laid out the way the server expects the module
+# directory: a type directory ("test") holding either <name>.so or
+# <name>/<name>.so.  mod_cmd takes the directory shape so both are covered.
+#
+# _ircu_test_module(<target> <source> <subdir> [<output name>])
+function(_ircu_test_module target source subdir)
+  add_library(${target} MODULE "modules/${source}.c")
+  target_link_libraries(${target} PRIVATE ircu_config)
+  set_target_properties(${target} PROPERTIES
+    PREFIX ""
+    SUFFIX ".so"
+    LIBRARY_OUTPUT_DIRECTORY "${IRCU_TEST_MODULE_DIR}${subdir}")
+  if(ARGC GREATER 3)
+    set_target_properties(${target} PROPERTIES OUTPUT_NAME "${ARGV3}")
+  endif()
+  add_dependencies(module_t ${target})
+endfunction()
+
+foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_umode
+                 mod_cmode mod_cap mod_cmdhook mod_sasl mod_core)
+  _ircu_test_module(${_fixture} ${_fixture} /test)
+endforeach()
+_ircu_test_module(mod_cmd mod_cmd /test/mod_cmd)
+
+# Two fixtures with migrations, built the way a real module with migrations
+# is: the .sql files are embedded as a generated source rather than copied
+# anywhere.  mod_mig's set is well-formed; mod_migbad's has an up with no
+# down, which the loader must refuse.
+function(_ircu_test_module_migrations target migrations)
+  ircu_add_migrations("${target}" "${CMAKE_CURRENT_SOURCE_DIR}/${migrations}"
+    ircu_module_migrations generated)
+  target_sources(${target} PRIVATE "${generated}")
+endfunction()
+
+_ircu_test_module(mod_mig mod_mig /test/mod_mig)
+_ircu_test_module_migrations(mod_mig modules/mod_mig_migrations)
+
+_ircu_test_module(mod_migbad mod_migbad /test/mod_migbad)
+_ircu_test_module_migrations(mod_migbad modules/mod_migbad_migrations)
+
+# mod_good again under two names the loader must refuse: mod_dup is in two
+# type directories at once, and mod_flat sits directly in the module
+# directory, which is not a place modules are looked for.
+_ircu_test_module(mod_dup_alpha mod_good /alpha mod_dup)
+_ircu_test_module(mod_dup_beta mod_good /beta mod_dup)
+_ircu_test_module(mod_flat mod_good "" mod_flat)
+
+# The fixture directory is baked in rather than passed as a test argument:
+# a compile definition cannot drift out of sync with the test registration.
+# IRCU_MODULE_DIR is what module.c resolves module names against, so the
+# loader looks the fixtures up by name exactly as the server does.
+target_compile_definitions(module_t PRIVATE
+  IRCU_MODULE_DIR="${IRCU_TEST_MODULE_DIR}")

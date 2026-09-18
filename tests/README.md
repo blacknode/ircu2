@@ -92,12 +92,58 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
   pr61_uhnames/
     test_fix.py
     test_edge_cases.py
-  pr62_remote_x/
-    test_fix.py              # S2S tests using P10Server for OPMODE +x and ACCOUNT
-    test_edge_cases.py
-    test_privilege_check.py  # U:line privilege tiers (CONF_UWORLD vs CONF_UWORLD_OPER)
-    test_umode_ordering.py   # send_umode_out() / hide_hostmask() ordering
+  accounting/
+    test_accounting.py       # umode +r (server / +S bot / burst), the hidden host
+                             # every user carries, who may change whose modes
+  identity/
+    test_identity.py         # umode +f and what it blocks, +r clearing it, the
+                             # guest-* rename, what ACCOUNT refuses, the sasl
+                             # capability with no provider to answer for it
+  identity_db/
+    test_identity_db.py      # the same with a provider: REGISTER / IDENTIFY /
+                             # PASSWORD / DROP over a real PostgreSQL, the
+                             # account limit, and the grace period end to end
+  history/
+    test_history.py          # CHATHISTORY over the same PostgreSQL: the six
+                             # shapes, a replayed message keeping its msgid and
+                             # its time, who may read a channel and who may read
+                             # a conversation
+    test_edit_search.py      # SEARCH over the GIN index -- one channel, one
+                             # conversation, everywhere at once -- and EDIT:
+                             # only the author, the identifier unchanged, and
+                             # the replay saying it was edited
+  conversation/
+    test_conversation.py     # phases 3 and 4: +draft/reply threads, reactions as
+                             # TAGMSGs, typing that is not kept, REDACT and who
+                             # may, MARKREAD only moving forward, and rich text
+                             # reaching one half of the channel as Markdown and
+                             # the other as plain
+  files/
+    test_files.py            # the file host end to end: a signed ticket, a 200 KiB
+                             # PUT that never touches the event loop, the same
+                             # bytes back out of the link, listing and deletion
+  i18n/
+    test_language.py         # LANGUAGE, draft/languages, translated numerics from
+                             # po/es.po (the image installs it), the LG token
+  msgid/
+    test_msgid.py            # the IRCv3 msgid tag: one name per message across
+                             # the network, none at all for a client that did
+                             # not ask for message-tags
+  labeled/
+    test_labeled.py          # IRCv3 batch and labeled-response: the answer to a
+                             # named request, and nothing at all for a client
+                             # that did not ask
+  multiline/
+    test_multiline.py        # IRCv3 draft/multiline: a message longer than a
+                             # line, wrapped for the clients that asked and
+                             # separate messages for everybody else
+  trust_username/            # visible vs. real identity: WHOIS, bans, SILENCE, G-lines
+vhost.py               # Python port of the hidden-host cipher (ircd/ircd_vhost.c)
 ```
+
+Every `ircd*.conf` under `tests/` carries the same `Security { virtual_host_key
+= "AbCdEfGhIjKl"; }` block; `vhost.vhost(ip)` predicts the host a client
+connecting from `ip` will be given, so tests can assert on it.
 
 - **test_fix.py** — focused tests that reproduce the bug or verify the feature claimed by the PR. These fail on the base branch and pass with the PR applied.
 - **test_edge_cases.py** — adversarial tests that exercise boundary conditions, invalid inputs, and feature interactions. Tests that depend on the PR feature use `pytest.skip()` when it's not available.
@@ -132,6 +178,64 @@ The hub also has Connect blocks for two external test servers used by the P10 te
 | uworldonly.test.net | 6       | Yes (no oper) | U:lined without CONF_UWORLD_OPER   |
 
 Configs are baked into the Docker images (in `docker/`), not volume-mounted.
+
+### Identity topology (`identity_db/`, `history/`, `conversation/`, `files/`)
+
+One ircd with the identity module and the PostgreSQL it stores accounts
+in -- and, since phase 2, the history module and the messages it stores
+there too.  Not part of the hub/leaf network: what is tested is one server
+answering for itself, and the store is per-topology so a run cannot
+inherit accounts from another one.
+
+`history/` and `conversation/` share it because half of what is worth
+testing about CHATHISTORY needs accounts: a direct message is stored only
+when both ends have identified, a conversation is read back by account,
+REDACT asks who wrote a message, and a read marker belongs to a person
+rather than to a connection.  `files/` shares it for two reasons at once:
+the file host keeps its metadata in the same database, and only an
+identified client may upload.  Those
+tests put a token unique to the run in every nickname and channel name,
+because the store outlives them -- a fixed name would read back the
+previous run's messages and a fixed nickname would already be registered.
+
+| Service       | Server Name        | Client | S2S  | Numeric | IP         |
+|---------------|--------------------|--------|------|---------|------------|
+| ircd-identity | identity.test.net  | 6673   | 4430 | 7       | 10.55.0.51 |
+|               | (its HTTP listener)| 6680   | —    | —       |            |
+| identity-db   | postgres:17-alpine | 15432  | —    | —       | 10.55.0.50 |
+
+There is no Redis: the cache is never the truth (see `doc/readme.cache`),
+so a server without one answers exactly the same and one container fewer
+has to come up.  The database runs with `fsync=off` — it is rebuilt every
+run, so durability buys nothing and costs a second per migration.
+
+The schema is not seeded by the image.  The tests create it themselves
+with `/MODULE MIGRATION APPLY identity` (and `... APPLY history`), which
+is how a deployment does it.  Until it exists every nickname lookup fails, and a failed lookup is
+never read as "free", so every client is renamed to `guest-*`: bring the
+server up, migrate, then let users in.
+
+The image carries every module the build produced under
+`/opt/ircu/lib/modules`, which is where the loader looks.  A module is
+inert until a `Module{}` block or `/MODULE LOAD` names it, so this costs
+the other topologies nothing.
+
+### Known gaps
+
+Two things do not pass here and are not the suite's doing:
+
+* `secure_path/test_review_findings.py::test_z_channel_keeps_z_when_only_plaintext_members_remain`
+  hangs and is killed by the 120s per-test timeout, reproducibly and on
+  its own.  The other fifteen tests in that file pass; this one sets up a
+  TLS gateway and SQUITs the leaf first, and that is where it stops.
+* The NETWORK_FEATURES compat topology below builds the upstream
+  u2.10.12.19 release from source inside its image, and that build fails
+  on a current base image.  The release tarball itself still downloads,
+  so it is the twenty-year-old `configure && make` that does not survive
+  the toolchain, not the fetch.
+
+Everything else in `tests/` passes; when one of these is fixed, take it
+off this list.
 
 ### NETWORK_FEATURES compat topology (`pr_network_features_compat/`)
 
@@ -208,8 +312,9 @@ await srv.handshake()
 numnick = await srv.wait_for_user("somenick")
 
 # Send S2S commands
-await srv.send_account(numnick, "AccountName")
-await srv.send_opmode(numnick, "+x")
+await srv.send_register("somenick")          # MODE somenick :+r, on the server's authority
+await srv.send_user_mode("somenick", "-r")   # or any mode, optionally from_numnick=<a +S bot>
+await srv.send_opmode(numnick, "+o")
 
 # Read server responses
 await srv.drain_messages()

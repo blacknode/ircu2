@@ -9,6 +9,7 @@
 #include "config.h"
 #include "ircd.h"  /* configfile */
 #include "ircd_alloc.h"
+#include "ircd_env.h"
 #include "ircd_log.h"
 #include "ircd_string.h" /* ircd_strcmp() */
 #include "s_conf.h"
@@ -73,6 +74,7 @@ static const struct lexer_token tokens[] = {
   { "cacertfile", CACERTFILE },
   { "certfile", CERTFILE },
   { "chan_limit", TPRIV_CHAN_LIMIT },
+  { "channel", CHANNEL },
   { "ciphers", CIPHERS },
   { "class", CLASS },
   { "client", CLIENT },
@@ -81,6 +83,7 @@ static const struct lexer_token tokens[] = {
   { "connectfreq", CONNECTFREQ },
   { "contact", CONTACT },
   { "crule", CRULE },
+  { "database", DATABASE },
   { "days", DAYS },
   { "decades", DECADES },
   { "deop_lchan", TPRIV_DEOP_LCHAN },
@@ -88,6 +91,7 @@ static const struct lexer_token tokens[] = {
   { "die", TPRIV_DIE },
   { "display", TPRIV_DISPLAY },
   { "dns", DNS },
+  { "dsn", DSN },
   { "except", EXCEPT },
   { "fast", FAST },
   { "features", FEATURES },
@@ -95,12 +99,14 @@ static const struct lexer_token tokens[] = {
   { "fingerprint", FINGERPRINT },
   { "force_local_opmode", TPRIV_FORCE_LOCAL_OPMODE },
   { "force_opmode", TPRIV_FORCE_OPMODE },
+  { "from", FROM },
   { "gb", GBYTES },
   { "gbytes", GBYTES },
   { "general", GENERAL },
   { "gigabytes", GBYTES },
   { "gline", TPRIV_GLINE },
   { "hidden", HIDDEN },
+  { "history_admin", TPRIV_HISTORY },
   { "host", HOST },
   { "hours", HOURS },
   { "hub", HUB },
@@ -110,6 +116,7 @@ static const struct lexer_token tokens[] = {
   { "ipcheck", IPCHECK },
   { "ipv4", TOK_IPV4 },
   { "ipv6", TOK_IPV6 },
+  { "isolation", ISOLATION },
   { "jupe", JUPE },
   { "kb", KBYTES },
   { "kbytes", KBYTES },
@@ -125,6 +132,7 @@ static const struct lexer_token tokens[] = {
   { "local_kill", TPRIV_LOCAL_KILL },
   { "local_opmode", TPRIV_LOCAL_OPMODE },
   { "location", LOCATION },
+  { "mail", MAIL },
   { "mask", MASK },
   { "maxflood", MAXFLOOD },
   { "maxhops", MAXHOPS },
@@ -132,8 +140,11 @@ static const struct lexer_token tokens[] = {
   { "mb", MBYTES },
   { "mbytes", MBYTES },
   { "megabytes", MBYTES },
+  { "migration_timeout", MIGRATION_TIMEOUT },
   { "minutes", MINUTES },
   { "mode_lchan", TPRIV_MODE_LCHAN },
+  { "module", MODULE },
+  { "module_admin", TPRIV_MODULE },
   { "months", MONTHS },
   { "motd", MOTD },
   { "name", NAME },
@@ -146,43 +157,60 @@ static const struct lexer_token tokens[] = {
   { "pass", PASS },
   { "password", PASS },
   { "pingfreq", PINGFREQ },
+  { "pool", POOL },
   { "port", PORT },
+  { "prefix", PREFIX },
   { "prepend", PREPEND },
   { "program", PROGRAM },
   { "propagate", TPRIV_PROPAGATE },
   { "pseudo", PSEUDO },
   { "quarantine", QUARANTINE },
+  { "read", READ },
+  { "read_pool", READ_POOL },
   { "real", REAL },
   { "realname", REAL },
   { "reason", REASON },
+  { "redis", REDIS },
   { "rehash", TPRIV_REHASH },
+  { "resend_interval", RESEND_INTERVAL },
   { "restart", TPRIV_RESTART },
   { "rule", RULE },
   { "seconds", SECONDS },
+  { "security", SECURITY },
   { "see_chan", TPRIV_SEE_CHAN },
   { "see_opers", TPRIV_SEE_OPERS },
   { "sendq", SENDQ },
   { "server", SERVER },
+  { "service", SERVICE },
   { "set", TPRIV_SET },
   { "show_all_invis", TPRIV_SHOW_ALL_INVIS },
   { "show_invis", TPRIV_SHOW_INVIS },
+  { "socket", SOCKET },
   { "systemca", SYSTEMCA },
   { "tb", TBYTES },
   { "tbytes", TBYTES },
   { "terabytes", TBYTES },
+  { "timeout", TIMEOUT },
+  { "timeout_ms", TIMEOUT_MS },
   { "tls", TLS },
+  { "type", TYPE },
   { "unlimit_query", TPRIV_UNLIMIT_QUERY },
   { "usermode", USERMODE },
   { "username", USERNAME },
   { "uworld", UWORLD },
+  { "verify_url", VERIFY_URL },
+  { "verify_window", VERIFY_WINDOW },
   { "verifypeer", VERIFYPEER },
   { "vhost", VHOST },
+  { "virtual_host_key", VIRTUAL_HOST_KEY },
   { "walk_lchan", TPRIV_WALK_LCHAN },
   { "webirc", WEBIRC },
   { "websocket", WEBSOCKET },
   { "weeks", WEEKS },
   { "whox", TPRIV_WHOX },
   { "wide_gline", TPRIV_WIDE_GLINE },
+  { "write", WRITE },
+  { "write_pool", WRITE_POOL },
   { "years", YEARS },
   { "yes", YES },
   { NULL, 0 }
@@ -296,6 +324,33 @@ static int token_compare(const void *key, const void *ptok)
   return tolower(word[ii]) - tok->string[ii];
 }
 
+/** Hand a quoted string to the parser, expanding any ${NAME} in it first.
+ * Expansion happens here, on the contents of a string the lexer has already
+ * recognised, so whatever a variable holds stays one string: it cannot open
+ * a block or end a statement.
+ * @param[in] text The string, without its quotes.
+ * @return QSTRING, or TOKERR if a variable was missing or malformed.
+ */
+static int lexer_qstring(const char *text)
+{
+  struct EnvError err;
+  char *expanded;
+
+  if (!env_has_ref(text)) {
+    DupString(yylval.text, text);
+    return QSTRING;
+  }
+
+  expanded = env_expand(text, 0, &err);
+  if (!expanded) {
+    yyerror(err.text);
+    return TOKERR;
+  }
+
+  yylval.text = expanded;
+  return QSTRING;
+}
+
 static int find_token(char *token)
 {
   struct lexer_token *tok;
@@ -350,9 +405,55 @@ int yylex(void)
           yy_in->lineno, yy_in->name);
       }
       *pos++ = '\0';
-      DupString(yylval.text, start + 1);
       yy_in->tok_ofs = pos - yy_in->buf;
-      return QSTRING;
+      return lexer_qstring(start + 1);
+    }
+
+    /* Are we looking at an unquoted ${NAME} reference?  Unquoted, the only
+     * thing the grammar can want here is a number, so that is the only thing
+     * the reference is allowed to expand to.
+     */
+    if ((pos < stop) && (*pos == '$') && (pos + 1 == stop))
+      goto grab_more;
+    if ((pos < stop) && (*pos == '$') && (pos[1] == '{')) {
+      char ref[256];
+      struct EnvError err;
+      int braces = 1;
+      int num;
+
+      /* Find the brace that closes this reference, which is not always the
+       * first one: ${A:-${B:-1}} is legal.
+       */
+      start = pos;
+      pos += 2;
+      while ((pos < stop) && braces) {
+        if (*pos == '\n') {
+          log_write(LS_CONFIG, L_CRIT, 0, "newline in ${...} at line %d of %s",
+            yy_in->lineno, yy_in->name);
+          break;
+        }
+        if (*pos == '{')
+          ++braces;
+        else if (*pos == '}')
+          --braces;
+        ++pos;
+      }
+      if (braces && (pos == stop))
+        goto grab_more;
+
+      yy_in->tok_ofs = pos - yy_in->buf;
+      if ((size_t)(pos - start) >= sizeof(ref)) {
+        yyerror("${...} reference too long");
+        return TOKERR;
+      }
+      memcpy(ref, start, pos - start);
+      ref[pos - start] = '\0';
+      if (!env_expand_number(ref, 0, &num, &err)) {
+        yyerror(err.text);
+        return TOKERR;
+      }
+      yylval.num = num;
+      return NUMBER;
     }
 
     /* Are we looking at a number? */

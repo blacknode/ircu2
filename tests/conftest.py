@@ -30,6 +30,7 @@ TLS_HUB = {
     "tls_port": 16697,
     "tls_port_alt": 16698,
     "tls_port_ca": 16699,
+    "tls_port_certfp": 16702,
     "wss_port": 16700,
     "wss_cf_port": 16701,
     "server_port": 14440,
@@ -100,6 +101,17 @@ LIMITS = {
     "port": 6670,
     "server_port": 4410,
     "name": "limits.test.net",
+}
+
+# One server with the identity module and the PostgreSQL behind it; no
+# leaves, because what is tested there is one server answering for itself.
+IDENTITY = {
+    "host": "127.0.0.1",
+    "port": 6673,
+    "server_port": 4430,
+    "name": "identity.test.net",
+    "db_port": 15432,
+    "http_port": 6680,
 }
 
 # A (prod release) — B (new, NETWORK_FEATURES=FALSE) — C (new, NETWORK_FEATURES=TRUE)
@@ -212,6 +224,7 @@ def _wait_tls_hub_ports():
     wait_for_port(TLS_HUB["host"], TLS_HUB["port"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["tls_port"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["tls_port_ca"])
+    wait_for_port(TLS_HUB["host"], TLS_HUB["tls_port_certfp"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["wss_port"])
     wait_for_port(TLS_HUB["host"], TLS_HUB["server_port"])
 
@@ -248,6 +261,14 @@ def _start_topology_limits():
     _start_services("ircd-limits")
     wait_for_port(LIMITS["host"], LIMITS["port"])
     # Ident lookups during registration can take a moment on cold start.
+    time.sleep(2)
+
+
+def _start_topology_identity():
+    # depends_on waits for the database's healthcheck, so the ircd starts
+    # with something to connect to; its own pool still takes a moment.
+    _start_services("ircd-identity")
+    wait_for_port(IDENTITY["host"], IDENTITY["port"], timeout=120.0)
     time.sleep(2)
 
 
@@ -291,6 +312,7 @@ _TOPOLOGIES = {
     "tls_network": _start_topology_tls_network,
     "tls_hub": _start_topology_tls_hub,
     "limits": _start_topology_limits,
+    "identity": _start_topology_identity,
     "dns": _start_topology_dns,
     "nf_compat": _start_topology_nf_compat,
 }
@@ -306,6 +328,7 @@ _SATISFIED_BY = {
     "tls_network": {"tls_network"},
     "tls_hub": {"tls_hub"},
     "limits": {"limits"},
+    "identity": {"identity"},
     "dns": {"dns"},
     "nf_compat": {"nf_compat"},
 }
@@ -316,6 +339,7 @@ _FIXTURE_TOPOLOGY = {
     "ircd_tls_network": "tls_network",
     "ircd_tls_hub": "tls_hub",
     "ircd_limits": "limits",
+    "ircd_identity": "identity",
     "ircd_dns_hub": "dns",
     "ircd_nf_compat": "nf_compat",
 }
@@ -323,9 +347,13 @@ _FIXTURE_TOPOLOGY = {
 # Collection order: tests with no docker dependency first, then one
 # contiguous block per topology. "network" runs before "hub" so hub-only
 # tests reuse the already-running network (see _SATISFIED_BY).
-_TOPOLOGY_ORDER = ["network", "hub", "limits", "dns", "nf_compat", "tls_network", "tls_hub"]
+_TOPOLOGY_ORDER = ["network", "hub", "limits", "identity", "dns", "nf_compat",
+                   "tls_network", "tls_hub"]
 
 _active_topology = None
+
+# Bumped every time a topology is actually started; see topology_generation().
+_topology_generation = 0
 
 
 def _required_topology(fixturenames):
@@ -346,7 +374,7 @@ def _required_topology(fixturenames):
 
 
 def _ensure_topology(name):
-    global _active_topology
+    global _active_topology, _topology_generation
     if _active_topology in _SATISFIED_BY[name]:
         return
     # The starter begins by tearing everything down; forget the old
@@ -355,6 +383,25 @@ def _ensure_topology(name):
     _active_topology = None
     _TOPOLOGIES[name]()
     _active_topology = name
+    _topology_generation += 1
+
+
+@pytest.fixture
+def topology_generation():
+    """How many times a topology has been started in this session.
+
+    For a fixture that builds state *inside* a container -- the identity
+    schema, applied with /MODULE MIGRATION APPLY -- and wants to build it
+    once rather than once per test.  It cannot simply be session-scoped:
+    a session-scoped fixture is set up before the function-scoped autouse
+    one that starts the containers, so it would run against a port that
+    nothing is listening on.  Depending on this instead keeps the fixture
+    function-scoped (so it runs *after* the topology is up) while letting
+    it skip the work when nothing has restarted -- and `_start_services`
+    recreates the containers, so a cache that survived a restart would be
+    a schema that is no longer there.
+    """
+    return _topology_generation
 
 
 @pytest.fixture(autouse=True)
@@ -440,6 +487,12 @@ def ircd_hub():
 def ircd_network():
     """Connection info for all three ircd containers (hub + 2 leaves)."""
     return {"hub": HUB, "leaf1": LEAF1, "leaf2": LEAF2}
+
+
+@pytest.fixture(scope="session")
+def ircd_identity():
+    """Connection info for the identity server and its database."""
+    return IDENTITY
 
 
 @pytest.fixture(scope="session")

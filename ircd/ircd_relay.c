@@ -46,17 +46,21 @@
 #include "config.h"
 
 #include "ircd_relay.h"
+#include "bot.h"
 #include "channel.h"
 #include "client.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_chattr.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
 #include "match.h"
 #include "msg.h"
+#include "msg_tag.h"
 #include "numeric.h"
 #include "numnicks.h"
 #include "s_debug.h"
@@ -77,6 +81,139 @@
  * to be cleaned up a bit. The idea is to factor out the common checks
  * but not introduce any IsOper/IsUser/MyUser/IsServer etc. stuff.
  */
+
+/** Tell the modules a message went out on this server.
+ *
+ * #HOOK_MESSAGE_DELIVERED fires from every relay path, the ones that take
+ * a local client's message and the ones that take a link's, which is what
+ * makes it usable by a module that stores what was said: the message hooks
+ * that were here before only ever saw what started on this server.
+ *
+ * It runs after the send, so nothing it does can change the message; and
+ * it is guarded on a hook being registered, because asking for the line's
+ * identifier is what creates one, and a server with nothing listening has
+ * no use for a name nobody will ever say.
+ *
+ * Two things are deliberately never reported.  A message **to a service**
+ * (+S or +k) is not: that is where a password goes -- IDENTIFY, REGISTER,
+ * DROP -- and handing it to whatever is listening would put credentials in
+ * a log or a database with nothing to stop it.  The module the service
+ * belongs to already gets the message through #HOOK_MESSAGE_RECEIVED, and
+ * decides for itself.  A **masked** message ($#mask, $host) is not either:
+ * an operator addressing everyone on a server is an announcement, not a
+ * conversation, and it has no target anything could file it under.
+ *
+ * @param[in] sptr Who sent the message.
+ * @param[in] acptr User it was addressed to, or NULL for a channel.
+ * @param[in] chptr Channel it was addressed to, or NULL for a user.
+ * @param[in] text The text, or "" for a TAGMSG.
+ * @param[in] kind PRIVMSG, NOTICE or TAGMSG.
+ * @param[in] target The target as the sender wrote it.
+ */
+static void relay_delivered(struct Client* sptr, struct Client* acptr,
+                            struct Channel* chptr, const char* text,
+                            enum HookMsgKind kind, const char* target)
+{
+  struct HookContext hc;
+  struct HookMessage hm;
+  char stamp[32];
+  const char* tok;
+
+  if (!hook_is_active(HOOK_MESSAGE_DELIVERED))
+    return;
+
+  if (acptr && (IsServiceBot(acptr) || IsChannelService(acptr)))
+    return;
+
+  switch (kind) {
+  case HOOK_MSG_NOTICE:  tok = TOK_NOTICE; break;
+  case HOOK_MSG_TAGMSG:  tok = TOK_TAGMSG; break;
+  default:               tok = TOK_PRIVATE; break;
+  }
+
+  msg_tag_line_time(stamp, sizeof(stamp));
+
+  hm.hmm_kind = kind;
+  hm.hmm_msgid = msg_tag_line_msgid(tok);
+  hm.hmm_time = stamp;
+  hm.hmm_target = target;
+  hm.hmm_remote = !MyUser(sptr);
+
+  hook_context_init(&hc);
+  hc.hc_client = acptr;
+  hc.hc_source = sptr;
+  hc.hc_channel = chptr;
+  hc.hc_arg = text ? text : "";
+  hc.hc_notice = (kind == HOOK_MSG_NOTICE);
+  hc.hc_message = &hm;
+
+  hook_run(HOOK_MESSAGE_DELIVERED, &hc);
+}
+
+/** Deliver one message to a channel as two bodies.
+ *
+ * What #HookContext::hc_alt is for: a module has given the message a
+ * content type, and the clients that never agreed to that type have to be
+ * sent something they can read.  So the channel hears it twice, with the
+ * capability deciding which half hears which -- and the links hear the
+ * rich body, because the next server has the same choice to make and
+ * cannot make it from the plain one.
+ *
+ * What is stored, and what a service bot is handed, is the **alternative**.
+ * A transcript is read back by whoever reads it, and the one body it can
+ * keep is the one everybody can read.
+ *
+ * @param[in] sptr Who sent it.
+ * @param[in] chptr The channel.
+ * @param[in] cmd Command name (PRIVMSG or NOTICE).
+ * @param[in] tok Its P10 token.
+ * @param[in] cap Capability that decides which body a client gets.
+ * @param[in] rich The body for clients that have it.
+ * @param[in] alt The body for everybody else.
+ * @param[in] alt_tag A client tag not to relay with \a alt, or NULL.
+ */
+static void relay_channel_two_ways(struct Client* sptr, struct Channel* chptr,
+                                   const char* cmd, const char* tok, int cap,
+                                   const char* rich, const char* alt,
+                                   const char* alt_tag)
+{
+  int notice = !strcmp(cmd, MSG_NOTICE);
+
+  sendcmdto_capflag_channel_butserv_butone(sptr, cmd, tok, chptr,
+                                           cli_from(sptr),
+                                           SKIP_DEAF | SKIP_BURST,
+                                           cap, CAP_NONE, "%H :%s", chptr,
+                                           rich);
+
+  /* The tag that says what the rich body is would be a lie on the other
+   * one, and a tag that is a lie is worse than no tag. */
+  msg_tag_suppress(alt_tag);
+  sendcmdto_capflag_channel_butserv_butone(sptr, cmd, tok, chptr,
+                                           cli_from(sptr),
+                                           SKIP_DEAF | SKIP_BURST,
+                                           CAP_NONE, cap, "%H :%s", chptr,
+                                           alt);
+  msg_tag_suppress(0);
+
+  sendcmdto_channel_servers_butone(sptr, cmd, tok, chptr, cli_from(sptr),
+                                   SKIP_BURST, "%H :%s", chptr, rich);
+
+  bot_deliver_channel(sptr, chptr, notice, alt);
+
+  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE)) {
+    int mine = CapHas(cli_active(sptr), cap);
+
+    if (!mine)
+      msg_tag_suppress(alt_tag);
+    sendcmdto_one(sptr, cmd, tok, cli_from(sptr), "%H :%s", chptr,
+                  mine ? rich : alt);
+    msg_tag_suppress(0);
+  }
+
+  relay_delivered(sptr, 0, chptr, alt,
+                  notice ? HOOK_MSG_NOTICE : HOOK_MSG_PRIVMSG,
+                  chptr->chname);
+}
 
 /** Relay a local user's message to a channel.
  * Generates an error if the client cannot send to the channel.
@@ -134,12 +271,57 @@ void relay_channel_message(struct Client* sptr, const char* name, const char* te
     return;
   }
 
+  /* Last stop before delivery, so every other check has already had its
+   * say and a module sees the text as it would actually be sent.  A hook
+   * may rewrite it into the buffer the server provides; it must not hand
+   * back a pointer of its own.
+   */
+  if (hook_is_active(HOOK_MESSAGE_PRE_CHANNEL)) {
+    struct HookContext hc;
+    char rewrite[BUFSIZE];
+    char alt[BUFSIZE];
+
+    hook_context_init(&hc);
+    hc.hc_client = sptr;
+    hc.hc_source = sptr;
+    hc.hc_channel = chptr;
+    hc.hc_arg = text;
+    hc.hc_rewrite = rewrite;
+    hc.hc_rewrite_len = sizeof(rewrite);
+    hc.hc_alt = alt;
+    hc.hc_alt_len = sizeof(alt);
+    hc.hc_alt_cap = CAP_NONE;
+    rewrite[0] = '\0';
+    alt[0] = '\0';
+
+    if (hook_run(HOOK_MESSAGE_PRE_CHANNEL, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_CANNOTSENDTOCHAN, chptr->chname);
+      return;
+    }
+
+    if (hc.hc_rewritten) {
+      rewrite[sizeof(rewrite) - 1] = '\0';
+      text = rewrite;
+    }
+
+    if (hc.hc_alt_set && hc.hc_alt_cap != CAP_NONE) {
+      alt[sizeof(alt) - 1] = '\0';
+      RevealDelayedJoinIfNeeded(sptr, chptr);
+      relay_channel_two_ways(sptr, chptr, CMD_PRIVATE, hc.hc_alt_cap,
+                             text, alt, hc.hc_alt_tag);
+      return;
+    }
+  }
+
   RevealDelayedJoinIfNeeded(sptr, chptr);
   sendcmdto_channel_butone(sptr, CMD_PRIVATE, chptr, cli_from(sptr),
 			   SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+  bot_deliver_channel(sptr, chptr, 0, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%H :%s", chptr, text);
+
+  relay_delivered(sptr, 0, chptr, text, HOOK_MSG_PRIVMSG, chptr->chname);
 }
 
 /** Relay a local user's notice to a channel.
@@ -198,9 +380,12 @@ void relay_channel_notice(struct Client* sptr, const char* name, const char* tex
   RevealDelayedJoinIfNeeded(sptr, chptr);
   sendcmdto_channel_butone(sptr, CMD_NOTICE, chptr, cli_from(sptr),
 			   SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+  bot_deliver_channel(sptr, chptr, 1, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%H :%s", chptr, text);
+
+  relay_delivered(sptr, 0, chptr, text, HOOK_MSG_NOTICE, chptr->chname);
 }
 
 /** Relay a message to a channel.
@@ -228,6 +413,8 @@ void server_relay_channel_message(struct Client* sptr, const char* name, const c
   if (client_can_send_to_channel(sptr, chptr, 1) || IsChannelService(sptr)) {
     sendcmdto_channel_butone(sptr, CMD_PRIVATE, chptr, cli_from(sptr),
 			     SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+    bot_deliver_channel(sptr, chptr, 0, text);
+    relay_delivered(sptr, 0, chptr, text, HOOK_MSG_PRIVMSG, chptr->chname);
   }
   else
     send_reply(sptr, ERR_CANNOTSENDTOCHAN, chptr->chname);
@@ -256,6 +443,8 @@ void server_relay_channel_notice(struct Client* sptr, const char* name, const ch
   if (client_can_send_to_channel(sptr, chptr, 1) || IsChannelService(sptr)) {
     sendcmdto_channel_butone(sptr, CMD_NOTICE, chptr, cli_from(sptr),
 			     SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
+    bot_deliver_channel(sptr, chptr, 1, text);
+    relay_delivered(sptr, 0, chptr, text, HOOK_MSG_NOTICE, chptr->chname);
   }
 }
 
@@ -278,7 +467,13 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
   assert(0 != text);
   assert(0 != server);
 
-  if ((acptr = FindServer(server + 1)) == NULL || !IsService(acptr))
+  /* A server that is not a service may still be addressed this way for
+   * a service bot of its own.  Only this server can know that of itself,
+   * so nick@server for another server's bots still needs that server to
+   * be a service.
+   */
+  if ((acptr = FindServer(server + 1)) == NULL
+      || (!IsService(acptr) && !(IsMe(acptr) && bot_service_count() > 0)))
   {
     send_reply(sptr, ERR_NOSUCHNICK, name);
     return;
@@ -311,9 +506,10 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
    * Argh, /ping nick@server, disallow messages to non +k clients :/  I hate
    * this. -- Isomer 2001-09-16
    */
-  if (!(acptr = FindUser(name)) || !MyUser(acptr) ||
-      !IsChannelService(acptr) ||
-      (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
+  if (!(acptr = FindUser(name))
+      || !(MyUser(acptr) || IsLocalServiceBot(acptr))
+      || !IsChannelService(acptr)
+      || (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
   {
     /*
      * By this stage we might as well not bother because they will
@@ -339,7 +535,10 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
 
   if (!(is_silenced(sptr, acptr)))
   {
-    sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
+    if (IsLocalServiceBot(acptr))
+      bot_deliver_private(sptr, acptr, 0, text);
+    else
+      sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
 
     if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
       sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%s :%s", name, text);
@@ -365,7 +564,13 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const 
   assert(0 != text);
   assert(0 != server);
 
-  if ((acptr = FindServer(server + 1)) == NULL || !IsService(acptr))
+  /* A server that is not a service may still be addressed this way for
+   * a service bot of its own.  Only this server can know that of itself,
+   * so nick@server for another server's bots still needs that server to
+   * be a service.
+   */
+  if ((acptr = FindServer(server + 1)) == NULL
+      || (!IsService(acptr) && !(IsMe(acptr) && bot_service_count() > 0)))
   {
     send_reply(sptr, ERR_NOSUCHNICK, name);
     return;
@@ -390,16 +595,15 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const 
   if ((host = strchr(name, '%')))
     *host++ = '\0';
 
-  if (!(acptr = FindUser(name)) || !MyUser(acptr) ||
-      (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
+  if (!(acptr = FindUser(name))
+      || !(MyUser(acptr) || IsLocalServiceBot(acptr))
+      || (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
     return;
 
   /* Apply the same logic to NOTICE that is applied to PRIVMSG: only
    * allow services to receive /notice nick@server.undernet.org notices.
   */
-  if (!(acptr = FindUser(name)) || !MyUser(acptr) ||
-      !IsChannelService(acptr) ||
-      (!EmptyString(host) && 0 != match(host, cli_user(acptr)->host)))
+  if (!IsChannelService(acptr))
   {
     send_reply(sptr, ERR_NOSUCHNICK, name);
     return;
@@ -419,7 +623,10 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const 
 
   if (!(is_silenced(sptr, acptr)))
   {
-    sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
+    if (IsLocalServiceBot(acptr))
+      bot_deliver_private(sptr, acptr, 1, text);
+    else
+      sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
 
     if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
       sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%s :%s", name, text);
@@ -520,10 +727,80 @@ void relay_private_message(struct Client* sptr, const char* name, const char* te
   if (MyUser(acptr))
     add_target(acptr, sptr);
 
-  sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
+  if (hook_is_active(HOOK_MESSAGE_PRE_PRIVATE)) {
+    struct HookContext hc;
+    char rewrite[BUFSIZE];
+    char alt[BUFSIZE];
+
+    hook_context_init(&hc);
+    hc.hc_client = acptr;      /* who it is going to */
+    hc.hc_source = sptr;       /* who sent it */
+    hc.hc_arg = text;
+    hc.hc_rewrite = rewrite;
+    hc.hc_rewrite_len = sizeof(rewrite);
+    hc.hc_alt = alt;
+    hc.hc_alt_len = sizeof(alt);
+    hc.hc_alt_cap = CAP_NONE;
+    rewrite[0] = '\0';
+    alt[0] = '\0';
+
+    if (hook_run(HOOK_MESSAGE_PRE_PRIVATE, &hc) == HOOK_DENY) {
+      hook_deny_reply(sptr, &hc, ERR_CANNOTSENDTOCHAN, cli_name(acptr));
+      return;
+    }
+
+    if (hc.hc_rewritten) {
+      rewrite[sizeof(rewrite) - 1] = '\0';
+      text = rewrite;
+    }
+
+    /* One recipient, so the choice is simply which body they get -- and
+     * the rich one over a link, because their server makes the same
+     * choice for them. */
+    if (hc.hc_alt_set && hc.hc_alt_cap != CAP_NONE) {
+      int theirs;
+
+      alt[sizeof(alt) - 1] = '\0';
+      theirs = MyUser(acptr) && CapHas(cli_active(acptr), hc.hc_alt_cap);
+
+      if (IsLocalServiceBot(acptr))
+        bot_deliver_private(sptr, acptr, 0, alt);
+      else {
+        if (!theirs && MyUser(acptr))
+          msg_tag_suppress(hc.hc_alt_tag);
+        sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr,
+                      (theirs || !MyUser(acptr)) ? text : alt);
+        msg_tag_suppress(0);
+      }
+
+      if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE)) {
+        int mine = CapHas(cli_active(sptr), hc.hc_alt_cap);
+
+        if (!mine)
+          msg_tag_suppress(hc.hc_alt_tag);
+        sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%C :%s", acptr,
+                      mine ? text : alt);
+        msg_tag_suppress(0);
+      }
+
+      relay_delivered(sptr, acptr, 0, alt, HOOK_MSG_PRIVMSG,
+                      cli_name(acptr));
+      return;
+    }
+  }
+
+  /* A service bot of this server has no connection to deliver to; the
+   * module that owns it gets the message instead.
+   */
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 0, text);
+  else
+    sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%C :%s", acptr, text);
+
+  relay_delivered(sptr, acptr, 0, text, HOOK_MSG_PRIVMSG, cli_name(acptr));
 }
 
 /** Relay a private notice from a local user.
@@ -568,10 +845,15 @@ void relay_private_notice(struct Client* sptr, const char* name, const char* tex
   if (MyUser(acptr))
     add_target(acptr, sptr);
 
-  sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 1, text);
+  else
+    sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%C :%s", acptr, text);
+
+  relay_delivered(sptr, acptr, 0, text, HOOK_MSG_NOTICE, cli_name(acptr));
 }
 
 /** Relay a private message that arrived from a server.
@@ -590,8 +872,8 @@ void server_relay_private_message(struct Client* sptr, const char* name, const c
    * nickname addressed?
    */
   if (0 == (acptr = findNUser(name)) || !IsUser(acptr)) {
-    send_reply(sptr, SND_EXPLICIT | ERR_NOSUCHNICK, "* :Target left %s. "
-	       "Failed to deliver: [%.20s]", feature_str(FEAT_NETWORK),
+    send_reply(sptr, SND_EXPLICIT | ERR_NOSUCHNICK, N_("* :Target left %s. "
+	       "Failed to deliver: [%.20s]"), feature_str(FEAT_NETWORK),
                text);
     return;
   }
@@ -613,7 +895,15 @@ void server_relay_private_message(struct Client* sptr, const char* name, const c
   if (MyUser(acptr))
     add_target(acptr, sptr);
 
-  sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
+  /* A service bot serves the whole network, so a message from a remote
+   * user reaches its module the same way a local user's does.
+   */
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 0, text);
+  else
+    sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
+
+  relay_delivered(sptr, acptr, 0, text, HOOK_MSG_PRIVMSG, cli_name(acptr));
 }
 
 
@@ -651,7 +941,12 @@ void server_relay_private_notice(struct Client* sptr, const char* name, const ch
   if (MyUser(acptr))
     add_target(acptr, sptr);
 
-  sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
+  if (IsLocalServiceBot(acptr))
+    bot_deliver_private(sptr, acptr, 1, text);
+  else
+    sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
+
+  relay_delivered(sptr, acptr, 0, text, HOOK_MSG_NOTICE, cli_name(acptr));
 }
 
 /** Relay a masked message from a local user.
@@ -827,6 +1122,8 @@ relay_channel_tagmsg(struct Client *sptr, const char *name)
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_TAGMSG, cli_from(sptr), "%H", chptr);
+
+  relay_delivered(sptr, 0, chptr, "", HOOK_MSG_TAGMSG, chptr->chname);
 }
 
 /** Relay a local user's TAGMSG to a user. */
@@ -863,6 +1160,8 @@ relay_private_tagmsg(struct Client *sptr, const char *name)
 
   if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
     sendcmdto_one(sptr, CMD_TAGMSG, cli_from(sptr), "%C", acptr);
+
+  relay_delivered(sptr, acptr, 0, "", HOOK_MSG_TAGMSG, cli_name(acptr));
 }
 
 /** Relay a directed TAGMSG (see relay_directed_message()). */
@@ -957,6 +1256,7 @@ server_relay_channel_tagmsg(struct Client *sptr, const char *name)
   if (client_can_send_to_channel(sptr, chptr, 1) || IsChannelService(sptr)) {
     sendcmdto_channel_butone(sptr, CMD_TAGMSG, chptr, cli_from(sptr),
 			     SKIP_DEAF | SKIP_BURST, "%H", chptr);
+    relay_delivered(sptr, 0, chptr, "", HOOK_MSG_TAGMSG, chptr->chname);
   } else {
     send_reply(sptr, ERR_CANNOTSENDTOCHAN, chptr->chname);
   }
@@ -984,6 +1284,8 @@ server_relay_private_tagmsg(struct Client *sptr, const char *name)
     add_target(acptr, sptr);
 
   sendcmdto_one(sptr, CMD_TAGMSG, acptr, "%C", acptr);
+
+  relay_delivered(sptr, acptr, 0, "", HOOK_MSG_TAGMSG, cli_name(acptr));
 }
 
 /** Relay a server-originated masked TAGMSG. */

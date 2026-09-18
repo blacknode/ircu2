@@ -1,14 +1,14 @@
 # Network Configuration (netconf) Feature
 
 ## Overview
-The `netconf` feature provides a dynamic, network-wide configuration system. It allows services (such as SASL authentication layers) to set, update, or delete configuration options that are instantly propagated to all servers in the network. This eliminates the need for manual updates to feature blocks or configuration files on every server when introducing new service-related settings that would need to be known by ircu.
+The `netconf` feature provides a dynamic, network-wide configuration system. It allows services (such as a spam filter) to set, update, or delete configuration options that are instantly propagated to all servers in the network. This eliminates the need for manual updates to feature blocks or configuration files on every server when introducing new service-related settings that would need to be known by ircu.
 
 ## Key Concepts
 - **Network-wide Options:** Settings are stored in a central configuration list and propagated to all servers.
 - **Dynamic Updates:** Options can be set, updated, or deleted at runtime without reloading configuration files.
 - **Timestamps:** Each configuration entry is timestamped; only newer updates are accepted, preventing stale data from overwriting recent changes.
-- **Callbacks:** Modules can register callbacks for configuration key prefixes (e.g., `sasl.`) to react to changes instantly.
-- **Service Integration:** Especially useful for SASL and other service-related features, allowing them to advertise supported mechanisms and options network-wide.
+- **Callbacks:** Modules can register callbacks for configuration key prefixes (e.g., `sline.`) to react to changes instantly.
+- **Service Integration:** Especially useful for service-related features, allowing a service to advertise itself and its options network-wide.
 
 ## How It Works
 - **Setting a Configuration:**
@@ -19,17 +19,19 @@ The `netconf` feature provides a dynamic, network-wide configuration system. It 
 - **Registering Callbacks:**
   - Modules can register a callback for a key prefix to be notified when relevant configuration changes occur.
 
-## Example Use Case: SASL
-The SASL authentication service can dynamically advertise supported mechanisms to the entire network using netconf. For example, when the service starts or its capabilities change, it can send:
+## Example Use Case: the spam filter
+The spam filter service can tell the whole network which server holds it,
+and how long a held message waits, using netconf.  For example, when the
+service starts it can send:
 
 ```
-YY CF 1711200000 sasl.mechanisms :PLAIN,EXTERNAL,SCRAM-SHA-256
+YY CF 1711200000 sline.server :spamfilter.example.net
 ```
 
-This message sets the `sasl.mechanisms` key to the given value with the specified timestamp. All servers will update their configuration and propagate the change. To remove the key:
+This message sets the `sline.server` key to the given value with the specified timestamp. All servers will update their configuration and propagate the change. To remove the key:
 
 ```
-YY CF 1711201234 sasl.mechanisms
+YY CF 1711201234 sline.server
 ```
 
 This deletes the key if the timestamp is newer than the previous value.
@@ -44,9 +46,9 @@ The ircu codebase uses an enum, `NetConf`, to represent each network configurati
 ```c
 /** Network configuration options */
 enum NetConf {
-  NETCONF_SASL_SERVER,
-  NETCONF_SASL_MECHANISMS,
-  NETCONF_SASL_TIMEOUT,
+  NETCONF_SLINE_SERVER,
+  NETCONF_SLINE_HOLD_TIMEOUT,
+  NETCONF_SLINE_HOLD_TIMEOUT_BLOCK,
   NETCONF_LAST_NC
 };
 ```
@@ -60,8 +62,8 @@ To access a configuration value, use one of the following functions:
 Example usage:
 
 ```c
-int timeout = netconf_int(NETCONF_SASL_TIMEOUT);
-const char *mechs = netconf_str(NETCONF_SASL_MECHANISMS);
+int timeout = netconf_int(NETCONF_SLINE_HOLD_TIMEOUT);
+const char *server = netconf_str(NETCONF_SLINE_SERVER);
 ```
 
 This approach ensures that features are accessed consistently and safely throughout the codebase. These are not modules, but configuration features/options. New features should be added as new enum values in `NetConf`.
@@ -79,26 +81,26 @@ This approach ensures that features are accessed consistently and safely through
 - `void config_stats(struct Client *sptr, const struct StatDesc *sd, char *param);`
   - Show configuration entries using /STATS C.
 
-## Integration Example: Registering for SASL Changes
+## Integration Example: Registering for spam filter changes
 
-Suppose you are writing a module that needs to react when the available SASL mechanisms change. You can register a callback for the `sasl.` prefix:
+Suppose you are writing a module that needs to react when the spam filter server moves. You can register a callback for the `sline.` prefix:
 
 ```c
-static void sasl_mech_update(const char *key, const char *old_value, const char *new_value) {
-    printf("SASL config changed: %s: %s -> %s\n", key, old_value ? old_value : "(unset)", new_value ? new_value : "(deleted)");
-    // React to new mechanisms, e.g., update internal state
+static void sline_update(const char *key, const char *old_value, const char *new_value) {
+    printf("sline config changed: %s: %s -> %s\n", key, old_value ? old_value : "(unset)", new_value ? new_value : "(deleted)");
+    // React to the change, e.g., update internal state
 }
 
 void module_init(void) {
-    config_register_callback("sasl.", sasl_mech_update);
+    config_register_callback("sline.", sline_update);
 }
 
 void module_exit(void) {
-    config_unregister_callback("sasl.");
+    config_unregister_callback("sline.");
 }
 ```
 
-Now, whenever any `sasl.*` key is set, updated, or deleted, your callback will be invoked.
+Now, whenever any `sline.*` key is set, updated, or deleted, your callback will be invoked.
 
 ## Integration Example: Setting and Reading a Config Value
 
@@ -107,15 +109,15 @@ To set a network-wide option from code (e.g., from a service or privileged modul
 ```c
 #include <time.h>
 time_t now = time(NULL);
-config_set("sasl.mechanisms", "PLAIN,EXTERNAL", now);
+config_set("sline.server", "spamfilter.example.net", now);
 ```
 
 To read the current value anywhere in the codebase:
 
 ```c
-const char *mechs = config_get("sasl.mechanisms");
-if (mechs) {
-    printf("Current SASL mechanisms: %s\n", mechs);
+const char *server = config_get("sline.server");
+if (server) {
+    printf("Current spam filter server: %s\n", server);
 }
 ```
 
@@ -128,14 +130,14 @@ CF <timestamp> <key> <value>
 ```
 
 - `<timestamp>`: UNIX time (seconds since epoch)
-- `<key>`: configuration key (e.g., `sasl.mechanisms`)
+- `<key>`: configuration key (e.g., `sline.server`)
 - `<value>`: value to set (omit or leave empty to delete the key)
 
 Examples:
 
 ```
-CF 1711200000 sasl.mechanisms PLAIN,EXTERNAL,SCRAM-SHA-256
-CF 1711201234 sasl.mechanisms
+CF 1711200000 sline.server spamfilter.example.net
+CF 1711201234 sline.server
 ```
 
 ## Benefits

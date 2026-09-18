@@ -3,7 +3,7 @@
 Before the pool-ceiling fix, a message whose relayed tag prefix + body exceeded
 the MsgBuf pool maximum (2048 bytes, MB_MAX_SHIFT=11) drove
 make_wire_msgbuf() -> msgq_raw_alloc() past the largest pool bucket. In the
-docker build (./configure --enable-debug, asserts on, optionally ASan) that is
+docker build (-DIRCU_ENABLE_DEBUG=ON, asserts on, optionally ASan) that is
 an assertion abort / out-of-bounds msgBufs[] index -> the server crashes.
 
 The test config sets CLIENTTAGDENY = "*,-example.com/foo", so the

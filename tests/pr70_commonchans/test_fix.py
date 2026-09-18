@@ -54,9 +54,13 @@ async def make_leaf1_client(ircd_network, nick):
 
 
 async def set_umode_c(client, nick):
-    """Set +c on a client and wait for the MODE echo."""
-    await client.send(f"MODE {nick} +c")
-    await client.wait_for("MODE")
+    """Set +c on a client and wait for the echo that says so.
+
+    set_umode() rather than the next MODE: every client is sent
+    `MODE <nick> :+x` of its own after registration, and taking that as
+    the answer is how these tests used to fail with "missing +c: '+x'".
+    """
+    await client.set_umode("+c", nick)
     # Give the umode a moment to propagate across servers
     await asyncio.sleep(0.5)
 
@@ -125,15 +129,13 @@ async def test_umode_c_set_and_unset(ircd_network):
     """+c can be set and unset, and shows up in the umode reply (221)."""
     user = await make_hub_client(ircd_network, "tgt70m")
     try:
-        await user.send("MODE tgt70m +c")
-        mode = await user.wait_for("MODE")
+        mode = await user.set_umode("+c", "tgt70m")
         assert "c" in mode.params[-1], f"MODE echo missing +c: {mode}"
 
         msg = await user.send_and_expect("MODE tgt70m", "221")
         assert "c" in msg.params[-1], f"umode reply missing c: {msg}"
 
-        await user.send("MODE tgt70m -c")
-        await user.wait_for("MODE")
+        await user.set_umode("-c", "tgt70m")
         msg = await user.send_and_expect("MODE tgt70m", "221")
         assert "c" not in msg.params[-1], f"umode reply still has c: {msg}"
     finally:

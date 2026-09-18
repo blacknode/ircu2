@@ -66,14 +66,14 @@ def burst_lines(srv: P10Server, token: str) -> list[str]:
 
 
 def nick_burst_modes(line: str) -> str:
-    """Extract the +modes / account field section from a P10 NICK line."""
+    """Extract the +modes section (with any +z fingerprint) from a P10 NICK line."""
     payload = strip_msg_tags(line)
     if " :" in payload:
         head, _ = payload.rsplit(" :", 1)
     else:
         head = payload
     parts = head.split()
-    # <server> N <nick> <hop> <ts> <user> <host> [+modes account...] <ip> <numnick>
+    # <server> N <nick> <hop> <ts> <user> <host> [+modes [fingerprint]] <ip> <numnick>
     if len(parts) < 9:
         return ""
     return " ".join(parts[7:-2])

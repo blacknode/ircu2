@@ -110,42 +110,23 @@ static int
 do_clearmode(struct Client *cptr, struct Client *sptr, struct Channel *chptr,
 	     char *control)
 {
-  static int flags[] = {
-    MODE_CHANOP,	'o',
-    MODE_VOICE,		'v',
-    MODE_PRIVATE,	'p',
-    MODE_SECRET,	's',
-    MODE_MODERATED,	'm',
-    MODE_TOPICLIMIT,	't',
-    MODE_INVITEONLY,	'i',
-    MODE_NOPRIVMSGS,	'n',
-    MODE_KEY,		'k',
-    MODE_BAN,		'b',
-    MODE_LIMIT,		'l',
-    MODE_REGONLY,	'r',
-    MODE_DELJOINS,      'D',
-    MODE_NOCOLOR,       'c',
-    MODE_NOCTCP,        'C',
-    MODE_NOPARTMSGS,    'u',
-    MODE_MODERATENOREG, 'M',
-    MODE_TLSONLY,       'Z',
-    0x0, 0x0
-  };
-  int *flag_p;
-  unsigned int del_mode = 0;
-  char control_buf[20];
+  const struct ChanMode *cm;
+  chanmode_t del_mode = 0;
+  char control_buf[CHANMODE_CHARS_LEN];
   int control_buf_i = 0;
   struct ModeBuf mbuf;
   struct Ban *link, *next;
   struct Membership *member;
 
-  /* Ok, so what are we supposed to get rid of? */
+  /* Ok, so what are we supposed to get rid of?  Whatever is registered,
+   * which is how a mode a module added gets cleared too; the modes the
+   * core drives by itself are not anyone's to clear.
+   */
   for (; *control; control++) {
-    for (flag_p = flags; flag_p[0]; flag_p += 2)
-      if (*control == flag_p[1]) {
-	del_mode |= flag_p[0];
-	break;
-      }
+    cm = channel_find_chan_mode(*control);
+
+    if (cm && !(cm->attr & CHANMODE_INTERNAL))
+      del_mode |= cm->flag;
   }
 
   if (!del_mode)
@@ -224,9 +205,9 @@ do_clearmode(struct Client *cptr, struct Client *sptr, struct Channel *chptr,
     chptr->mode.key[0] = '\0';
 
   /* Ok, build control string again */
-  for (flag_p = flags; flag_p[0]; flag_p += 2)
-    if (del_mode & flag_p[0])
-      control_buf[control_buf_i++] = flag_p[1];
+  for (cm = channel_chan_modes(); cm; cm = cm->next)
+    if (del_mode & cm->flag)
+      control_buf[control_buf_i++] = cm->c;
 
   control_buf[control_buf_i] = '\0';
 

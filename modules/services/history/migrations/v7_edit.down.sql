@@ -1,0 +1,1 @@
+ALTER TABLE message DROP COLUMN IF EXISTS edited_at;

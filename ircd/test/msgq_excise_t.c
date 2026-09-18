@@ -32,10 +32,18 @@ int send_reply(struct Client *to, int reply, ...) { (void)to; (void)reply; retur
 void server_panic(const char *message) { (void)message; }
 const char *visible_username(const struct Client *cptr) { (void)cptr; return ""; }
 
-/** Build a queued MsgBuf carrying \a text (msgq_make appends CRLF). */
-static struct MsgBuf *mk(const char *text)
+/** Queue \a text on \a mq (msgq_make appends CRLF).
+ *
+ * And then release this caller's reference, which is what send.c does:
+ * msgq_add() takes one of its own, so a caller that holds on to its own
+ * for ever leaks every message it ever sent.
+ */
+static void add(struct MsgQ *mq, const char *text, int prio)
 {
-  return msgq_make(&me, "%s", text);
+  struct MsgBuf *mb = msgq_make(&me, "%s", text);
+
+  msgq_add(mq, mb, prio);
+  msgq_clean(mb);
 }
 
 /** Map \a mq and return the base pointer of segment \a want, or NULL. */
@@ -72,7 +80,7 @@ test_excise_normal_keeps_prio(void)
 
   msgq_init(&mq);
 
-  msgq_add(&mq, mk("NORMALMSG"), 0);      /* normal message, sent == 0 */
+  add(&mq, "NORMALMSG", 0);      /* normal message, sent == 0 */
   len_norm = mq.length;
 
   /* con_rexmit captures the normal message's pointer via msgq_mapiov,
@@ -80,7 +88,7 @@ test_excise_normal_keeps_prio(void)
   base = seg_base(&mq, 0, &n);
   assert(n == 1);
 
-  msgq_add(&mq, mk("PING"), 1);           /* prio jumps ahead while blocked */
+  add(&mq, "PING", 1);           /* prio jumps ahead while blocked */
   len_ping = mq.length - len_norm;
   assert(mq.count == 2);
 
@@ -104,12 +112,12 @@ test_excise_matches_mid_message(void)
   int n;
 
   msgq_init(&mq);
-  msgq_add(&mq, mk("A-LONGER-NORMAL-MESSAGE"), 0);
+  add(&mq, "A-LONGER-NORMAL-MESSAGE", 0);
 
   base = seg_base(&mq, 0, &n);
   assert(n == 1 && base);
 
-  msgq_add(&mq, mk("PING"), 1);
+  add(&mq, "PING", 1);
 
   msgq_excise(&mq, base + 7);               /* mid-message pointer */
 
@@ -132,8 +140,8 @@ test_excise_prio_keeps_normal(void)
   int n;
 
   msgq_init(&mq);
-  msgq_add(&mq, mk("NORMALMSG"), 0);
-  msgq_add(&mq, mk("PINGPRIO"), 1);
+  add(&mq, "NORMALMSG", 0);
+  add(&mq, "PINGPRIO", 1);
 
   /* mapiov order is (partial-normal, prio, normal); with no partial-normal
    * head the priority message is mapped first. */
@@ -160,7 +168,7 @@ test_excise_single_normal(void)
   int n;
 
   msgq_init(&mq);
-  msgq_add(&mq, mk("ONLYMSG"), 0);
+  add(&mq, "ONLYMSG", 0);
   base = seg_base(&mq, 0, &n);
   assert(n == 1 && base);
 

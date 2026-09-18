@@ -29,6 +29,7 @@
 #include "ircd.h"
 #include "ircd_alloc.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -324,7 +325,7 @@ do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
       }
 
       /* ok, here's one that got G-lined */
-      send_reply(acptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, ":%s",
+      send_reply(acptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, N_(":%s"),
       	   gline->gl_reason);
 
       /* let the ops know about it */

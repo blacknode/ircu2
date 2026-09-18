@@ -414,18 +414,28 @@ class P10Server:
         """
         await self._send(f"{self._num} OM {target_numnick} {mode}")
 
-    async def send_account(self, target_numnick: str, account: str,
-                           acc_id: int | None = None, acc_flags: int | None = None):
-        """Send an ACCOUNT message to set a user's account.
+    async def send_user_mode(self, target_nick: str, mode: str,
+                             from_numnick: str | None = None):
+        """Change another user's modes, as this server or as one of its users.
 
-        Format: <our_numeric> AC <target_numnick> <account> [<acc_id> [<acc_flags>]]
+        Format: <source> M <target nick> :<mode>
+
+        The ircd accepts a MODE for somebody else only from a server or from
+        a service bot (+S) acting on a non-operator; see doc/readme.accounting.
+        ``from_numnick`` defaults to this server's numeric.  Setting +r marks
+        the target as identified to its current nick (there is no ACCOUNT
+        message any more, and +r takes no parameter).
         """
-        parts = f"{self._num} AC {target_numnick} {account}"
-        if acc_id is not None:
-            parts += f" {acc_id}"
-            if acc_flags is not None:
-                parts += f" {acc_flags}"
-        await self._send(parts)
+        source = from_numnick or self._num
+        await self._send(f"{source} M {target_nick} :{mode}")
+
+    async def send_register(self, target_nick: str):
+        """Mark ``target_nick`` as identified (+r) on this server's authority."""
+        await self.send_user_mode(target_nick, "+r")
+
+    async def send_unregister(self, target_nick: str):
+        """Take +r away from ``target_nick``."""
+        await self.send_user_mode(target_nick, "-r")
 
     async def introduce_user(
         self,
@@ -434,12 +444,16 @@ class P10Server:
         host: str = "fake.test.net",
         modes: str = "+i",
         realname: str = "Fake User",
+        ip: str = "127.0.0.1",
     ) -> str:
         """Introduce a user originating from this server via a P10 N message.
 
         Format: <our_num> N <nick> <hops> <ts> <user> <host> <+modes> <b64ip> <numnick> :<realname>
 
-        ``modes`` may include a following account token for +r, e.g. ``+ir AcctName``.
+        ``modes`` may include ``r`` (identified to the nick), which takes no
+        parameter: the account is the nick itself.  ``ip`` is the IPv4
+        address the user is introduced from; the receiving server derives
+        the user's hidden host from it (tests/vhost.py).
 
         Returns the new user's numnick.
         """
@@ -447,7 +461,7 @@ class P10Server:
         self._next_client_num += 1
         numnick = self._num + int_to_b64(client_num, 3)
         ts = int(time.time())
-        ip64 = int_to_b64(0x7F000001, 6)  # 127.0.0.1
+        ip64 = ipv4_to_b64(ip)
         await self._send(
             f"{self._num} N {nick} 1 {ts} {username} {host} {modes} "
             f"{ip64} {numnick} :{realname}"

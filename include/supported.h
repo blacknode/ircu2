@@ -67,9 +67,7 @@
 #define FEATURESVALUES2 NICKLEN, TOPICLEN, AWAYLEN, TOPICLEN, \
                         feature_int(FEAT_CHANNELLEN), CHANNELLEN, \
                         (feature_bool(FEAT_LOCAL_CHANNELS) ? "#&" : "#"), "(ov)@+", "@+", \
-                        (feature_bool(FEAT_OPLEVELS) \
-                        ? "b,AkU,l,imnpstrDdRcCuMZ" \
-                        :   "b,k,l,imnpstrDdRcCuMZ"), \
+                        channel_chanmodes_supported(), \
                         "rfc1459", feature_str(FEAT_NETWORK), \
                         feature_str(FEAT_CLIENTTAGDENY)
 

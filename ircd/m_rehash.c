@@ -83,6 +83,7 @@
 
 #include "client.h"
 #include "ircd.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -111,20 +112,23 @@ int mo_rehash(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (parc > 1) { /* special processing */
     if (*parv[1] == 'm') {
-      send_reply(sptr, SND_EXPLICIT | RPL_REHASHING, ":Flushing MOTD cache");
+      send_reply(sptr, SND_EXPLICIT | RPL_REHASHING,
+                 N_(":Flushing MOTD cache"));
       motd_recache(); /* flush MOTD cache */
       return 0;
     } else if (*parv[1] == 'l') {
-      send_reply(sptr, SND_EXPLICIT | RPL_REHASHING, ":Reopening log files");
+      send_reply(sptr, SND_EXPLICIT | RPL_REHASHING,
+                 N_(":Reopening log files"));
       log_reopen(); /* reopen log files */
       return 0;
     } else if (*parv[1] == 's') {
-      send_reply(sptr, SND_EXPLICIT | RPL_REHASHING, ":Reloading TLS files");
+      send_reply(sptr, SND_EXPLICIT | RPL_REHASHING,
+                 N_(":Reloading TLS files"));
       if (ircd_tls_rehash()) {
         sendto_opmask_butone(0, SNO_OLDSNO,
                              "TLS reload failed");
         send_reply(sptr, SND_EXPLICIT | RPL_REHASHING,
-                   ":TLS reload failed");
+                   N_(":TLS reload failed"));
       }
       return 0;
     } else if (*parv[1] == 'q')

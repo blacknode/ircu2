@@ -81,6 +81,7 @@
  */
 #include "config.h"
 
+#include "batch.h"
 #include "client.h"
 #include "ircd.h"
 #include "ircd_chattr.h"
@@ -122,6 +123,13 @@ int m_privmsg(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (parc < 3 || EmptyString(parv[parc - 1]))
     return send_reply(sptr, ERR_NOTEXTTOSEND);
+
+  /* A line that names one of this client's open batches is a piece of a
+   * longer message, not a message: batch.c keeps it until the batch
+   * closes and then relays the whole thing.
+   */
+  if (batch_in_capture(sptr, 0, parv[1], parv[parc - 1]))
+    return 0;
 
   count = unique_name_vector(parv[1], ',', vector, MAXTARGETS);
 

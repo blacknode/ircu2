@@ -1,13 +1,12 @@
+# Historical in-source build products.  CMake builds out of tree, so nothing
+# here should appear any more; the entries stay so that a tree left over from
+# the autotools era does not get committed by accident.
 *.o
-Makefile
-stamp-m
-version.c
+chattr.tab.c
+convert-conf
 ircd
 ircd_parser.c
 ircd_parser.h
-chkconf
 table_gen
 umkpasswd
-convert-conf
-chattr.tab.c
-lex.yy.c
+version.c

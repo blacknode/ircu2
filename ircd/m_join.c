@@ -29,6 +29,7 @@
 #include "client.h"
 #include "gline.h"
 #include "hash.h"
+#include "hooks.h"
 #include "ircd.h"
 #include "ircd_chattr.h"
 #include "ircd_features.h"
@@ -174,11 +175,52 @@ int m_join(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
       continue;
     }
 
+    /* Modules decide next, alongside the server's own reasons to refuse a
+     * join and before the channel is looked up or created.  This is
+     * m_join(), the local-client path: ms_join() carries joins the rest of
+     * the network has already accepted.
+     *
+     * A separate PRE_CREATE below covers the narrower question of whether
+     * this client may bring a channel into existence.
+     */
+    if (hook_is_active(HOOK_CHANNEL_PRE_JOIN)) {
+      struct HookContext hc;
+
+      hook_context_init(&hc);
+      hc.hc_client = sptr;
+      hc.hc_source = cptr;
+      hc.hc_channel = FindChannel(name);   /* NULL if it does not exist yet */
+      hc.hc_arg = name;
+
+      if (hook_run(HOOK_CHANNEL_PRE_JOIN, &hc) == HOOK_DENY) {
+        hook_deny_reply(sptr, &hc, ERR_BANNEDFROMCHAN, name);
+        continue;
+      }
+    }
+
     if (!(chptr = FindChannel(name))) {
       if (((name[0] == '&') && !feature_bool(FEAT_LOCAL_CHANNELS))
           || strlen(name) > IRCD_MIN(CHANNELLEN, feature_int(FEAT_CHANNELLEN))) {
         send_reply(sptr, ERR_NOSUCHCHANNEL, name);
         continue;
+      }
+
+      /* The channel does not exist, so this join would create it.  A
+       * module may allow joining existing channels while refusing to let
+       * this client create new ones.
+       */
+      if (hook_is_active(HOOK_CHANNEL_PRE_CREATE)) {
+        struct HookContext hc;
+
+        hook_context_init(&hc);
+        hc.hc_client = sptr;
+        hc.hc_source = cptr;
+        hc.hc_arg = name;
+
+        if (hook_run(HOOK_CHANNEL_PRE_CREATE, &hc) == HOOK_DENY) {
+          hook_deny_reply(sptr, &hc, ERR_BANNEDFROMCHAN, name);
+          continue;
+        }
       }
 
       if (!(chptr = get_channel(sptr, name, CGT_CREATE)))

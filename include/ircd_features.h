@@ -52,9 +52,7 @@ enum Feature {
   FEAT_RANDOM_SEED,
   FEAT_DEFAULT_LIST_PARAM,
   FEAT_NICKNAMEHISTORYLENGTH,
-  FEAT_HOST_HIDING,
   FEAT_TRUST_USERNAME,
-  FEAT_HIDDEN_HOST,
   FEAT_HIDDEN_IP,
   FEAT_CONNEXIT_NOTICES,
   FEAT_OPLEVELS,
@@ -111,23 +109,65 @@ enum Feature {
   FEAT_NETWORK_FEATURES,
   FEAT_NETWORK_TIME,
 
+  /* Worker threads (see doc/readme.workers) */
+  FEAT_WORKER_THREADS,
+  FEAT_WORKER_QUEUE_MAX,
+
+  /* Modules (see doc/readme.modules) */
+  FEAT_HOOK_TIMEOUT,
+
+  /* Accounts (see doc/proposals/007-identidad.md) */
+  FEAT_ACCOUNT_TIMEOUT,
+  FEAT_ACCOUNT_REQUIRE_TLS,
+  FEAT_GUEST_PREFIX,
+
+  /* History (see doc/proposals/006-comunicaciones-unificadas.md 7.1) */
+  FEAT_HISTORY_RETENTION,
+  FEAT_HISTORY_PRIVATE,
+  FEAT_HISTORY_MAX_LIMIT,
+  FEAT_HISTORY_EXPORT_DIR,
+  FEAT_HISTORY_REDACT_WINDOW,
+  FEAT_HISTORY_EDIT_WINDOW,
+
+  /* HTTP (see include/http.h, doc/readme.http) */
+  FEAT_HTTP_TIMEOUT,
+  FEAT_HTTP_PORT,
+  FEAT_HTTP_BIND,
+  FEAT_HTTP_MAX_CLIENTS,
+  FEAT_HTTP_TLS_CERT,
+  FEAT_HTTP_TLS_KEY,
+  FEAT_HTTP_UPLOAD_MAX,
+  FEAT_HTTP_SPOOL_DIR,
+  FEAT_FILEHOST_DIR,
+  FEAT_FILEHOST_BASE_URL,
+  FEAT_FILEHOST_RETENTION,
+  FEAT_FILEHOST_QUOTA,
+
   /* features that affect all operators */
   FEAT_CONFIG_OPERCMDS,
 
   /* IRCv3 capabilities */
-  FEAT_CAP_ACCOUNTNOTIFY,
   FEAT_CAP_AWAYNOTIFY,
   FEAT_CAP_CHGHOST,
   FEAT_CAP_ECHOMESSAGE,
-  FEAT_CAP_EXTJOIN,
   FEAT_CAP_INVITENOTIFY,
   FEAT_CAP_UHNAMES,
   FEAT_CAP_MESSAGE_TAGS,
   FEAT_CAP_SERVER_TIME,
-  FEAT_CAP_ACCOUNT_TAG,
+  FEAT_CAP_LANGUAGES,
+  FEAT_CAP_BATCH,
+  FEAT_CAP_LABELEDRESPONSE,
+  FEAT_CAP_MULTILINE,
   FEAT_CAP_SASL,
+  FEAT_CAP_STANDARDREPLIES,
+
+  /* Translations (see doc/readme.translations) */
+  FEAT_DEFAULT_LANGUAGE,
 
   /* IRCv3 CLIENTTAGDENY: deny-list / allow-list for client-only (+) tags */
+  FEAT_MULTILINE_MAX_BYTES,
+  FEAT_MULTILINE_MAX_LINES,
+
   FEAT_CLIENTTAGDENY,
 
   /* HEAD_IN_SAND Features */
@@ -153,13 +193,13 @@ enum Feature {
   FEAT_HIS_STATS_L,
   FEAT_HIS_STATS_m,
   FEAT_HIS_STATS_M,
+  FEAT_HIS_STATS_n,
   FEAT_HIS_STATS_o,
   FEAT_HIS_STATS_p,
   FEAT_HIS_STATS_q,
   FEAT_HIS_STATS_r,
   FEAT_HIS_STATS_R,
   FEAT_HIS_STATS_s,
-  FEAT_HIS_STATS_S,
   FEAT_HIS_STATS_t,
   FEAT_HIS_STATS_T,
   FEAT_HIS_STATS_u,
@@ -192,6 +232,9 @@ enum Feature {
   FEAT_URL_CLIENTS,
   FEAT_URLREG,
 
+  /* Network bots (modules/commands/m_bot.c) */
+  FEAT_BOT_HOSTNAME,
+
   FEAT_LAST_F
 };
 
@@ -209,6 +252,17 @@ extern void feature_mark(void);
 
 extern void feature_report(struct Client* to, const struct StatDesc* sd,
                            char* param);
+
+/** Look a feature up by name; -1 when there is no such feature. */
+extern int feature_lookup(const char* name);
+/** What kind of value a feature holds; see feature_type(). */
+#define FEATURE_TYPE_NONE 0
+#define FEATURE_TYPE_INT  1
+#define FEATURE_TYPE_BOOL 2
+#define FEATURE_TYPE_STR  3
+
+/** What kind of value a feature holds; see the note on the definition. */
+extern int feature_type(int feat);
 
 extern int feature_int(enum Feature feat);
 extern int feature_bool(enum Feature feat);

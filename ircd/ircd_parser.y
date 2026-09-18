@@ -23,9 +23,13 @@
 
 #include "config.h"
 #include "s_conf.h"
+#include "channel.h"
 #include "class.h"
+#include "cache.h"
+#include "mail.h"
 #include "client.h"
 #include "crule.h"
+#include "db.h"
 #include "fileio.h"
 #include "gline.h"
 #include "hash.h"
@@ -40,9 +44,11 @@
 #include "ircd_snprintf.h"
 #include "ircd_string.h"
 #include "ircd_tls.h"
+#include "ircd_vhost.h"
 #include "list.h"
 #include "listener.h"
 #include "match.h"
+#include "module.h"
 #include "motd.h"
 #include "numeric.h"
 #include "numnicks.h"
@@ -88,6 +94,7 @@
   struct DenyConf *dconf;
   struct ServerConf *sconf;
   struct s_map *smap;
+  struct ServiceConf *svc;
   struct Privs privs;
   struct Privs privs_dirty;
 
@@ -104,6 +111,7 @@ enum ConfigBlock
   BLOCK_INCLUDE,
   BLOCK_JUPE,
   BLOCK_KILL,
+  BLOCK_MODULE,
   BLOCK_MOTD,
   BLOCK_OPER,
   BLOCK_PORT,
@@ -112,6 +120,11 @@ enum ConfigBlock
   BLOCK_UWORLD,
   BLOCK_WEBIRC,
   BLOCK_IPCHECK,
+  BLOCK_DATABASE,
+  BLOCK_REDIS,
+  BLOCK_SERVICE,
+  BLOCK_SECURITY,
+  BLOCK_MAIL,
   BLOCK_LAST_BLOCK
 };
 
@@ -127,10 +140,12 @@ static void parse_error(char *pattern,...) {
 static int
 permitted(enum ConfigBlock type)
 {
+  /* Indexed by enum ConfigBlock; keep in the same order as that enum. */
   static const char *block_names[BLOCK_LAST_BLOCK+1] = {
     "Admin", "Class", "Client", "Connect", "CRule", "Features",
-    "General", "IAuth", "Include", "Jupe", "Kill", "Motd", "Oper",
-    "Port", "Pseudo", "Quarantine", "UWorld", "IAuth", "IPCheck",
+    "General", "IAuth", "Include", "Jupe", "Kill", "Module", "Motd",
+    "Oper", "Port", "Pseudo", "Quarantine", "UWorld", "WebIRC", "IPCheck",
+    "Database", "Redis", "Service", "Security",
     NULL
   };
 
@@ -216,6 +231,8 @@ static void free_slist(struct SLink **link) {
 %token PREPEND
 %token USERMODE
 %token IAUTH
+%token MODULE
+%token ISOLATION
 %token FAST
 %token AUTOCONNECT
 %token PROGRAM
@@ -226,6 +243,28 @@ static void free_slist(struct SLink **link) {
 %token CLOUDFLARE
 %token IPCHECK
 %token EXCEPT
+%token DATABASE
+%token SERVICE
+%token TYPE
+%token CHANNEL
+%token DSN
+%token READ
+%token WRITE
+%token POOL
+%token READ_POOL
+%token WRITE_POOL
+%token TIMEOUT
+%token TIMEOUT_MS
+%token MIGRATION_TIMEOUT
+%token REDIS
+%token MAIL
+%token VERIFY_WINDOW
+%token VERIFY_URL
+%token RESEND_INTERVAL
+%token SOCKET
+%token PREFIX
+%token SECURITY
+%token VIRTUAL_HOST_KEY
 %token INCLUDE
 %token FROM
 %token TEOF
@@ -247,6 +286,8 @@ static void free_slist(struct SLink **link) {
 %token TPRIV_SEE_CHAN TPRIV_SHOW_INVIS TPRIV_SHOW_ALL_INVIS TPRIV_PROPAGATE
 %token TPRIV_UNLIMIT_QUERY TPRIV_DISPLAY TPRIV_SEE_OPERS TPRIV_WIDE_GLINE
 %token TPRIV_FORCE_OPMODE TPRIV_FORCE_LOCAL_OPMODE TPRIV_APASS_OPMODE
+%token TPRIV_MODULE
+%token TPRIV_HISTORY
 %token TPRIV_LIST_CHAN
 /* and some types... */
 %type <num> sizespec
@@ -269,7 +310,10 @@ block: adminblock | generalblock | classblock | connectblock |
        uworldblock | operblock | portblock | jupeblock | clientblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
-       includeblock | error '}' ';' { yyerrok; };
+       moduleblock | databaseblock | redisblock | serviceblock | securityblock |
+       mailblock |
+       includeblock |
+       error '}' ';' { yyerrok; };
 
 /* The timespec, sizespec and expr was ripped straight from
  * ircd-hybrid-7. */
@@ -298,7 +342,7 @@ timefactor: SECONDS { $$ = 1; }
 sizespec:	expr	{
 			$$ = $1;
 		}
-		| expr BYTES  { 
+		| expr BYTES  {
 			$$ = $1;
 		}
 		| expr KBYTES {
@@ -317,19 +361,19 @@ sizespec:	expr	{
 
 /* this is an arithmetic expression */
 expr: NUMBER
-		{ 
+		{
 			$$ = $1;
 		}
-		| expr '+' expr { 
+		| expr '+' expr {
 			$$ = $1 + $3;
 		}
-		| expr '-' expr { 
+		| expr '-' expr {
 			$$ = $1 - $3;
 		}
-		| expr '*' expr { 
+		| expr '*' expr {
 			$$ = $1 * $3;
 		}
-		| expr '/' expr { 
+		| expr '/' expr {
 			$$ = $1 / $3;
 		}
 /* leave this out until we find why it makes BSD yacc dump core -larne
@@ -816,6 +860,8 @@ privtype: TPRIV_CHAN_LIMIT { $$ = PRIV_CHAN_LIMIT; } |
           TPRIV_SET { $$ = PRIV_SET; } |
           TPRIV_WHOX { $$ = PRIV_WHOX; } |
           TPRIV_BADCHAN { $$ = PRIV_BADCHAN; } |
+          TPRIV_MODULE { $$ = PRIV_MODULE; } |
+          TPRIV_HISTORY { $$ = PRIV_HISTORY; } |
           TPRIV_LOCAL_BADCHAN { $$ = PRIV_LOCAL_BADCHAN; } |
           TPRIV_SEE_CHAN { $$ = PRIV_SEE_CHAN; } |
           TPRIV_SHOW_INVIS { $$ = PRIV_SHOW_INVIS; } |
@@ -1060,6 +1106,12 @@ clientblock: CLIENT
     aconf->conn_class = c_class;
     aconf->maximum = maxlinks;
     aconf->passwd = pass;
+    /* Checked at the end of registration, in s_auth.c: a client with the
+     * wrong certificate is refused with ERR_TLSCLIFINGERPRINT.  Both a
+     * password and a fingerprint have to be satisfied when both are
+     * configured, which is why this does not replace the password. */
+    aconf->tls_fingerprint = tls_fingerprint;
+    tls_fingerprint = NULL;
   }
   if (!aconf) {
     MyFree(username);
@@ -1067,6 +1119,7 @@ clientblock: CLIENT
     MyFree(ip);
     MyFree(pass);
   }
+  MyFree(tls_fingerprint);
   if (username)
     DoIdentLookups = 1;
   host = NULL;
@@ -1075,10 +1128,11 @@ clientblock: CLIENT
   maxlinks = 0;
   ip = NULL;
   pass = NULL;
+  tls_fingerprint = NULL;
   port = 0;
 };
 clientitems: clientitem clientitems | clientitem;
-clientitem: clienthost | clientip | clientusername | clientclass | clientpass | clientmaxlinks | clientport;
+clientitem: clienthost | clientip | clientusername | clientclass | clientpass | clientmaxlinks | clientport | tlsfingerprint;
 clienthost: HOST '=' QSTRING ';'
 {
   char *sep = strchr($3, '@');
@@ -1388,6 +1442,175 @@ pseudoflags: FAST ';'
   smap->flags |= SMAP_FAST;
 };
 
+moduleblock: MODULE {
+  if (!permitted(BLOCK_MODULE)) YYERROR;
+  tping = 0;                    /* borrowed: 0 native, 1 isolated */
+} '{' moduleitems '}' ';' {
+  if (pass != NULL)
+    conf_add_module_node(pass, tping ? 1 : 0);
+  MyFree(pass);
+  pass = NULL;
+  tping = 0;
+};
+
+moduleitems: moduleitem moduleitems | moduleitem;
+moduleitem: modulename | modulefile | moduleisolation;
+/* A module is named, not pathed: the server resolves the name against the
+ * module directory it was built with (MOD_PATH).  "file" is accepted as a
+ * spelling of the same thing.
+ */
+modulename: NAME '=' QSTRING ';'
+{
+  MyFree(pass);
+  pass = $3;
+};
+modulefile: TFILE '=' QSTRING ';'
+{
+  MyFree(pass);
+  pass = $3;
+};
+/* Where the code runs.  "native" is what every module did before this
+ * existed and is the default; "process" puts it in a host of its own, so
+ * that a fault in it is a dead host and not a dead network.  See
+ * doc/readme.isolation.
+ */
+moduleisolation: ISOLATION '=' QSTRING ';'
+{
+  if (!strcmp($3, "process"))
+    tping = 1;
+  else if (!strcmp($3, "native"))
+    tping = 0;
+  else
+    parse_error("Unknown isolation \"%s\"; expected \"native\" or "
+                "\"process\"", $3);
+  MyFree($3);
+};
+
+/* A Service{} block describes one service bot of the network -- a
+ * NickServ, a ChanServ -- for the irc_services module to introduce.  The
+ * server records it and checks what it can: the nick is a nick, the
+ * type is given, no two blocks share a name.  What the type means, and
+ * whether the module knows it, is the module's business; it reads the
+ * list on HOOK_CONFIG_LOADED.  See doc/readme.services.
+ */
+serviceblock: SERVICE {
+  if (!permitted(BLOCK_SERVICE)) YYERROR;
+  svc = MyCalloc(1, sizeof(*svc));
+} '{' serviceitems '}' ';'
+{
+  const char *p;
+  int valid = 1;
+
+  if (!svc->name) {
+    parse_error("Missing name in Service block");
+    valid = 0;
+  } else if (!svc->type) {
+    parse_error("Missing type in Service %s block", svc->name);
+    valid = 0;
+  } else if (conf_find_service(svc->name)) {
+    parse_error("Duplicate Service %s block", svc->name);
+    valid = 0;
+  } else if (*svc->name == '-' || IsDigit(*svc->name)
+             || strlen(svc->name) > NICKLEN) {
+    parse_error("Service name %s is not a valid nick", svc->name);
+    valid = 0;
+  } else {
+    for (p = svc->name; *p; p++)
+      if (!IsNickChar(*p)) {
+        parse_error("Service name %s is not a valid nick", svc->name);
+        valid = 0;
+        break;
+      }
+  }
+
+  if (valid)
+    conf_add_service(svc);
+  else
+    conf_free_service(svc);
+  svc = NULL;
+};
+
+serviceitems: serviceitem serviceitems | serviceitem;
+serviceitem: servicename | servicetype | serviceusername | servicehost |
+  servicedescription | servicechannel | serviceoption;
+servicename: NAME '=' QSTRING ';'
+{
+  MyFree(svc->name);
+  svc->name = $3;
+};
+servicetype: TYPE '=' QSTRING ';'
+{
+  MyFree(svc->type);
+  svc->type = $3;
+};
+serviceusername: USERNAME '=' QSTRING ';'
+{
+  MyFree(svc->username);
+  svc->username = $3;
+};
+servicehost: HOST '=' QSTRING ';'
+{
+  MyFree(svc->host);
+  svc->host = $3;
+};
+servicedescription: DESCRIPTION '=' QSTRING ';'
+{
+  MyFree(svc->description);
+  svc->description = $3;
+};
+/* Repeatable: one line per channel.  Kept in file order so the bot joins
+ * them in the order the operator wrote them.
+ */
+servicechannel: CHANNEL '=' QSTRING ';'
+{
+  struct SLink *link, **tail;
+
+  if (!IsChannelName($3) || !strIsIrcCh($3)) {
+    parse_error("Service channel %s is not a channel name", $3);
+    MyFree($3);
+  } else {
+    link = make_link();
+    link->value.cp = $3;
+    link->next = NULL;
+    for (tail = &svc->channels; *tail; tail = &(*tail)->next)
+      ;
+    *tail = link;
+  }
+};
+
+/* Anything else the service itself needs to be told, as a quoted name and
+ * a value:
+ *
+ *   Service {
+ *     name = "NickServ";
+ *     type = "nickserv";
+ *     "grace_period" = 60;
+ *     "max_accounts" = 3;
+ *   };
+ *
+ * The core keeps these verbatim and never reads one.  A keyword here for
+ * every option any service might ever grow would put the grammar in the
+ * way of writing a service, and a block of its own for each service would
+ * be the same problem spelled differently; the module that implements the
+ * type reads the names it knows through conf_service_option().
+ *
+ * The left-hand side is a quoted string, so no option can collide with an
+ * item above, and a number is accepted as well as a string because most
+ * of them are numbers -- both are kept as text.
+ */
+serviceoption: QSTRING '=' QSTRING ';'
+{
+  conf_service_set_option(svc, $1, $3);
+}
+| QSTRING '=' timespec ';'
+{
+  char *text;
+
+  text = (char*) MyMalloc(32);
+  ircd_snprintf(NULL, text, 32, "%d", $3);
+  conf_service_set_option(svc, $1, text);
+};
+
 iauthblock: IAUTH {
   if (!permitted(BLOCK_IAUTH)) YYERROR;
 } '{' iauthitems '}' ';' {
@@ -1486,6 +1709,243 @@ ipcheck_except_ip_mask: QSTRING
   MyFree($1);
 };
 
+/* The Database block.  The server does not use any of this itself: it keeps
+ * it so that a database module -- loaded before or after this block, or not
+ * at all -- can ask for it.  See include/db.h.
+ *
+ * Only "dsn" is required.  "read" and "write" name replicas and fall back to
+ * "dsn" when they are absent, and the timeout is clamped to five seconds
+ * whatever it says here.
+ */
+databaseblock: DATABASE
+{
+  if (!permitted(BLOCK_DATABASE)) YYERROR;
+  db_conf_clear();
+} '{' databaseitems '}' ';'
+{
+  const char *err = 0;
+
+  if (!db_conf_commit(&err))
+    parse_error("%s", err ? err : "Database: block is incomplete");
+};
+
+databaseitems: databaseitem databaseitems | databaseitem;
+databaseitem: databasedsn | databaseread | databasewrite | databasepool |
+  databasereadpool | databasewritepool | databasetimeout |
+  databasetimeoutms | databasemigrationtimeout;
+
+databasedsn: DSN '=' QSTRING ';'
+{
+  db_conf_set_dsn(-1, $3);
+};
+databaseread: READ '=' QSTRING ';'
+{
+  db_conf_set_dsn(DB_ROLE_READ, $3);
+};
+databasewrite: WRITE '=' QSTRING ';'
+{
+  db_conf_set_dsn(DB_ROLE_WRITE, $3);
+};
+databasepool: POOL '=' expr ';'
+{
+  db_conf_set_pool(-1, $3);
+};
+databasereadpool: READ_POOL '=' expr ';'
+{
+  db_conf_set_pool(DB_ROLE_READ, $3);
+};
+databasewritepool: WRITE_POOL '=' expr ';'
+{
+  db_conf_set_pool(DB_ROLE_WRITE, $3);
+};
+/* Two spellings of one knob: seconds for a configuration that thinks in
+ * seconds, milliseconds for one that wants a fraction of one.  Both are
+ * clamped to DB_TIMEOUT_MAX_MS on commit.
+ */
+databasetimeout: TIMEOUT '=' timespec ';'
+{
+  db_conf_set_timeout($3 * 1000);
+};
+databasetimeoutms: TIMEOUT_MS '=' expr ';'
+{
+  db_conf_set_timeout($3);
+};
+/* Migrations get their own budget, and a much larger one: a migration is
+ * DDL an operator is waiting on, not a query a user is waiting on, and the
+ * five second rule would make any migration over a real table impossible.
+ */
+databasemigrationtimeout: MIGRATION_TIMEOUT '=' timespec ';'
+{
+  db_conf_set_migration_timeout($3 * 1000);
+};
+
+/* Redis { host = "127.0.0.1"; port = 6379; ... };
+ *
+ * The cache in front of the database.  The server does not use a single
+ * field of this itself: it keeps it so that a cache driver -- loaded
+ * before or after the block, or not at all -- can ask.  See
+ * include/cache.h.
+ *
+ * Everything has a default except somewhere to connect: either a host or,
+ * instead of one, a Unix socket.
+ */
+redisblock: REDIS
+{
+  if (!permitted(BLOCK_REDIS)) YYERROR;
+  cache_conf_clear();
+} '{' redisitems '}' ';'
+{
+  const char *err = 0;
+
+  if (!cache_conf_commit(&err))
+    parse_error("%s", err ? err : "Redis: block is incomplete");
+};
+
+redisitems: redisitem redisitems | redisitem;
+redisitem: redishost | redisport | redispassword | redissocket |
+  redisdatabase | redispool | redistimeout | redistimeoutms | redisprefix;
+
+redishost: HOST '=' QSTRING ';'
+{
+  cache_conf_set_host($3);
+};
+redisport: PORT '=' expr ';'
+{
+  cache_conf_set_port($3);
+};
+redispassword: PASS '=' QSTRING ';'
+{
+  cache_conf_set_password($3);
+};
+redissocket: SOCKET '=' QSTRING ';'
+{
+  cache_conf_set_socket($3);
+};
+redisdatabase: DATABASE '=' expr ';'
+{
+  cache_conf_set_database($3);
+};
+redispool: POOL '=' expr ';'
+{
+  cache_conf_set_pool($3);
+};
+/* Two spellings of one knob, as the Database block has.  Both are clamped
+ * to CACHE_TIMEOUT_MAX_MS on commit: a cache slower than that is not a
+ * cache, because the point of asking it first is that it answers before
+ * the database would.
+ */
+redistimeout: TIMEOUT '=' timespec ';'
+{
+  cache_conf_set_timeout($3 * 1000);
+};
+redistimeoutms: TIMEOUT_MS '=' expr ';'
+{
+  cache_conf_set_timeout($3);
+};
+/* Prepended to every key, so two networks can share one store without
+ * reading each other's. */
+redisprefix: PREFIX '=' QSTRING ';'
+{
+  cache_conf_set_prefix($3);
+};
+
+/* Mail {
+ *   from = "noreply@example.net";
+ *   program = "/usr/sbin/sendmail";
+ *   timeout = 30 seconds;
+ *   verify_window = 1 days;
+ *   resend_interval = 5 minutes;
+ *   verify_url = "https://example.net/verify?t=%s";
+ * };
+ *
+ * The block is the core's and the provider reads it, exactly as the
+ * Database{} and Redis{} blocks are: what a message is (a sender, a
+ * deadline, how long a token is good for) belongs to the server, and how
+ * it reaches a mail server belongs to whichever module was loaded to do
+ * it.  Without the block nothing is sent -- mail_available() is false --
+ * and a server that sends no mail is an ordinary server.
+ */
+mailblock: MAIL
+{
+  if (!permitted(BLOCK_MAIL)) YYERROR;
+  mail_conf_clear();
+} '{' mailitems '}' ';'
+{
+  const char *err = 0;
+
+  if (!mail_conf_commit(&err))
+    parse_error("%s", err ? err : "Mail: block is incomplete");
+};
+
+mailitems: mailitem mailitems | mailitem;
+mailitem: mailfrom | mailprogram | mailtimeout | mailwindow |
+  mailresend | mailurl;
+
+mailfrom: FROM '=' QSTRING ';'
+{
+  mail_conf_set_from($3);
+};
+/* Read by the provider, not by the core: modules/workers/sendmail/ hands
+ * the message to this program.  A provider that speaks SMTP itself will
+ * want other fields, and it can have them when it exists -- config nobody
+ * reads is config invented blind.
+ */
+mailprogram: PROGRAM '=' QSTRING ';'
+{
+  mail_conf_set_program($3);
+};
+mailtimeout: TIMEOUT '=' timespec ';'
+{
+  mail_conf_set_timeout($3);
+};
+/* How long a verification token is good for.  Short, because a token that
+ * cannot be revoked is a token whose window is the whole of its risk.
+ */
+mailwindow: VERIFY_WINDOW '=' timespec ';'
+{
+  mail_conf_set_window($3);
+};
+/* The shortest gap between two messages to one client, so that "send it
+ * again" is not a way to have this server mail somebody else repeatedly.
+ */
+mailresend: RESEND_INTERVAL '=' timespec ';'
+{
+  mail_conf_set_resend($3);
+};
+/* Where the token goes in a link, for a deployment that has somewhere to
+ * put one.  With no template the mail carries the token itself, which is
+ * what a network with no web side wants.
+ */
+mailurl: VERIFY_URL '=' QSTRING ';'
+{
+  mail_conf_set_verify_url($3);
+};
+
+/* Security { virtual_host_key = "AbCdEfGhIjKl"; };
+ *
+ * The block is mandatory: every user's visible host is a cipher of its
+ * address under this key (doc/readme.accounting), so a server without one
+ * cannot introduce a user at all.  read_configuration_file() reports the
+ * omission; here we only reject a malformed key.  The key is twelve
+ * characters of the P10 base64 alphabet, and must be the same on every
+ * server of the network.
+ */
+securityblock: SECURITY
+{
+  if (!permitted(BLOCK_SECURITY)) YYERROR;
+} '{' securityitems '}' ';';
+
+securityitems: securityitem securityitems | securityitem;
+securityitem: securityvhostkey;
+
+securityvhostkey: VIRTUAL_HOST_KEY '=' QSTRING ';'
+{
+  if (!vhost_conf_set_key($3))
+    parse_error("virtual_host_key must be exactly %d characters of "
+                "A-Z a-z 0-9 [ ]", VHOST_KEY_LEN);
+  MyFree($3);
+};
+
 includeblock: INCLUDE {
   if (!permitted(BLOCK_INCLUDE)) YYERROR;
   flags = 0;
@@ -1507,6 +1967,7 @@ blocktype: ALL { $$ = ~0; }
   | FEATURES { $$ = 1 << BLOCK_FEATURES; }
   | GENERAL { $$ = 1 << BLOCK_GENERAL; }
   | IAUTH { $$ = 1 << BLOCK_IAUTH; }
+  | MODULE { $$ = 1 << BLOCK_MODULE; }
   | INCLUDE { $$ = 1 << BLOCK_INCLUDE; }
   | JUPE { $$ = 1 << BLOCK_JUPE; }
   | KILL { $$ = 1 << BLOCK_KILL; }
@@ -1518,4 +1979,9 @@ blocktype: ALL { $$ = ~0; }
   | UWORLD { $$ = 1 << BLOCK_UWORLD; }
   | WEBIRC { $$ = 1 << BLOCK_WEBIRC; }
   | IPCHECK { $$ = 1 << BLOCK_IPCHECK; }
+  | DATABASE { $$ = 1 << BLOCK_DATABASE; }
+  | REDIS { $$ = 1 << BLOCK_REDIS; }
+  | MAIL { $$ = 1 << BLOCK_MAIL; }
+  | SERVICE { $$ = 1 << BLOCK_SERVICE; }
+  | SECURITY { $$ = 1 << BLOCK_SECURITY; }
   ;

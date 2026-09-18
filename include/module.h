@@ -1,0 +1,702 @@
+#ifndef INCLUDED_module_h
+#define INCLUDED_module_h
+/*
+ * IRC - Internet Relay Chat, include/module.h
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+/** @file
+ * @brief Public API for loadable modules.
+ *
+ * A module is a shared object that the server loads with dlopen() at run
+ * time.  It exports exactly one symbol, #ircu_module, through which the
+ * server reaches everything else.
+ *
+ * Modules run inside the server process and share its address space.  A
+ * module that misbehaves takes the server with it; see doc/readme.modules.
+ */
+#ifndef INCLUDED_s_conf_h
+#include "s_conf.h"
+#endif
+#ifndef INCLUDED_sys_types_h
+#include <sys/types.h>
+#define INCLUDED_sys_types_h
+#endif
+#ifndef INCLUDED_ircd_handler_h
+#include "ircd_handler.h"
+#endif
+#ifndef INCLUDED_hooks_h
+#include "hooks.h"
+#endif
+#ifndef INCLUDED_client_h
+#include "client.h"     /* flag_t, HasUFlag() */
+#endif
+#ifndef INCLUDED_channel_h
+#include "channel.h"    /* chanmode_t, HasCFlag() */
+#endif
+#ifndef INCLUDED_capab_h
+#include "capab.h"      /* CAPFL_*, CapHas() */
+#endif
+#ifndef INCLUDED_sasl_h
+#include "sasl.h"       /* SaslStepFn, SASL_MECH_* */
+#endif
+#ifndef INCLUDED_account_h
+#include "account.h"    /* struct AccountProvider, account_id_t */
+#endif
+#ifndef INCLUDED_cache_h
+#include "cache.h"      /* struct CacheDriver, cache_id_t */
+#endif
+#ifndef INCLUDED_http_h
+#include "http.h"       /* HttpHandlerFn, http_available() */
+#endif
+#ifndef INCLUDED_worker_h
+#include "worker.h"     /* struct WorkTask, WorkerMainFn */
+#endif
+#ifndef INCLUDED_migration_h
+#include "migration.h"  /* struct MigrationSet */
+#endif
+
+struct Client;
+struct ModuleHandle;
+struct ModuleList;
+
+/** ABI version of the module interface.
+ *
+ * The server refuses to load a module built against a different value.
+ * There is no backwards compatibility: when this changes, modules are
+ * recompiled.  A mismatched pointer layout in a shared address space is
+ * not a failure worth being lenient about.
+ */
+#define IRCU_MODULE_ABI 23
+
+/** Description of a module, exported by the shared object.
+ *
+ * Every module must define exactly one object of this type, named
+ * @c ircu_module and with external linkage.
+ */
+struct ModuleInfo {
+  unsigned int mi_abi;            /**< #IRCU_MODULE_ABI at compile time. */
+  const char*  mi_name;           /**< Short name, e.g. "nocaps". */
+  const char*  mi_version;        /**< Module version string. */
+  const char*  mi_author;         /**< Author of the module. */
+  const char*  mi_description;    /**< One-line description. */
+
+  /** Called once after the module is loaded.
+   * @param[in] mod Handle to use when registering commands and hooks.
+   * @return Zero to keep the module loaded, non-zero to abort the load.
+   */
+  int  (*mi_init)(struct ModuleHandle* mod);
+
+  /** Called once before the module is unloaded.
+   *
+   * Anything registered through the module API is reverted by the server
+   * whether or not this does it; the callback is for the module's own
+   * resources.
+   * @param[in] mod Handle for this module.
+   */
+  void (*mi_fini)(struct ModuleHandle* mod);
+
+  /** Called on /REHASH when the module stays loaded.  May be NULL.
+   * @param[in] mod Handle for this module.
+   */
+  void (*mi_rehash)(struct ModuleHandle* mod);
+};
+
+/*
+ * Accessors for a loaded module.  Modules use these rather than reaching
+ * into struct ModuleHandle, which is private to the server.
+ */
+extern const char* module_name(const struct ModuleHandle* mod);
+/** Absolute path of the shared object; for the module, not for display. */
+extern const char* module_path(const struct ModuleHandle* mod);
+/** The same path relative to the module directory: "<type>/<name>.so" or
+ * "<type>/<name>/<name>.so".  This is what the listings show. */
+extern const char* module_relpath(const struct ModuleHandle* mod);
+/** Absolute directory holding the shared object -- and, for a module built
+ * from a directory, the resources that were copied in beside it. */
+extern const char* module_dir(const struct ModuleHandle* mod);
+extern const char* module_file(const struct ModuleHandle* mod);
+
+/** The module's migrations, or NULL if it ships none.
+ *
+ * Built and validated while the module was loading; a module whose
+ * migrations/ directory broke any of the rules in migration.h did not load
+ * at all, so a handle that exists has a set that is known good.
+ *
+ * Nothing in it runs by itself.  An operator applies and reverts migrations
+ * with /MODULE MIGRATION; see doc/readme.migrations.
+ */
+extern const struct MigrationSet* module_migrations(
+  const struct ModuleHandle* mod);
+/** The module's translation domain, loaded from <dir>/po/ when the
+ * module was, or NULL if it ships none.
+ *
+ * i18n_text() with a NULL domain returns the original, so a module with
+ * no translations never needs to test this.  Define I18N_DOMAIN to the
+ * variable holding it before including ircd_i18n.h and the _() and _n()
+ * macros go to it; see ircd_i18n.h and doc/readme.translations.
+ */
+struct I18nDomain;
+extern struct I18nDomain* module_i18n(const struct ModuleHandle* mod);
+/** Nick that loaded the module, or NULL if the configuration file did. */
+extern const char* module_loaded_by(const struct ModuleHandle* mod);
+extern const char* module_version(const struct ModuleHandle* mod);
+extern const char* module_description(const struct ModuleHandle* mod);
+
+/*
+ * Registering commands.
+ *
+ * Everything a module registers is tracked against its handle and reverted
+ * when the module is unloaded, whether or not mi_fini remembers to do it.
+ */
+
+/** Register a command.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] cmd Command name, e.g. "SPAMFILTER".
+ * @param[in] tok P10 token, or NULL to use the command name.
+ * @param[in] parameters Maximum number of parameters to split the line
+ *   into, NOT a minimum: everything past this many arrives in the last
+ *   one.  Pass MAXPARA unless the command takes free-form trailing text.
+ *   Handlers check their own minimum with need_more_params().
+ * @param[in] flags Bitwise combination of MFLG_* values.
+ * @param[in] handlers One handler per HandlerType; NULL entries become
+ *   m_ignore.
+ * @return Non-zero on success, zero if the name or token is already taken.
+ */
+extern int module_add_command(struct ModuleHandle* mod, const char* cmd,
+                              const char* tok, unsigned int parameters,
+                              unsigned int flags,
+                              MessageHandler handlers[]);
+
+/** Remove a command this module registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] cmd Command name to remove.
+ * @return Non-zero if the command was found and removed.
+ */
+extern int module_del_command(struct ModuleHandle* mod, const char* cmd);
+
+/** Number of commands a module currently has registered. */
+extern unsigned int module_command_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering user modes.
+ *
+ * A module asks for a mode letter and gets a bit back; it does not choose
+ * the bit, because two modules that both chose the same one would share a
+ * flag without either author noticing.  Test the bit on a client with
+ * HasUFlag(), set it with SetUFlag(), clear it with ClrUFlag().
+ *
+ * Like commands and hooks, a mode is reverted when the module unloads:
+ * every user still carrying it is stripped of it, and the change is
+ * announced as an ordinary "-<mode>" so neither they nor the rest of the
+ * network are left believing it is still set.
+ */
+
+/** Register a user mode.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter, A-Z or a-z.
+ * @param[out] flag Receives the bit the server assigned, or zero on
+ *   failure.  May be NULL, though a module that never tests its own mode
+ *   has little use for it.
+ * @return Non-zero on success; zero if the letter is not a letter, if it
+ *   is already taken by the core or by another module, or if the server
+ *   has no free bit left.
+ */
+extern int module_add_user_mode(struct ModuleHandle* mod, char mode,
+                                flag_t* flag);
+
+/** Remove a user mode this module registered.
+ *
+ * Every user that has the mode set loses it, the same way an unload would
+ * do it.  A module cannot remove a core mode, nor one another module
+ * registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter to remove.
+ * @return Non-zero if the mode was found and removed.
+ */
+extern int module_del_user_mode(struct ModuleHandle* mod, char mode);
+
+/** Number of user modes a module currently has registered. */
+extern unsigned int module_user_mode_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering channel modes.
+ *
+ * The same shape as the user modes, with one difference that matters: the
+ * bit is not handed out, it follows from the letter ('A'-'Z' take bits
+ * 0-25, 'a'-'z' bits 26-51).  So the mode a module registers is the same
+ * bit on every server that loads the module, and two servers built from
+ * the same sources never have to agree on anything at run time.  Test the
+ * bit on a channel with HasCFlag(), set it with SetCFlag(), clear it with
+ * ClrCFlag().
+ *
+ * The list of registered modes is readable through channel_chan_modes(),
+ * as a pointer to const: it is the server's list, and a module reads it
+ * rather than reaching into it.
+ *
+ * Like commands and hooks, a mode is reverted when the module unloads:
+ * every channel still carrying it is stripped of it, and the change is
+ * announced as an ordinary "-<mode>" to the members and to the network,
+ * so that no channel is left believing it enforces a policy that nothing
+ * implements any more.
+ */
+
+/** Register a channel mode.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter, A-Z or a-z.
+ * @param[out] flag Receives the bit the letter maps to, or zero on
+ *   failure.  May be NULL, though a module that never tests its own mode
+ *   has little use for it.
+ * @return Non-zero on success; zero if the letter is not a letter, or if
+ *   it is already taken by the core or by another module.
+ */
+extern int module_add_chan_mode(struct ModuleHandle* mod, char mode,
+                                chanmode_t* flag);
+
+/** Remove a channel mode this module registered.
+ *
+ * Every channel that has the mode set loses it, the same way an unload
+ * would do it.  A module cannot remove a core mode, nor one another
+ * module registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] mode Mode letter to remove.
+ * @return Non-zero if the mode was found and removed.
+ */
+extern int module_del_chan_mode(struct ModuleHandle* mod, char mode);
+
+/** Number of channel modes a module currently has registered. */
+extern unsigned int module_chan_mode_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering client capabilities (IRCv3 CAP).
+ *
+ * A module asks for a name and gets a bit position back.  Unlike a channel
+ * mode, the position does not follow from the name and a module must keep
+ * the value it is handed: capabilities are negotiated with a client and
+ * never cross a server link, so two servers have no reason to agree on the
+ * numbering and none is imposed.
+ *
+ * Registering one on a running server announces it with CAP NEW to every
+ * client that asked for cap-notify; removing it, or unloading the module,
+ * announces CAP DEL and clears it from every client that had it, so nobody
+ * is left believing a capability is in force that nothing implements.
+ *
+ * Test the position on a client with CapActive() or HasCap() (client.h).
+ */
+
+/** Register a client capability.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Name as it goes on the wire, e.g. "draft/react".  IRCv3
+ *   names are letters, digits, '-', '.' and '_', optionally prefixed by a
+ *   vendor and a '/'.
+ * @param[in] flags Bitwise combination of CAPFL_* values, or 0.
+ * @param[out] index Receives the position the server assigned, or
+ *   #CAP_NONE on failure.  May be NULL, though a module that never tests
+ *   its own capability has little use for it.
+ * @return Non-zero on success; zero if the name is malformed, if it is
+ *   already registered by the core or by another module, or if the server
+ *   has no free position left.
+ */
+extern int module_add_cap(struct ModuleHandle* mod, const char* name,
+                          unsigned long flags, int* index);
+
+/** Remove a capability this module registered.
+ *
+ * Every client that has it loses it, the same way an unload would do it.
+ * A module cannot remove one of the core's, nor one another module
+ * registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Name to remove.
+ * @return Non-zero if it was found and removed.
+ */
+extern int module_del_cap(struct ModuleHandle* mod, const char* name);
+
+/** Number of capabilities a module currently has registered. */
+extern unsigned int module_cap_count(const struct ModuleHandle* mod);
+
+/*
+ * Handing work to another thread.
+ *
+ * A hook or a command handler runs in the main thread, in the middle of
+ * serving a client, so a module that needs to wait for something -- a
+ * database, an HTTP API, a password hash worth the name -- cannot simply do
+ * it there without stalling every other client.  It submits the work
+ * instead, and gets called back in the main thread when it is done.
+ *
+ * The rules for what a module may touch from a worker thread are in
+ * worker.h and doc/readme.workers.  They are short and they are absolute:
+ * a worker thread that touches core state corrupts it, silently, under
+ * load, in a way no test will reproduce.
+ *
+ * Both calls need FEAT_WORKER_THREADS to be non-zero and both fail
+ * gracefully when it is not, which is the default.  A module that needs
+ * workers checks the return value and says so, rather than assuming.
+ *
+ * Work is tracked against the module handle, like everything else here.
+ * Unloading the module cancels whatever it has queued, waits for whatever
+ * is running -- there is no safe alternative to waiting, since the code in
+ * the worker is about to be unmapped -- and stops its dedicated workers.
+ */
+
+/** Submit a task to the worker pool.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] task Task from worker_task_new(), with wt_work set.  On
+ *   success the server owns it and frees it after wt_done has run.
+ * @return Non-zero on success.  Zero if the pool is off or its queue is
+ *   full, in which case the task is still the caller's to free.
+ */
+extern int module_submit_work(struct ModuleHandle* mod,
+                              struct WorkTask* task);
+
+/** Start a thread with a loop of its own.
+ *
+ * For work that is not a series of short tasks: a listening socket, a
+ * subscription, anything that has to stay up.  The thread hands results
+ * back with worker_post().
+ *
+ * Safe to call from mi_init even though the worker subsystem is not up yet
+ * at that point: the request is held and the thread starts once the
+ * configuration file has been read.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Short name, for logs and /STATS M.
+ * @param[in] fn The thread body.
+ * @param[in] arg Passed through to \a fn.
+ * @return The worker, or NULL.  The server owns it; it is stopped when the
+ *   module unloads (before mi_fini runs), when WORKER_THREADS is set to
+ *   zero, or earlier with module_stop_worker().
+ */
+extern struct Worker* module_spawn_worker(struct ModuleHandle* mod,
+                                          const char* name, WorkerMainFn fn,
+                                          void* arg);
+
+/** Stop a dedicated worker this module started.
+ *
+ * Waits for the thread to return.  Not required: unloading the module does
+ * the same thing, and does it before mi_fini is called, so a module that
+ * stops its worker from mi_fini is stopping one the server already
+ * stopped.  That is fine -- the handle is checked before it is read, and
+ * a worker that is already gone makes this return zero and do nothing --
+ * but it is nothing more than tidiness.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] worker Worker to stop, or NULL.  Invalid once this returns.
+ * @return Non-zero if it was this module's worker and it was stopped;
+ *   zero if it was not, or if it had already been stopped.
+ */
+extern int module_stop_worker(struct ModuleHandle* mod,
+                              struct Worker* worker);
+
+/** Tasks this module has submitted and not yet had delivered. */
+extern unsigned int module_work_count(const struct ModuleHandle* mod);
+
+/** Dedicated workers this module currently has running. */
+extern unsigned int module_worker_count(const struct ModuleHandle* mod);
+
+/*
+ * Registering hooks.  See hooks.h for the hook points and what each one
+ * may do.  Like commands, hooks are reverted when the module unloads.
+ */
+
+/** Attach a callback to a lifecycle hook.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type Hook point, from enum HookType.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier; HOOK_PRIORITY_DEFAULT if
+ *   the module does not care.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @return Non-zero on success.
+ */
+extern int module_add_hook(struct ModuleHandle* mod, enum HookType type,
+                           HookFn fn, int priority, void* user);
+
+/** Detach a callback this module attached.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type Hook point it was attached to.
+ * @param[in] fn The callback to detach.
+ * @return Non-zero if it was found and detached.
+ */
+extern int module_del_hook(struct ModuleHandle* mod, enum HookType type,
+                           HookFn fn);
+
+/** Attach a callback to a command hook.
+ *
+ * #HOOK_COMMAND_PRE and #HOOK_COMMAND_POST are the two points every
+ * command passes through, so a module can see one user act on another --
+ * KICK, KILL, WHOIS, INVITE, MODE, SILENCE, GLINE, SLINE, JUPE -- without
+ * a hook per command.  They take a command name rather than being
+ * registered with module_add_hook(), because watching every command means
+ * being handed every line the server parses, server-to-server traffic
+ * included, and that is rarely what a module wants.
+ *
+ * The context carries a #HookCommand in HookContext::hc_command, with the
+ * subject already resolved: HookContext::hc_client is who the command acts
+ * on, hc_channel the channel, hc_arg the reason or the mask.  Read
+ * hooks.h for the rules -- a service bot's commands are not shown, a veto
+ * only counts for a client of this server, and the parameters are
+ * read-only.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type #HOOK_COMMAND_PRE or #HOOK_COMMAND_POST.
+ * @param[in] cmd Command to watch, e.g. "KICK", or NULL for every command.
+ * @param[in] fn Callback to run.
+ * @param[in] priority Lower numbers run earlier.
+ * @param[in] user Opaque pointer handed back to the callback.
+ * @param[in] flags Bitwise combination of HOOK_CMD_* values, or 0.
+ * @return Non-zero on success.
+ */
+extern int module_add_command_hook(struct ModuleHandle* mod,
+                                   enum HookType type, const char* cmd,
+                                   HookFn fn, int priority, void* user,
+                                   unsigned int flags);
+
+/** Detach a command hook this module attached.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] type Hook point it was attached to.
+ * @param[in] cmd Command it watched, or NULL if it watched every one.
+ * @param[in] fn The callback to detach.
+ * @return Non-zero if it was found and detached.
+ */
+extern int module_del_command_hook(struct ModuleHandle* mod,
+                                   enum HookType type, const char* cmd,
+                                   HookFn fn);
+
+/** Answer a hook this module suspended.
+ *
+ * A hook that cannot decide on the spot -- because the answer is in a
+ * database, or in a password hash that belongs on a worker thread -- reads
+ * HookContext::hc_token, returns #HOOK_PENDING, and calls this when it
+ * knows.  hc_token is non-zero only where the server can wait; see
+ * "Suspending a hook" in include/hooks.h for what that means and what
+ * happens if the answer never comes.
+ *
+ * Call it from the main thread, once per token.  A worker thread must not:
+ * it hands its result back through its completion callback, which the main
+ * thread runs, and that is where the answer belongs.
+ *
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] token The value read from HookContext::hc_token.
+ * @param[in] result #HOOK_DENY to refuse the operation, #HOOK_ALLOW to let
+ *   it proceed.
+ * @param[in] reason Text explaining a refusal, or NULL.
+ * @return Non-zero if the token was still outstanding.
+ */
+extern int module_hook_resume(struct ModuleHandle* mod, hook_token_t token,
+                              enum HookResult result, const char* reason);
+
+/*
+ * SASL mechanisms.
+ *
+ * The core speaks the AUTHENTICATE protocol and brings PLAIN and
+ * EXTERNAL; a module adds the mechanisms whose exchange the core cannot
+ * know in advance.  A mechanism turns what the client sends into a
+ * credential and stops there: whether the credential is any good is the
+ * identity provider's business, not the mechanism's.  See include/sasl.h.
+ *
+ * Registrations are reverted when the module unloads, like everything
+ * else here.
+ */
+
+/** Register a SASL mechanism.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Mechanism name; uppercased, RFC 4422 character set.
+ * @param[in] flags SASL_MECH_* flags.
+ * @param[in] step One round of the exchange.
+ * @return Non-zero on success; zero if the name is malformed or taken.
+ */
+extern int module_add_sasl_mechanism(struct ModuleHandle* mod,
+                                     const char* name, unsigned int flags,
+                                     SaslStepFn step);
+
+/** Remove a SASL mechanism this module registered.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] name Mechanism to remove.
+ * @return Non-zero if it was found and removed.
+ */
+extern int module_del_sasl_mechanism(struct ModuleHandle* mod,
+                                     const char* name);
+
+/*
+ * The identity provider.
+ *
+ * One module answers "is this credential good?" and "whose nickname is
+ * this?".  The core holds the register and the questions in flight, the
+ * same way it holds the database driver and for the same two reasons:
+ * modules cannot resolve each other's symbols, and holding the questions
+ * here is what lets the module be unloaded with some outstanding.
+ *
+ * A provider never blocks.  The query belongs in db.h and the password
+ * hash on a worker; the answer comes back through account_complete() in
+ * the main thread.  See include/account.h.
+ */
+
+/** Register this module as the identity provider.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] provider Static description; must outlive the module.
+ * @return Non-zero on success; zero if one is already registered.
+ */
+extern int module_add_account_provider(struct ModuleHandle* mod,
+                                       const struct AccountProvider* provider);
+
+/** Withdraw this module's identity provider.
+ *
+ * Every question in flight is failed before this returns.
+ * @param[in] mod Handle passed to mi_init.
+ */
+extern void module_del_account_provider(struct ModuleHandle* mod);
+
+/*
+ * The cache driver, and using the cache.
+ *
+ * One module implements the store (modules/workers/redis/); any module may
+ * use it.  The core holds both ends for the reasons in include/cache.h.
+ *
+ * The cache is never the truth: read it first, read the database second,
+ * and a cache that is missing or empty costs a query and nothing else.
+ * That is why module_cache_get() returning zero needs no special
+ * handling -- it is the same thing as a miss.
+ */
+
+/** Register this module as the cache driver.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] driver Static description; must outlive the module.
+ * @return Non-zero on success; zero if one is already registered.
+ */
+extern int module_add_cache_driver(struct ModuleHandle* mod,
+                                   const struct CacheDriver* driver);
+
+/** Withdraw this module's cache driver, failing its calls in flight. */
+extern void module_del_cache_driver(struct ModuleHandle* mod);
+
+/** Read a key.  Zero means there is no cache; go to the database. */
+extern cache_id_t module_cache_get(struct ModuleHandle* mod, const char* key,
+                                   CacheResultFn fn, void* user);
+/** Write a key, with an expiry in seconds (0 for the default). */
+extern cache_id_t module_cache_set(struct ModuleHandle* mod, const char* key,
+                                   const char* value, size_t len, int ttl,
+                                   CacheResultFn fn, void* user);
+/** Delete a key.  What every writer calls after writing to the database. */
+extern cache_id_t module_cache_del(struct ModuleHandle* mod, const char* key,
+                                   CacheResultFn fn, void* user);
+
+/*
+ * HTTP: the routes a module claims on the server's listener.
+ *
+ * The core serves the HTTP (ircd/http_server.c, Mongoose underneath) and
+ * a module claims routes on it; see include/http.h.  A module never sees
+ * a socket: it is handed a request that is already parsed, in the main
+ * thread, and answers now or later.
+ *
+ * A consumer degrades, it does not guess: check module_http_available()
+ * -- is a port configured at all -- say so if not, and switch off the
+ * part that needed it.  Ask from HOOK_CONFIG_LOADED and not from
+ * mi_init, which runs in the middle of the parse when HTTP_PORT may not
+ * have been read yet.
+ */
+
+/** Non-zero when this server is configured to serve HTTP. */
+extern int module_http_available(void);
+
+/** Claim a route.  A path ending in '/' matches everything under it.
+ * @param[in] mod Handle passed to mi_init.
+ * @param[in] method "GET", "POST"; matched case-insensitively.
+ * @param[in] path Where, starting with '/'.
+ * @param[in] fn What to call, in the main thread.
+ * @param[in] user Passed back to \a fn.
+ * @return Non-zero on success.
+ */
+extern int module_add_route(struct ModuleHandle* mod, const char* method,
+                            const char* path, HttpHandlerFn fn, void* user);
+
+/** Give up one route.  Unloading the module does this for every route. */
+extern int module_del_route(struct ModuleHandle* mod, const char* method,
+                            const char* path);
+
+/*
+ * Server-side interface.  Not for use by modules.
+ */
+struct StatDesc;
+extern void module_stats(struct Client* sptr, const struct StatDesc* sd,
+                         char* param);
+
+extern void module_init(void);
+/** Unload every module, leaving the module system up. */
+extern void module_shutdown(void);
+/** Shut down and release the module system; main() only, once, at exit. */
+extern void module_close(void);
+
+/** Where a module's code runs.
+ *
+ * Declared per module in the configuration; see doc/readme.isolation.
+ * The difference is failure, not privilege: an isolated module still
+ * gets everything it asks for, it just cannot reach past the protocol to
+ * take the server down with it.
+ */
+enum ModuleIsolation {
+  MODULE_NATIVE = 0,  /**< dlopen()ed into the server, as always. */
+  MODULE_PROCESS      /**< dlopen()ed into a host process of its own. */
+};
+
+/** Load <name>.so from under MOD_PATH, searching every type directory for
+ * <type>/<name>.so or <type>/<name>/<name>.so; \a name carries no
+ * directory and no suffix.  \a loaded_by is the loading operator's nick,
+ * or NULL for the config file.
+ */
+extern struct ModuleHandle* module_load(const char* name,
+                                        const char* loaded_by,
+                                        const char** errstr);
+
+/** The same, saying where the code should run. */
+extern struct ModuleHandle* module_load_isolation(const char* name,
+                                                  const char* loaded_by,
+                                                  enum ModuleIsolation isolation,
+                                                  const char** errstr);
+
+/** Take an isolated module out after its host has gone.  modhost.c only. */
+extern void module_unload_isolated(struct ModuleHandle* mod);
+
+/** The host process a module runs in, or NULL.  modhost.c only. */
+extern void* module_host(const struct ModuleHandle* mod);
+/** Record it.  modhost.c only. */
+extern void module_set_host(struct ModuleHandle* mod, void* host);
+/** Give an isolated module its description.  modhost.c only. */
+extern void module_set_info(struct ModuleHandle* mod,
+                            const struct ModuleInfo* info);
+extern int module_unload(struct ModuleHandle* mod);
+/** Find a module by the name it declares in its #ModuleInfo. */
+extern struct ModuleHandle* module_find(const char* name);
+/** Find a module by the name it was loaded by. */
+extern struct ModuleHandle* module_find_file(const char* name);
+
+/** Iterate over loaded modules; pass NULL to start. */
+extern struct ModuleHandle* module_next(struct ModuleHandle* mod);
+
+extern unsigned int module_count(void);
+
+/** Non-zero while a module callback is on the stack.
+ *
+ * Unloading a module from inside one of its own callbacks would free the
+ * code that is currently executing, so the server refuses to do it.
+ */
+extern int module_in_callback(void);
+
+/** Record that the configuration mentioned this module, for rehash. */
+extern void module_mark(struct ModuleHandle* mod);
+extern void module_unmark_all(void);
+extern void module_sweep(void);
+extern int  module_changed_on_disk(const struct ModuleHandle* mod);
+extern void module_rehash_notify(struct ModuleHandle* mod);
+
+#endif /* INCLUDED_module_h */

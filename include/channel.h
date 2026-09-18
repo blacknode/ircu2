@@ -33,6 +33,9 @@
 #ifndef INCLUDED_res_h
 #include "res.h"
 #endif
+#ifndef INCLUDED_chan_flags_h
+#include "chan_flags.h"       /* chanmode_t, MODE_* */
+#endif
 
 struct SLink;
 struct Client;
@@ -89,44 +92,61 @@ struct Client;
 
 /* Channel Visibility macros */
 
-#define MODE_CHANOP     CHFL_CHANOP	/**< +o Chanop */
-#define MODE_VOICE      CHFL_VOICE	/**< +v Voice */
-#define MODE_PRIVATE    0x0004		/**< +p Private */
-#define MODE_SECRET     0x0008		/**< +s Secret */
-#define MODE_MODERATED  0x0010		/**< +m Moderated */
-#define MODE_TOPICLIMIT 0x0020		/**< +t Topic Limited */
-#define MODE_INVITEONLY 0x0040		/**< +i Invite only */
-#define MODE_NOPRIVMSGS 0x0080		/**< +n No Private Messages */
-#define MODE_KEY        0x0100		/**< +k Keyed */
-#define MODE_BAN        0x0200		/**< +b Ban */
-#define MODE_LIMIT      0x0400		/**< +l Limit */
-#define MODE_REGONLY    0x0800  	/**< Only +r users may join */
-#define MODE_DELJOINS   0x1000  	/**< New join messages are delayed */
-#define MODE_REGISTERED 0x2000  	/**< +R registered with services */
-#define MODE_NOCOLOR    0x4000          /**< +c No colors */
-#define MODE_NOCTCP     0x8000          /**< +C No CTCPs except ACTION */
-#define MODE_SAVE	0x20000		/**< save this mode-with-arg 'til
-					 * later */
-#define MODE_FREE	0x40000 	/**< string needs to be passed to
-					 * MyFree() */
-#define MODE_BURSTADDED	0x80000		/**< channel was created by a BURST */
-#define MODE_UPASS	0x100000
-#define MODE_APASS	0x200000
-#define MODE_WASDELJOINS 0x400000 	/**< Not DELJOINS, but some joins
-					 * pending */
-#define MODE_NOPARTMSGS 0x800000        /**< +u No part messages */
-#define MODE_MODERATENOREG 0x1000000    /**< +M Moderate unauthed users */
-#define MODE_TLSONLY       0x2000000    /**< +Z TLS users only */
-#define MODE_TLSINSECURE   0x4000000    /**< +z TLS insecure network path */
-
-/** mode flags which take another parameter (With PARAmeterS)
+/* The mode flags themselves live in chan_flags.h: the bit a mode uses is a
+ * function of its letter, so they are declared next to that rule and not
+ * here.  MODE_CHANOP and MODE_VOICE used to be CHFL_CHANOP and CHFL_VOICE
+ * -- the same bits as the membership status -- and are not any more;
+ * chan_member_status() converts between the two.
  */
-#define MODE_WPARAS     (MODE_CHANOP|MODE_VOICE|MODE_BAN|MODE_KEY|MODE_LIMIT|MODE_APASS|MODE_UPASS)
+
+/** A channel mode, as held in the register.
+ *
+ * Modules see this list through channel_chan_modes(), as a pointer to
+ * const: the register is the server's, and the only ways in and out are
+ * channel_append_chan_mode() and channel_remove_chan_mode().
+ */
+struct ChanMode {
+  chanmode_t       flag; /**< Mode flag; follows from #c. */
+  char             c;    /**< Character corresponding to the mode. */
+  char             alt;  /**< Character used towards servers when it differs
+                              from #c, or zero. */
+  unsigned int     attr; /**< Bitwise combination of CHANMODE_* attributes. */
+  unsigned int     count; /**< Number of registered modes; head node only. */
+  struct ChanMode *next; /**< Next mode in the list. */
+};
+
+/*
+ * The channel mode register.  channel_init_chan_modes() fills it with the
+ * modes the server implements; a module adds to it through
+ * module_add_chan_mode(), never by touching the list.
+ */
+extern void channel_init_chan_modes(void);
+extern const struct ChanMode *channel_chan_modes(void);
+extern const struct ChanMode *channel_find_chan_mode(char c);
+extern chanmode_t channel_chan_mode_flag(char c);
+extern int channel_check_chan_mode(char c, chanmode_t flag);
+extern int channel_append_chan_mode(char c, chanmode_t flag);
+extern int channel_remove_chan_mode(char c);
+extern const char *channel_chan_mode_chars(void);
+extern const char *channel_chan_mode_param_chars(void);
+extern const char *channel_chanmodes_supported(void);
+
+/*
+ * Channel flags are the channel modes, kept as a bit mask in the channel's
+ * mode.  A module tests its own mode with HasCFlag() and the bit the
+ * server gave it back.
+ */
+/** Set a channel mode. */
+#define SetCFlag(chptr, flag) ((chptr)->mode.mode |= (flag))
+/** Clear a channel mode. */
+#define ClrCFlag(chptr, flag) ((chptr)->mode.mode &= ~(flag))
+/** Test a channel mode. */
+#define HasCFlag(chptr, flag) (((chptr)->mode.mode & (flag)) != 0)
 
 /** Available Channel modes */
-#define infochanmodes feature_bool(FEAT_OPLEVELS) ? "AbiklmnopstUvrDdRcCuMZz" : "biklmnopstvrDdRcCuMZz"
+#define infochanmodes           channel_chan_mode_chars()
 /** Available Channel modes that take parameters */
-#define infochanmodeswithparams feature_bool(FEAT_OPLEVELS) ? "AbkloUv" : "bklov"
+#define infochanmodeswithparams channel_chan_mode_param_chars()
 
 #define HoldChannel(x)          (!(x))
 /** name invisible */
@@ -147,11 +167,10 @@ typedef enum ChannelGetType {
   CGT_CREATE
 } ChannelGetType;
 
-/* used in SetMode() in channel.c and m_umode() in s_msg.c */
-
-#define MODE_NULL      0
-#define MODE_ADD       0x40000000
-#define MODE_DEL       0x20000000
+/* MODE_NULL, MODE_ADD and MODE_DEL are in chan_flags.h with the rest of
+ * the mask; the user modes have their own UMODE_ADD and UMODE_DEL, since
+ * the direction of a user mode change was never a channel flag.
+ */
 
 /* used in ListingArgs.flags */
 
@@ -243,7 +262,7 @@ struct Membership {
 
 /** Mode information for a channel */
 struct Mode {
-  unsigned int mode;
+  chanmode_t mode;
   unsigned int limit;
   char key[KEYLEN + 1];
   char upass[KEYLEN + 1];
@@ -306,15 +325,15 @@ struct ListingArgs {
 };
 
 struct ModeBuf {
-  unsigned int		mb_add;		/**< Modes to add */
-  unsigned int		mb_rem;		/**< Modes to remove */
+  chanmode_t		mb_add;		/**< Modes to add */
+  chanmode_t		mb_rem;		/**< Modes to remove */
   struct Client	       *mb_source;	/**< Source of MODE changes */
   struct Client	       *mb_connect;	/**< Connection of MODE changes */
   struct Channel       *mb_channel;	/**< Channel they affect */
   unsigned int		mb_dest;	/**< Destination of MODE changes */
   unsigned int		mb_count;	/**< Number of modes w/args */
   struct {
-    unsigned int	mbm_type;	/**< Type of argument */
+    chanmode_t		mbm_type;	/**< Type of argument */
     union {
       unsigned int	mbma_uint;	/**< A limit */
       char	       *mbma_string;	/**< A string */
@@ -421,12 +440,12 @@ extern void CheckDelayedJoins(struct Channel *chan);
 extern void modebuf_init(struct ModeBuf *mbuf, struct Client *source,
 			 struct Client *connect, struct Channel *chan,
 			 unsigned int dest);
-extern void modebuf_mode(struct ModeBuf *mbuf, unsigned int mode);
-extern void modebuf_mode_uint(struct ModeBuf *mbuf, unsigned int mode,
+extern void modebuf_mode(struct ModeBuf *mbuf, chanmode_t mode);
+extern void modebuf_mode_uint(struct ModeBuf *mbuf, chanmode_t mode,
 			      unsigned int uint);
-extern void modebuf_mode_string(struct ModeBuf *mbuf, unsigned int mode,
+extern void modebuf_mode_string(struct ModeBuf *mbuf, chanmode_t mode,
 				char *string, int free);
-extern void modebuf_mode_client(struct ModeBuf *mbuf, unsigned int mode,
+extern void modebuf_mode_client(struct ModeBuf *mbuf, chanmode_t mode,
 				struct Client *client, int oplevel);
 extern int modebuf_flush(struct ModeBuf *mbuf);
 extern void modebuf_extract(struct ModeBuf *mbuf, char *buf);

@@ -85,6 +85,7 @@
 #include "hash.h"
 #include "ircd.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
@@ -198,8 +199,9 @@ int ms_kill(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
   if (!(victim = findNUser(parv[1]))) {
     if (IsUser(sptr))
-      sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :KILL target disconnected "
-		    "before I got him :(", sptr);
+      sendcmdto_one(&me, CMD_NOTICE, sptr,
+                    _(sptr, "%C :KILL target disconnected "
+		    "before I got him :("), sptr);
     return 0;
   }
 
@@ -265,7 +267,8 @@ int mo_kill(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     if (!(victim = get_history(user)))
       return send_reply(sptr, ERR_NOSUCHNICK, user);
 
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Changed KILL %s into %s", sptr,
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :Changed KILL %s into %s"), sptr,
 		  user, cli_name(victim));
   }
   if (!HasPriv(sptr, MyConnect(victim) ? PRIV_LOCAL_KILL : PRIV_KILL))
@@ -282,7 +285,8 @@ int mo_kill(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 
 
   if (!MyConnect(victim) && !HasPriv(sptr, PRIV_KILL)) {
-    sendcmdto_one(&me, CMD_NOTICE, sptr, "%C :Nick %s isn't on your server",
+    sendcmdto_one(&me, CMD_NOTICE, sptr,
+                  _(sptr, "%C :Nick %s isn't on your server"),
 		  sptr, cli_name(victim));
     return 0;
   }

@@ -1,0 +1,318 @@
+HTTP: served by the core, routed to whichever module asked
+==========================================================
+
+Phase 5 of doc/proposals/006-comunicaciones-unificadas.md.  The server is
+Mongoose, on a worker thread of its own; modules claim routes on it and
+never see a socket.
+
+The core serves it rather than a module.  HTTP is not a thing a server
+either has or has not: a listener is one of the server's own ports, it has
+to come up before any module is loaded and stay up across a rehash that
+unloads one, and its TLS is configuration and not code.  What is
+pluggable is the routes, and those are what modules bring.
+
+
+WHY A LIBRARY
+=============
+
+This replaced a hand-written parser and poll() loop that worked.  The
+argument is not that it was broken; it is that HTTP is a protocol where
+being nearly right is a security bug, and the list of ways to get framing
+wrong -- chunked encoding, folded headers, pipelining, Content-Length
+against Transfer-Encoding -- is a list somebody else has already walked,
+with fuzzers, for twenty years.
+
+What came with it, none of it written here: chunked request bodies, TLS,
+and WebSockets and SSE for when they are wanted.
+
+The rule that follows: ircd/mongoose/ is upstream's amalgamation and is
+never edited.  A local patch would give away the only thing this is for.
+Updating is replacing the two files and running the tests.  Mongoose is
+GPL-2.0-only, so an ircd built with it is GPL-2.0 rather than "2 or
+later"; see ircd/mongoose/README.
+
+
+THE TWO SIDES
+=============
+
+The **server** is ircd/http_server.c: the only file in the tree that knows
+Mongoose exists.  It owns the socket, the parsing and the TLS, on a
+thread of its own, and hands the main thread requests that are already
+parsed.
+
+The **consumer** claims routes:
+
+  http_add_route(mod, "POST", "/upload", handle_upload, self)
+
+and checks, from HOOK_CONFIG_LOADED:
+
+  if (!http_available())
+    /* say so in the log; switch that part off; carry on */
+
+It does not fail to load and it does not wait.  The part of it that needed
+HTTP is off and the rest works.  That is the contract db.h has too, and it
+is what keeps "nobody set HTTP_PORT" from being an outage.
+
+http_available() answers from HTTP_PORT, not from the socket: a consumer
+is asking whether its route will ever be reached, and a listener that is
+down for the length of a rehash is not a module's business.  Ask it from
+HOOK_CONFIG_LOADED rather than mi_init, which runs in the middle of the
+parse where the features are not final -- that is the one mistake here
+that is silent.
+
+A route may be claimed while nothing is listening.  The module that wants
+one loads first as often as not, and making that an error would make load
+order part of the configuration.
+
+
+ROUTING
+=======
+
+A path ending in `/` matches everything under it; anything else matches
+exactly.  An exact match beats a prefix, and a longer prefix beats a
+shorter one:
+
+  /files/index        matches only that
+  /files/thumb/       matches /files/thumb/anything
+  /files/             matches everything else under /files/
+
+That is the whole routing language, on purpose.  A pattern syntax is a
+thing every consumer would have to learn and every server would have to
+agree about, and nothing here has needed one.
+
+The method is part of the route.  Two claims on the same method and path
+are refused: two handlers for one route is a question with no right
+answer.
+
+Nothing claimed means the core never owned the request: http_dispatch()
+says so, the server sends its own 404, and there is nothing to clean up.
+
+
+ANSWERING LATER
+===============
+
+A handler runs in the main thread and does **not** have to answer there.
+Authorising an upload means asking a database, and a handler that blocked
+for it would stop every client on the server.  So it is given an
+http_req_t and it either
+
+  - fills in the response and returns non-zero, or
+  - keeps the identifier, returns zero, and calls http_respond() when the
+    answer arrives.
+
+Every request has a deadline -- HTTP_TIMEOUT, five seconds by default --
+on a timer of the core's own.  One that passes is answered 504 and a later
+answer is dropped.  A client holding a socket open because a module forgot
+about it is the failure the deadline exists to bound; answering late is
+not a crash, because a module that answers late has been slow rather than
+wrong.
+
+
+WHAT UNLOADING TAKES
+====================
+
+A consumer unloading takes its routes, and the requests it will never
+answer are handed back to the transport -- ht_cancel() -- so the
+connection is let go rather than held to the deadline.
+
+The listener going down -- HTTP_PORT set to 0, or the server shutting
+down -- takes every request in flight with it, silently: there is nobody
+left to answer through.  The routes stay, and wait for it to come back.
+
+
+BODIES THAT DO NOT FIT
+======================
+
+A body bigger than HTTP_BODY_MAX never crosses into the main thread, in
+either direction.
+
+**Going up**, the worker takes the request at the headers -- before any
+of the body has arrived, which is the only moment a body can be sent
+anywhere but into memory -- and writes it to HTTP_SPOOL_DIR as it comes.
+What the handler is given is a path and a length:
+
+  req->hreq_file      where the bytes are, or NULL
+  req->hreq_filelen   how many
+
+The spool file is the **core's** until the request has been answered, and
+is deleted then, whatever the answer was.  A handler that wants to keep
+the bytes takes them first:
+
+  http_request_save(req, "/var/lib/ircd/files/ab/cd/<id>")
+
+which moves the body to that path wherever it arrived -- a link and an
+unlink for one that came on disk, a write for one small enough to have
+come through memory.  That is the point of the call: **a handler never
+asks which of the two happened**, so there is one description of what
+taking an upload means rather than one per module.  It refuses a name
+that already exists, and http_request_bodylen() is the length either way.
+
+Keep the spool on the same filesystem as wherever handlers put things.  A
+copy would read and write the whole file in the main thread, which is the
+one thing that may not happen there; that it is the same filesystem is
+what makes the move free.
+
+**Going down**, http_response_file() names a file and the worker streams
+it -- Mongoose's own sendfile, with the Range arithmetic and the ETag it
+does for static files.  The request is taken as well as the response so
+that Range and If-None-Match travel with it: a download that could not be
+resumed is a download that starts again.
+
+What is refused, at the headers, before a byte of body is read:
+
+  no HTTP_SPOOL_DIR, or   the ordinary path, so anything over
+  HTTP_UPLOAD_MAX is 0    HTTP_BODY_MAX is 413 as it always was
+  chunked                 411.  It has no length until it ends, and what
+                          is being decided here is whether to take the
+                          body at all
+  over HTTP_UPLOAD_MAX    413
+  a second one on the     400
+  same connection
+
+A request refused there closes the connection once the answer has gone:
+the body is still on its way, and a server that answered and then read it
+would answer it a second time as a request of its own.
+
+
+LIMITS
+======
+
+  HTTP_BODY_MAX       65536   what crosses into the main thread
+  HTTP_HEADERS_MAX    32      headers in either direction
+  HTTP_PATH_MAX       255
+  HTTP_ROUTES_MAX     64      per module
+
+HTTP_BODY_MAX is not a limit on what HTTP can transfer.  It is a limit on
+what the event loop holds: a bigger body is streamed to disk and back, as
+above, because a hundred megabytes buffered here would be a hundred
+megabytes every other client waits behind.
+
+
+CONFIGURING IT
+==============
+
+  F:HTTP_PORT:8080
+  F:HTTP_BIND:127.0.0.1
+  F:HTTP_MAX_CLIENTS:64
+  F:HTTP_TLS_CERT:/etc/ircd/http-cert.pem
+  F:HTTP_TLS_KEY:/etc/ircd/http-key.pem
+
+and WORKER_THREADS at one or more, because the listener is a thread.
+
+  HTTP_PORT           0       where to listen; 0 is off
+  HTTP_BIND           ""      what to bind to; empty is every address
+  HTTP_MAX_CLIENTS    64      connections at once, past which new ones
+                              are closed rather than queued
+  HTTP_TLS_CERT       ""      PEM certificate; both or neither
+  HTTP_TLS_KEY        ""      PEM private key
+  HTTP_UPLOAD_MAX     0       largest body streamed to disk; 0 takes none
+  HTTP_SPOOL_DIR      ""      where those are written while they arrive
+
+http_upload_available() is those two and the port, asked the same way
+http_available() is asked and from the same place: a module that offers
+uploads says so in the log when the answer is no, rather than claiming a
+route that can only ever answer 413.
+
+HTTP_PORT is 0 by default and at 0 nothing listens.  A server does not
+open a second port because a feature exists; an operator says where.
+
+The listener follows the configuration.  It is reconciled once the file
+has been read in full -- at start-up and after every rehash, never in the
+middle of a parse -- and a rehash that changed none of the five settings
+above does nothing at all, because restarting a listener drops every
+connection on it.
+
+TLS is Mongoose's, not the ircd's.  IRCU_TLS picks what the *IRC* ports
+speak and can be gnutls, or none, so the HTTP side reads its own PEM
+files.  Set both or neither; one alone is half a configuration and is
+read as "no TLS".
+
+Which TLS it is depends on the build, and so does what certificate it
+will take:
+
+  IRCU_TLS=openssl    Mongoose uses OpenSSL, which the ircd already links
+                      -- one TLS library in the process, not two.  RSA or
+                      ECDSA, whatever OpenSSL takes.
+  anything else       Mongoose's own: self-contained, TLS 1.3 only, and
+                      **ECDSA only**.  An RSA certificate is refused at
+                      the handshake, which from the client looks like the
+                      connection being dropped.
+
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+      -keyout http-key.pem -out http-cert.pem -days 365 -nodes \
+      -subj "/CN=irc.example.net"
+
+That asymmetry is worth knowing before it is diagnosed at three in the
+morning: the same PEM files that work on an openssl build fail on a
+gnutls one.
+
+
+WHICH THREAD IS WHICH
+=====================
+
+  the socket           the worker's, always
+  the routes           the main thread's, always
+  a request going up   worker_post(), which runs the dispatch in the main
+                       thread
+  an answer coming     mg_wakeup(), which Mongoose documents as safe from
+  back                 any thread and which wakes its poll
+
+There is no queue and no self-pipe here: the library already has one.
+
+Across that line travels a struct of bytes and a connection id -- an
+integer Mongoose guarantees unique -- never a pointer.  A connection that
+went away while its answer was being worked out simply is not found, which
+is the ordinary case for a client that pressed stop.
+
+Nothing on the worker touches core state: no struct Client, no
+CurrentTime, no MyMalloc(), no log_write(), no sendto_*.  Mongoose's own
+logging is compiled out for the same reason, and what it has to say about
+a failed listen comes back as the task it posts.
+
+
+WHAT IT WILL NOT READ
+=====================
+
+Mongoose does the framing.  What it deliberately does not do is decide
+what a path *means*, and that decision is ircd/http_server.c's:
+
+  ".." in a path        400.  Nothing here opens a file, but a path is
+                        handed to modules and one of them will, so the
+                        check belongs where the path is first believed.
+  "%2F", "%5C"          400.  Routing happens on the decoded path, so an
+                        encoded separator would turn what the client
+                        wrote as data into a separator and reach a prefix
+                        route it is not under.
+  "%00"                 400.  It shortens the path for whoever reads it
+                        with str*() next.
+  a control byte        400.
+  a body over 64 KiB    413, unless this server takes uploads, in which
+                        case it is streamed to disk and never reaches
+                        memory at all -- HTTP_BODY_MAX, below.
+
+The path a handler is given is decoded; the query string is not, because
+"+" means a space there and nowhere else and a server that decided would
+be deciding for every route at once.
+
+A response header whose name or value holds a newline is dropped and the
+response still sent: a newline there is how one response becomes two, and
+the second one is whatever the module was handed.
+
+http_t covers the routes, the deadline and what unloading takes, with no
+socket at all -- the split ircd/migration.c has from migration_run.c.
+There is no unit test of the parser any more, because the parser is not
+ours; that is the trade.
+
+
+WHAT THIS IS FOR
+================
+
+File upload and download with object storage behind it, with the ircd
+issuing a short-lived token -- HMAC-SHA256 or AES-256-GCM from
+include/ircd_sha256.h and include/ircd_aes.h -- bound to the account and
+the channel, which the route validates.  Incoming webhooks and a REST
+API for integrations are routes on the same listener.
+
+Files are modules/services/filehost, on top of what is above:
+doc/readme.files.  Incoming webhooks and a REST API are routes on the
+same listener and need nothing here that is not already written.

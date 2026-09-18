@@ -86,6 +86,7 @@
 #include "hash.h"
 #include "ircd.h"
 #include "ircd_features.h"
+#include "ircd_i18n.h"
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
@@ -428,7 +429,8 @@ mo_gline(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
     target = parv[2]; /* get the target... */
     expire = strtol(parv[3], &end, 10) + TStime(); /* and the expiration */
     if (*end != '\0')
-      return send_reply(sptr, SND_EXPLICIT | ERR_BADEXPIRE, "%s :Bad expire time", parv[3]);
+      return send_reply(sptr, SND_EXPLICIT | ERR_BADEXPIRE,
+                        N_("%s :Bad expire time"), parv[3]);
 
     flags |= GLINE_EXPIRE; /* remember that we got an expire time */
 
@@ -465,7 +467,8 @@ mo_gline(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
       reason = parv[parc - 1];
       expire = strtol(parv[parc - 2], &end, 10) + TStime();
       if (*end != '\0')
-        return send_reply(sptr, SND_EXPLICIT | ERR_BADEXPIRE, "%s :Bad expire time", parv[parc - 2]);
+        return send_reply(sptr, SND_EXPLICIT | ERR_BADEXPIRE,
+                          N_("%s :Bad expire time"), parv[parc - 2]);
 
       flags |= GLINE_EXPIRE | GLINE_REASON; /* remember that we got 'em */
 

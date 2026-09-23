@@ -1,34 +1,43 @@
-ACCOUNTING documentation, last updated on 16 Sep 2026
+ACCOUNTING documentation, last updated on 23 Sep 2026
 
-"Accounting" is what the server knows about who a user is: whether it
-is identified to the nick it uses, and what host it is shown under.
-The short version:
+"Accounting" is what the server knows about who a user is: which
+account it is logged in to, and what host it is shown under.  The two
+halves come from opposite directions, and that is the whole shape of
+this file:
 
-  - Every user's host is hidden from the moment it is registered, as a
-    cipher of its real address under a key every server shares.  There
-    is no opting out, for the user or for the operator.
+  - The host is this server's own.  Every user's host is hidden from
+    the moment it is registered, as a cipher of its real address under
+    a key every server shares.  There is no opting out, for the user or
+    for the operator.  Nothing outside the server has a say in it.
 
-  - An account IS a nickname.  There is no account name beside the nick
-    to keep in step with it, no account id and no account flags.  User
-    mode +r means "identified to the nick in use", and cli_account() is
-    that nick.
+  - The account is not this server's at all.  ircu does not register
+    accounts, does not keep passwords and does not decide whether a
+    credential is good: the node that hosts the network's service bots
+    does.  This server records what it is told, sets umode +r, and
+    passes it on.  That is the classic Undernet model, and this fork is
+    back to it.
 
-  - A server, a service bot (+S) or a net burst puts +r on a user and
-    takes it off; the user never does, and a nick change takes it off
-    by itself.
+The short version of the account half:
 
-  - WHOIS says "is a registered user" (307) about a +r user and nothing
-    else; nothing tells an account name because there is none to tell.
+  - cli_user()->account is the account name, at most ACCOUNTLEN (12)
+    characters, with an optional numeric id (acc_id) and flag word
+    (acc_flags) beside it.  IsAccount() tests umode +r.
 
-  - How a user earns +r is phase 1 of the roadmap and is described in
-    doc/readme.sasl: SASL, the ACCOUNT command, /msg NickServ, and the
-    identity module that answers for all three.  This file is the model
-    they act on.
+  - It arrives one of two ways: ACCOUNT (P10 token AC) from a U:lined
+    server on a running network, or +r with the name as its parameter
+    in the NICK that introduces a user in a burst.
 
-  - A user wearing a registered nickname it has not proved is its own
-    is frozen (+f) while a grace period runs, and renamed to guest-*
-    when it runs out.  Whatever cannot be established is never read as
-    "free"; see WHEN NOTHING CAN BE ESTABLISHED below.
+  - There is no -r.  This server cannot take away what it did not
+    give.
+
+  - The account survives a nick change: it is not the nickname, and
+    nothing about changing one says anything about the other.
+
+  - WHOIS reports it as 330 RPL_WHOISACCOUNT, "<nick> <account> :is
+    logged in as".
+
+  - account-notify and extended-join tell a client about it as it
+    happens; WHOX %a asks for it.
 
 
 THE HIDDEN HOST
@@ -81,13 +90,19 @@ Bots the server introduces itself (+B, and services +S) keep the host
 they were configured with; hide_hostmask() leaves them alone and they
 do not carry +x.
 
+An account never changes the host.  Upstream ircu rewrote a user's
+visible host to <account>.<HIDDEN_HOST> on login; here the visible
+host is the cipher of the address and stays that way, so logging in
+changes what a user IS called and never what it LOOKS like.  That also
+means what a ban or SILENCE mask can match is unchanged: the two
+complete identities ~user@realhost and user@hiddenhost, never a mix and
+never a third form built out of the account.
+
 The former HOST_HIDING and HIDDEN_HOST features are gone.  HIDDEN_IP
 (the address USERIP and WHO %i show for a hidden user, that is, for
 every user) and TRUST_USERNAME (drop the ~ from the visible username
 of a hidden user, that is, of every user) remain and are described in
-readme.features.  What a ban or SILENCE mask can match is unchanged:
-the two complete identities ~user@realhost and user@hiddenhost, never
-a mix; the account.hiddenhost form is gone with the account.
+readme.features.
 
 
 THE SECURITY BLOCK
@@ -113,78 +128,99 @@ back into an address by trying addresses, and the address space is
 small.
 
 
-USER MODE +r
-============
+THE ACCOUNT
+===========
 
-+r is the mark of a user identified to the nick it is using.  With it
-the server keeps cli_user()->account, which is the nick that was
-current when +r was granted and nothing else; IsAccount() tests the
-flag and cli_account() reads the string, and every place that used to
-key on "has an account" -- channel modes +r and +M, user mode +R, the
-+R sender exemption -- keys on it still.
+An account is a name the network's services keep, and this server's
+whole part in it is to remember which one a user showed up with.  It
+lives in struct User:
 
-Who may set it:
+    char     account[ACCOUNTLEN + 1];   /* 12 characters, plus the NUL */
+    uint64_t acc_id;                    /* 0 when none was sent */
+    uint64_t acc_flags;                 /* 0 when none was sent */
 
-  - A server, with a MODE for the user on its own authority:
+IsAccount() tests umode +r, cli_account() reads the name (and answers
+"0" for a user with none, which is what WHOX %a prints).  Everything
+that used to key on "has an account" -- channel modes +r and +M, user
+mode +R and its sender exemption -- keys on IsAccount() still.
 
-        <servernum> M <nick> :+r
+ircu does not manage the lifecycle of any of this.  It does not create
+accounts, change passwords, drop accounts or expire them, and it has
+no opinion about what an account name may be beyond its length.  All of
+that belongs to the node that runs the service bots, which is a
+different program; see WHAT THE SERVICES NODE DOES below.
 
-    A services package that has verified a password sends this; it is
-    what the ACCOUNT message used to be for.  -r the same way.
+There are two ways an account reaches a server.
 
-  - A service bot (+S), local through bot_set_user_mode() or remote
-    through the same MODE from the bot's numnick, on any user but an
-    operator.  The user sees the MODE as coming from the bot.
+1.  ACCOUNT, on a running network
+    ------------------------------
 
-  - A net burst: NICK introduces a user with r among its modes.  The
-    letter takes no parameter -- the account being the nick, there is
-    nothing to say -- and this is a change in the wire format: an
-    older ircu reads the token after r as the account name and would
-    misparse the rest of the NICK.  A network that identifies users
-    cannot keep such a server in it.
+        <servernum> AC <target numnick> <account> [<id> [<flags>]]
 
-  - The server itself, on its own authority, when it is the thing that
-    checked the credential: account_login() in ircd/account_user.c,
-    which is what SASL, ACCOUNT and NickServ all end in.  The gate in
-    do_user_mode() accepts IsMe() for exactly this, and nothing
-    arriving on a socket can be &me -- the client path drops the
-    prefix, and m_mode.c gates on IsServer/IsServiceBot first.
+    ircd/m_account.c.  Only a U:lined server may send it -- a Uworld{}
+    block naming the source, checked against the originator and then
+    against the uplink, so a multi-hop relay works -- and anything else
+    is reported in WALLOPS as a protocol violation and dropped.  The
+    server records the name, sets +r, clears +f if it was set (see
+    below), tells the client's common channels through account-notify,
+    and relays the line on.
 
-Nobody else.  A MODE +r or -r from a user, on itself or on anyone
-else, is silently put back the way it was; a user asking to change
-another user's modes gets ERR_USERSDONTMATCH as before, and a MODE for
-another user from a remote client that is neither a server nor a +S
-bot is reported in WALLOPS as a peer misbehaving, as before.
+    A second ACCOUNT naming a different account for a user who already
+    has one is a protocol violation, not a change: the account is not
+    something a second opinion settles.  A first-seen id is adopted so
+    a later flag update can relay a complete line; an id that
+    contradicts one already stored is a violation too.
 
-A nick change takes +r away.  set_nick_name() clears the flag and the
-account and tells the user with a MODE -r; every server applies the
-rule to the NICK it sees, so nothing is put on the wire for it.  A
-change of case alone (Foo to FOO) keeps +r and respells the account.
-Services that want the new nick identified put +r back.
+2.  The NICK burst
+    ---------------
 
-Set_user_mode() is where all of this is enforced (ircd/s_user.c,
-do_user_mode()); set_user_mode_on() is its entry point for a change to
-somebody else's modes, and m_mode.c decides who may reach it.
+        <servernum> N <nick> <hops> <ts> <user> <host> +xr <account> \
+                    <b64 ip> <numnick> :<real name>
 
-Granting +r and taking the nickname are one act.  account_login() does
-both or neither: a client identified to an account it is not wearing is
-a state this model does not define, and if it existed +r would stop
-meaning what it says.  account_logout() undoes both, and the rename it
-does is the subject of the next section.
+    +r takes the account as its parameter, and the parameter is
+    <account>[:<id>[:<flags>]] -- one token, colon-separated, so a
+    burst does not grow a field per number.  ircd/s_user.c reads it in
+    do_user_mode() and umode_str() writes it.  That is how a server
+    that was not there when the ACCOUNT went past finds out.
+
+And there is no third way.  A MODE +r from a user, on itself or on
+anybody else, is put back the way it was before anything is sent: the
+gate in do_user_mode() accepts the change only when it arrived on a
+server link or a server is its source.  A +S service bot on the
+services node reaches it, because its MODE arrives on a link like any
+other -- so a bot that just checked a password may log somebody in --
+while m_mode.c refuses it over an operator (ERR_USERSDONTMATCH is what
+an ordinary user gets for trying at all).  A bot a module created on
+this server is neither, so it cannot: what it can do is the rest of
+bot_set_user_mode(), and include/bot.h documents that.
+
+There is no -r.  The case in do_user_mode() acts on UMODE_ADD alone, so
+a mode string asking to clear it changes nothing and travels nowhere.
+Logging a user out is a matter for the services: on this server the
+account goes when the user does.
+
+A nick change keeps the account.  It is a separate name for a separate
+thing, and a user who changes nick is still whoever the services said
+it was.
 
 
-USER MODE +f, AND THE GUEST NAME
-================================
+USER MODE +f, THE FREEZE
+========================
 
-+f (freeze) marks a user that is wearing a registered nickname it has
-not proved is its own.  It is set and cleared by the same people +r is
--- a server or a +S bot, never the user -- and for the same reason: a
-user that could take its own +f off could walk out of the one state
-that exists to stop it acting under somebody else's name.
++f marks a user that is wearing a nickname it has not shown is its own.
+It is this fork's, not upstream's, and it stays: it is the one state
+that lets a services package hold somebody still while it works out
+whether they may keep the name.
+
+It is set and cleared by a server or a +S service bot, never by the
+user -- a user that could take its own +f off could walk out of the one
+state that exists to stop it acting under somebody else's name.  Both
+directions are restored by the same gate in do_user_mode() that guards
++r.
 
 A frozen user may send only what it needs to stop being frozen:
 
-  AUTHENTICATE, ACCOUNT        identify
+  AUTHENTICATE                  identify
   PRIVMSG / NOTICE to a +S bot  talk to the service that will lift it
   NICK                          leave the nickname behind
   CAP, PING, PONG, QUIT, ERROR  keep the connection up
@@ -195,136 +231,107 @@ a module registers can declare it too, and the gate is in
 parse_dispatch(), the one place both dispatch paths meet.  WHOIS shows
 a frozen user as 692.
 
-Three things lift a freeze:
+Two things lift it:
 
-  - the user identifies.  do_user_mode() clears +f in the same mode
-    change that grants +r -- +r is exactly the proof +f says is
-    missing -- so every way in lifts it without having to remember to;
-  - the grace period runs out, and the user is renamed;
-  - the user changes to a nickname nobody has registered.
+  - an account arrives.  Both paths do it -- ms_account() and the +r
+    case in do_user_mode() -- because an account is exactly the proof
+    +f says is missing, and every server applies the same ACCOUNT, so
+    every server lets go at the same point with nothing on the wire;
+  - a server or a +S bot sends -f.
 
-And a safeguard that is not a rule: if the identity provider goes away
-while somebody is frozen, nothing can ever lift it, so the server
-renames every frozen user (account_provider_gone()).  Unfreezing them
-where they stand would leave a possible impostor holding the name with
-nobody watching.
-
-The guest name is FEAT_GUEST_PREFIX ("guest-") plus eight random base
-62 characters: 2e14 names, so the collision that account_force_guest()
-answers with a KILL is something that does not happen rather than
-something that is handled.  A retry loop around it would be code that
-is written, never tested, and one day executed.
-
-A user is renamed to a guest name in four places, and all four are the
-same statement -- you do not keep a name you cannot show is yours:
-
-  - a failed authentication during registration;
-  - the grace period running out;
-  - ACCOUNT LOGOUT, and NickServ DROP, which end an identification;
-  - a nickname whose owner could not be established (next section).
+What happens after that -- a grace period, a rename, a KILL -- is the
+services node's policy and not this server's.  ircu holds the state and
+enforces what it blocks; it does not decide when to apply it.
 
 
-WHEN NOTHING CAN BE ESTABLISHED
-===============================
+WHAT THE SERVICES NODE DOES
+===========================
 
-When the server cannot find out whose a nickname is -- the database is
-down, the provider is not registered, the deadline passed -- that
-nickname cannot be used.  ACCOUNT_NICK_UNKNOWN is never read as
-ACCOUNT_NICK_FREE.  There is no degraded mode where the user comes in
-without +r and it gets sorted out later: the one moment an impostor
-gets somebody else's nickname is the moment the service protecting it
-is not answering, and an attacker can arrange that moment.
+Everything this server does not.  It is a separate program on a link of
+its own, U:lined in every server's configuration (Uworld{}), and it is
+where the account database, the passwords, the nickname policy and the
+service bots live.  From this server's side the whole interface is:
 
-In practice:
+  - ACCOUNT (AC), to say who a user is;
+  - MODE, to set +f or -f and whatever else a +S bot may set;
+  - XQUERY / XREPLY (doc/readme.xquery), for anything that needs an
+    answer -- SASL among them;
+  - the ordinary things any server does: KILL, NICK, PRIVMSG.
 
-  - registering: the user comes in, under a guest name.  The network
-    does not close because a database fell over, but nobody gets a name
-    that could not be checked.
-  - changing nick: the change is undone and the user keeps the name it
-    had, which grants it nothing it did not already have.
-  - a cache that is down is not this.  Redis is a cache; without it the
-    question goes to PostgreSQL and everything is slower.  What
-    triggers this rule is the source of truth not answering.
-
-The honest cost: a database that is down turns everybody into guest-*.
-That is the decision, and it is the right one -- an afternoon of ugly
-nicknames sorts itself out, an impersonation does not.
-
-None of this applies on a server with no identity provider at all.
-The rule is about a service that failed, not about a network that never
-had accounts.
+No SVS* commands are implemented here.  A services package that wants
+one adds it through the module API (doc/readme.modules), which is where
+a command that is one network's policy belongs.
 
 
-THE ADDRESS A USER IDENTIFIED WITH
-==================================
+SASL
+====
 
-cli_user()->email is the address the credential named.  It is local and
-only local:
+AUTHENTICATE is relayed, not answered.  ircd/sasl.c and
+ircd/m_sasl.c hold one exchange per connection, keyed by a routing
+cookie, and everything a client sends goes to the services server as an
+XQUERY:
 
-  - it never crosses P10.  A user from another server has NULL, which
-    is this server saying it does not know, and nothing invents it;
-  - WHOIS reports it as 691 and only to the user itself -- not to an
-    operator.  An operator needs the address to moderate, not the
-    correspondence of the people being moderated;
-  - it is released together with +r, in do_user_mode().  An
-    identification without its address is a state the model does not
-    define;
-  - it does not reach WHOWAS or anything else that outlives the
-    connection.
+    <ournum> XQ <services numnick> sasl:<cookie> :SASL <...>
 
-It is in struct User and not struct Connection on purpose: a remote
-user has a User and no Connection, so the field exists for it and is
-NULL, which is exactly the statement "this server does not know".
+and everything it says comes back as an XREPLY with the same routing
+prefix, which ircd/m_xreply.c hands back to sasl.c.  The account the
+services report is applied by auth_set_account() in ircd/s_auth.c,
+which parses <account>[:<id>[:<flags>]] exactly as the burst form does.
+
+Three netconf keys configure it (doc/readme.netconf), which means the
+network configures it and not each server:
+
+    sasl.server       the server name to relay to; empty disables SASL
+    sasl.mechanisms   what the sasl capability advertises
+    sasl.timeout      how long an exchange may take, in seconds
+
+The sasl capability is advertised only while all three conditions hold:
+a server name is set, a mechanism list is set, and a server by that
+name is actually linked.  A client that negotiated it before the
+services split keeps the capability; a new client is not offered it.
+/STATS S lists the exchanges in flight.
+
+Numerics 900-908 are the IRCv3 ones and mean what the specification
+says.
 
 
 WHAT A SERVICE BOT MAY DO
 =========================
 
-bot_set_user_mode(bot, target, "+r") -- include/bot.h.  A +S bot may
-change the modes of any user who is not an operator (IsAnOper(): global
-or local), and is held to what a user may set on itself plus +r and
--r: +o, +O, +k, +S, +B, +z and -x are dropped from the string, the rest
+bot_set_user_mode(bot, target, "<modes>") -- include/bot.h.  A +S bot
+may change the modes of any user who is not an operator (IsAnOper():
+global or local), and is held to what a user may set on itself plus
++r: +o, +O, +k, +S, +B, +z and -x are dropped from the string, the rest
 applies.  That rule is enforced on every server the change passes
 through, not only the bot's own, so a peer that claims a bot did more
-is not believed.  A server itself (a MODE from a server numeric) is
-not held to it: it may change anyone's modes to anything, as one server
+is not believed.  A server itself (a MODE from a server numeric) is not
+held to it: it may change anyone's modes to anything, as one server
 trusts another about the users it introduces.
 
 A remote +S bot is one a NICK burst introduced with S among its modes;
 only a server puts +S on a user, as before.
 
 
-WHAT IS GONE
-============
+WHAT A CLIENT SEES
+==================
 
-  ACCOUNT (AC) as it was  There is an ACCOUNT command again, but it is
-                          a client command with LOGIN, LOGOUT and LIST
-                          (readme.sasl) and it has no P10 token: the
-                          historical AC burst is not spoken here, and
-                          the token is deliberately left unclaimed so
-                          an old peer's burst cannot land on it.
-  acc_id, acc_flags       Gone from struct User; account[] holds a nick.
-  330 RPL_WHOISACCOUNT    Replaced by 307 RPL_WHOISREGNICK, "<nick> :is a
-                          registered user", sent for a +r user.
-  WHOX %a and the a flag  The field and the match flag are gone; "n"
-                          already covers what "a" would say.
-  account-notify,         Not advertised, and a CAP REQ for them NAKs.
-  account-tag,            JOIN is always the plain form; no @account=
-  extended-join           is ever attached.  These three stay gone for
-                          a better reason than "they were removed":
-                          with an account that IS the nick, all three
-                          repeat the prefix.  @account=maria on a line
-                          whose prefix already says maria!u@h is noise.
-  IAuth R                 Accepted for older iauth programs and treated
-                          as D, the account ignored, with a warning to
-                          operators (readme.iauth).
-  OPMODE +x               Nothing to grant; every user is +x.
-  HOST_HIDING,            Removed.  HIDDEN_IP and TRUST_USERNAME stay.
-  HIDDEN_HOST
+  WHOIS           330 <nick> <account> :is logged in as
+                  692 <nick> :is frozen  (this fork's, for +f)
+  WHO             %a is the account name, or "0"; %A matches on it
+  account-notify  :<nick>!<user>@<host> ACCOUNT <account>, to every
+                  client with the capability that shares a channel with
+                  the user, the user itself included.  The line carries
+                  the name alone -- no id, no flags: those are between
+                  servers.
+  extended-join   :<nick>!<user>@<host> JOIN <channel> <account>
+                  :<real name>, with "*" for a user with no account.
+                  A client without the capability gets the plain form;
+                  both go out from the same fan-out, so one message is
+                  two bodies and nobody sees the other one's.
 
-SASL is back, and so are numerics 900-908; see doc/readme.sasl.  What
-did not come back is the netconf sasl.* keys or any routing of an
-exchange between servers -- there is nothing to route.
+account-tag is not implemented.  It puts the account on every message a
+user sends, which is a tag on every line for something a client can ask
+about once.
 
 
 TESTS
@@ -332,27 +339,23 @@ TESTS
 
   ircd/test/vhost_t.c           the cipher against IRC-Hispano vectors,
                                 key validation, the configuration glue
-  ircd/test/account_t.c         the provider register and the questions
-                                in flight, without a server
-  ircd/test/user_modes_t.c      the mode letters, +f among them, and
-                                that each one keeps its bit
-  tests/accounting/             +r from server, bot and burst; nick
-                                change; who may change whose modes;
-                                the hidden host on hub and leaf; 307
-  tests/identity/               +f and what it blocks; +r clearing it;
-                                the guest rename; ACCOUNT's refusals;
-                                the sasl capability with no provider;
-                                that no address arrives from a burst
-  tests/identity_db/            the same with a provider and a real
-                                PostgreSQL behind it: registering,
-                                identifying, the grace period, the
-                                account limit, the password change
+  ircd/test/user_modes_t.c      the mode letters, +f and +r among them,
+                                and that each one keeps its bit
+  tests/accounting/             the account from ACCOUNT and from a
+                                burst, that a non-U:lined server's is
+                                ignored, that there is no -r, that a
+                                nick change keeps it, WHOIS 330, WHOX
+                                %a, the hidden host on hub and leaf,
+                                and who may change whose modes
+  tests/account_notify/         who is told about a login and who is
+                                not, locally and across a link
+  tests/account_flags/          account:id:flags in the NICK burst, and
+                                the client ACCOUNT line carrying the
+                                name alone
+  tests/pr_iauthverify/         a SASL exchange relayed to a fake
+                                services server, and what a malformed
+                                answer must not do to the ircd
   tests/trust_username/         visible vs. real identity in WHOIS,
                                 USERHOST, NAMES, WHO, bans, SILENCE,
                                 G-lines
   tests/vhost.py                predicts a client's hidden host
-
-The two suites split along whether there is somebody to answer: the
-first covers what a network does whether or not it has accounts, the
-second needs the "identity" topology (one ircd and one PostgreSQL; see
-doc/readme.sasl).

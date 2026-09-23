@@ -50,9 +50,9 @@
 #include "ircd_vhost.h"
 #include "list.h"
 #include "listener.h"
-#include "mail.h"
 #include "match.h"
 #include "module.h"
+#include "module_sync.h"
 #include "motd.h"
 #include "numeric.h"
 #include "numnicks.h"
@@ -104,13 +104,39 @@ struct ModuleList *GlobalModuleList = NULL;
 
 void conf_add_module_node(const char *name, int isolated) {
   struct ModuleList *mod = (struct ModuleList *)MyMalloc(sizeof(*mod));
+  struct ModuleList **pp;
+
   assert(0 != mod);
 
   DupString(mod->mod_name, (char *)name);
 
   mod->type = isolated;
-  mod->next = GlobalModuleList;
-  GlobalModuleList = mod;
+  mod->next = NULL;
+
+  /* Appended rather than prepended: modules are loaded in the order the
+   * file names them, which is the order an operator reading the file
+   * expects and the only one they can control.
+   */
+  for (pp = &GlobalModuleList; *pp; pp = &(*pp)->next)
+    ;
+  *pp = mod;
+}
+
+/** Forget the Module{} blocks of the configuration being replaced.
+ *
+ * The list is what the file said, not what is loaded: module_sweep()
+ * decides that, from the marks conf_add_module() leaves.
+ */
+void conf_clear_modules(void) {
+  struct ModuleList *mod;
+  struct ModuleList *next;
+
+  for (mod = GlobalModuleList; mod; mod = next) {
+    next = mod->next;
+    MyFree(mod->mod_name);
+    MyFree(mod);
+  }
+  GlobalModuleList = NULL;
 }
 
 /** Tell a user that they are banned, dumping the message from a file.
@@ -986,7 +1012,6 @@ int read_configuration_file(void) {
   feature_unmark();    /* unmark all features for resetting later */
   db_conf_unmark();    /* the Database block is dropped if it is gone */
   cache_conf_unmark(); /* and the Redis block, the same way */
-  mail_conf_unmark();  /* and the Mail block */
   vhost_conf_unmark(); /* a new Security block replaces the key */
   clear_nameservers(); /* clear previous list of DNS servers */
   if (!init_lexer())
@@ -996,7 +1021,6 @@ int read_configuration_file(void) {
   feature_mark();  /* reset unmarked features */
   db_conf_sweep(); /* ... which is decided here, once the file is read */
   cache_conf_sweep();
-  mail_conf_sweep();
   /* The Security block is the one block the server cannot do without:
    * no key, no hidden hosts, no users.  A rehash that drops it keeps the
    * key already in force; the first read has none to fall back on and
@@ -1067,176 +1091,6 @@ static void close_mappings(void) {
     free_mapping(map);
   }
   GlobalServiceMapList = NULL;
-}
-
-/** Service{} blocks of the current configuration, in file order. */
-static struct ServiceConf *serviceConfList;
-
-/** Tail of #serviceConfList, so that file order is kept cheaply. */
-static struct ServiceConf **serviceConfTail = &serviceConfList;
-
-void conf_free_service(struct ServiceConf *svc) {
-  struct SLink *lp, *next;
-
-  if (!svc)
-    return;
-
-  for (lp = svc->channels; lp; lp = next) {
-    next = lp->next;
-    MyFree(lp->value.cp);
-    free_link(lp);
-  }
-  {
-    struct ServiceOption *opt, *onext;
-
-    for (opt = svc->options; opt; opt = onext) {
-      onext = opt->next;
-      MyFree(opt->name);
-      MyFree(opt->value);
-      MyFree(opt);
-    }
-  }
-
-  MyFree(svc->name);
-  MyFree(svc->type);
-  MyFree(svc->username);
-  MyFree(svc->host);
-  MyFree(svc->description);
-  MyFree(svc);
-}
-
-/** Record a free-form setting on a Service{} block.
- *
- * Takes ownership of both strings.  A name given twice keeps the last
- * value, which is what every other item in the block does.
- *
- * @param[in,out] svc Block being read.
- * @param[in] name Option name.
- * @param[in] value Its value.
- */
-void conf_service_set_option(struct ServiceConf *svc, char *name, char *value) {
-  struct ServiceOption *opt;
-  struct ServiceOption **tail;
-
-  assert(0 != svc);
-
-  for (tail = &svc->options; (opt = *tail); tail = &opt->next) {
-    if (0 != ircd_strcmp(opt->name, name))
-      continue;
-
-    MyFree(name);
-    MyFree(opt->value);
-    opt->value = value;
-    return;
-  }
-
-  opt = (struct ServiceOption *)MyCalloc(1, sizeof(*opt));
-  opt->name = name;
-  opt->value = value;
-  *tail = opt;
-}
-
-/** A service's setting, or \a def when the block did not give one.
- * @param[in] svc The block.
- * @param[in] name Option name.
- * @param[in] def What to return when it is absent.
- */
-const char *conf_service_option(const struct ServiceConf *svc, const char *name,
-                                const char *def) {
-  const struct ServiceOption *opt;
-
-  if (!svc || !name)
-    return def;
-
-  for (opt = svc->options; opt; opt = opt->next)
-    if (0 == ircd_strcmp(opt->name, name))
-      return opt->value;
-
-  return def;
-}
-
-/** A service's setting, read as a number.
- *
- * An absent option and an unreadable one both give \a def: a typo that
- * silently became zero would be a grace period of none, or a limit of
- * none, and neither is something to discover in production.
- *
- * @param[in] svc The block.
- * @param[in] name Option name.
- * @param[in] def What to return when it is absent or unreadable.
- */
-int conf_service_option_int(const struct ServiceConf *svc, const char *name,
-                            int def) {
-  const char *text = conf_service_option(svc, name, 0);
-  char *end = 0;
-  long value;
-
-  if (EmptyString(text))
-    return def;
-
-  value = strtol(text, &end, 10);
-
-  if (!end || *end || value < INT_MIN || value > INT_MAX) {
-    log_write(LS_CONFIG, L_WARNING, 0,
-              "Service %s: \"%s\" is not a number in \"%s\"; using %d",
-              svc->name, text, name, def);
-    return def;
-  }
-
-  return (int)value;
-}
-
-void conf_add_service(struct ServiceConf *svc) {
-  assert(0 != svc);
-  assert(0 != svc->name);
-  assert(0 != svc->type);
-
-  svc->next = NULL;
-  *serviceConfTail = svc;
-  serviceConfTail = &svc->next;
-}
-
-const struct ServiceConf *conf_service_list(void) { return serviceConfList; }
-
-const struct ServiceConf *conf_find_service(const char *nick) {
-  const struct ServiceConf *svc;
-
-  for (svc = serviceConfList; svc; svc = svc->next)
-    if (0 == ircd_strcmp(svc->name, nick))
-      return svc;
-
-  return NULL;
-}
-
-/** The first Service{} block of type \a type, or NULL.
- *
- * What a service module calls to find its own block: it knows the type it
- * implements, not the nickname an operator chose for it.
- * @param[in] type Type to look for, compared case-insensitively.
- */
-const struct ServiceConf *conf_find_service_type(const char *type) {
-  const struct ServiceConf *svc;
-
-  if (EmptyString(type))
-    return NULL;
-
-  for (svc = serviceConfList; svc; svc = svc->next)
-    if (0 == ircd_strcmp(svc->type, type))
-      return svc;
-
-  return NULL;
-}
-
-/** Forget every Service{} block, before the file is read again. */
-static void conf_clear_services(void) {
-  struct ServiceConf *svc, *next;
-
-  for (svc = serviceConfList; svc; svc = next) {
-    next = svc->next;
-    conf_free_service(svc);
-  }
-  serviceConfList = NULL;
-  serviceConfTail = &serviceConfList;
 }
 
 /** Load, keep or reload a module named by the configuration.
@@ -1368,7 +1222,7 @@ int rehash(struct Client *cptr, int sig) {
   auth_mark_closing();
   webirc_mark_stale();
   close_mappings();
-  conf_clear_services();
+  conf_clear_modules();
   module_unmark_all();
   DoIdentLookups = 0;
 
@@ -1377,8 +1231,26 @@ int rehash(struct Client *cptr, int sig) {
   /* Modules the new configuration no longer mentions go away.  This runs
    * after the file is read so that a module which merely moved between
    * include files is not needlessly unloaded and reloaded.
+   *
+   * Not after an error, though.  A parse error stops the read where it
+   * stands, so the Module{} blocks past that point were never seen and
+   * every one of them would look like a module the configuration had
+   * dropped.  Unloading the lot over a typo was always wrong; now that
+   * the module set is what the links are compared on
+   * (include/module_sync.h), it would take the server off the network
+   * as well.
    */
-  module_sweep();
+  if (!conf_error) {
+    /* The Module{} blocks the file just named are acted on here, not in
+     * the parse: loading one runs its mi_init, which must not see a
+     * half-read configuration.  Then, and only then, whatever the new
+     * file no longer names is swept.
+     */
+    module_load_configured();
+    module_sweep();
+  } else
+    sendto_opmask_butone(0, SNO_OLDSNO, "Configuration was not read in full; "
+                         "the loaded modules are left alone");
 
   /* Every translation catalog, the core's and each module's, is read
    * again with the same rules as at start-up: a file that will not parse
@@ -1473,6 +1345,13 @@ int rehash(struct Client *cptr, int sig) {
    * in mi_rehash, which runs in the middle of the parse.
    */
   hook_notify(HOOK_CONFIG_LOADED, NULL, NULL, NULL, NULL);
+
+  /* The Module{} blocks are this server's own file, so a rehash that
+   * changed what it runs is not propagated -- it is detected: every peer
+   * is told the new set and drops the link if it is no longer the same
+   * one.  See include/module_sync.h.
+   */
+  modsync_local_change();
 
   return ret;
 }

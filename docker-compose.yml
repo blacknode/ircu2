@@ -249,14 +249,14 @@ services:
     depends_on:
       - ircd-nf-b
 
-  # Identity topology: one ircd with the identity module, and the
-  # PostgreSQL it stores accounts in.  Redis is deliberately absent: the
-  # cache is never the truth (doc/readme.cache), so a server without one
-  # answers exactly the same and one container less has to come up for a
-  # test run.
-  identity-db:
+  # Store topology: one ircd with a database behind it, and the
+  # PostgreSQL the modules that keep things write to.  Redis is
+  # deliberately absent: the cache is never the truth
+  # (doc/readme.cache), so a server without one answers exactly the
+  # same and one container less has to come up for a test run.
+  store-db:
     image: postgres:17-alpine
-    container_name: ircu-identity-db
+    container_name: ircu-store-db
     environment:
       POSTGRES_USER: ircu
       POSTGRES_PASSWORD: ircu
@@ -276,20 +276,17 @@ services:
       ircu-test-net:
         ipv4_address: 10.55.0.50
 
-  ircd-identity:
+  ircd-store:
     build:
       context: .
       args:
-        IRCD_CONF: tests/docker/ircd-identity.conf
+        IRCD_CONF: tests/docker/ircd-store.conf
         TLS_BACKEND: ${TLS_BACKEND:-openssl}
         SANITIZE: ${IRCD_SANITIZE:-}
-    container_name: ircu-identity
+    container_name: ircu-store
     environment:
       IRCD_DEBUG: ${IRCD_DEBUG:-}
       ASAN_OPTIONS: ${ASAN_OPTIONS:-abort_on_error=1:halt_on_error=1:detect_leaks=0:log_path=/opt/ircu/debug/asan}
-      # The same value on every server of a network, and never in the
-      # configuration file; see doc/readme.sasl.
-      IRCU_PASSWORD_PEPPER: "test-network-pepper"
     volumes:
       - ${IRCD_DEBUG_DIR:-./tests/debug-output}:/opt/ircu/debug
     security_opt:
@@ -309,7 +306,7 @@ services:
       ircu-test-net:
         ipv4_address: 10.55.0.51
     depends_on:
-      identity-db:
+      store-db:
         condition: service_healthy
 
 networks:

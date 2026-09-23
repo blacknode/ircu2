@@ -673,6 +673,9 @@ export class Client {
       case 'JOIN':
         this.onJoin(msg);
         return;
+      case 'ACCOUNT':
+        this.onAccount(msg);
+        return;
       case 'PART':
         this.onPart(msg);
         return;
@@ -777,9 +780,47 @@ export class Client {
     if (msg.prefix?.user) user.user = msg.prefix.user;
     if (msg.prefix?.host) user.host = msg.prefix.host;
 
+    // extended-join: JOIN <channel> <account> :<real name>, with "*" for
+    // somebody who is not logged in.  Without the capability the server
+    // sends the plain form and the two extra parameters are simply not
+    // there, which is why nothing below is conditional on the cap.
+    if (msg.params.length >= 3) {
+      const account = msg.params[1] ?? '*';
+      const realname = msg.params[2];
+
+      user.identified = account !== '*';
+      if (account === '*') delete user.account;
+      else user.account = account;
+      if (realname !== undefined) user.realname = realname;
+    }
+
     channel.members.set(NetworkState.fold(nick), { nick, op: false, voice: false });
 
     this.emitter.emit({ type: 'joined', channel, nick, self });
+  }
+
+  /** `ACCOUNT` (account-notify): somebody logged in, or out.
+   *
+   * The parameter is the account name, or `*` for a logout.  The
+   * server sends the name alone -- the id and the flags that ride with
+   * it between servers never reach a client.
+   */
+  private onAccount(msg: Message): void {
+    const nick = msg.prefix?.nick ?? '';
+    const param = msg.params[0] ?? '*';
+    const account = param === '*' ? undefined : param;
+    const user = this.state.touchUser(nick);
+
+    user.identified = account !== undefined;
+    if (account === undefined) delete user.account;
+    else user.account = account;
+
+    if (NetworkState.fold(nick) === NetworkState.fold(this.state.nick)) {
+      this.state.identified = user.identified;
+      this.state.account = account;
+    }
+
+    this.emitter.emit({ type: 'account', nick, ...(account !== undefined ? { account } : {}) });
   }
 
   private onPart(msg: Message): void {
@@ -851,9 +892,8 @@ export class Client {
 
   /** Ask for a different nickname.
    *
-   * Which is also leaving the account: the account *is* the nickname, so
-   * a nick change clears `+r` on every server without anything crossing
-   * the wire.
+   * Which says nothing about the account: they are two names for two
+   * things, and a nick change leaves `+r` where it was.
    */
   changeNick(nick: string): void {
     this.expectedNickChange = true;
@@ -877,15 +917,23 @@ export class Client {
     const change = msg.params.slice(1).join(' ');
 
     if (NetworkState.fold(target) === NetworkState.fold(this.state.nick)) {
-      this.applyUserModes(msg.params[1] ?? '');
+      this.applyUserModes(msg.params[1] ?? '', msg.params.slice(2));
     }
 
     this.emitter.emit({ type: 'mode', target, change, by: msg.prefix?.nick ?? '' });
   }
 
-  /** Track our own `+r` and `+f`, which change what we may do. */
-  private applyUserModes(spec: string): void {
+  /** Track our own `+r` and `+f`, which change what we may do.
+   *
+   * `+r` takes the account name as its parameter, so the letters are
+   * read alongside whatever followed them; `args` is consumed in order,
+   * the way the server writes it.  There is no `-r`: the server cannot
+   * take away what it did not give, so a mode string asking for one
+   * changes nothing here either.
+   */
+  private applyUserModes(spec: string, args: readonly string[] = []): void {
     let adding = true;
+    let next = 0;
 
     for (const ch of spec) {
       if (ch === '+') {
@@ -900,15 +948,17 @@ export class Client {
       if (adding) this.state.modes.add(ch);
       else this.state.modes.delete(ch);
 
-      if (ch === 'r') {
-        this.state.identified = adding;
+      if (ch === 'r' && adding) {
+        const account = args[next++] ?? this.state.account;
 
-        // The address is released together with `+r` on the server, for
-        // the reason it exists at all: an identification without its
-        // address is a state the model does not define.
-        if (!adding) this.state.email = undefined;
+        this.state.identified = true;
+        // "<account>:<id>:<flags>" is one parameter on the wire; the id
+        // and the flags are between servers and mean nothing here.
+        this.state.account = account?.split(':')[0];
 
-        if (adding) this.emitter.emit({ type: 'identified', account: this.state.nick });
+        if (this.state.account) {
+          this.emitter.emit({ type: 'identified', account: this.state.account });
+        }
       }
 
       if (ch === 'f' && this.state.frozen !== adding) {

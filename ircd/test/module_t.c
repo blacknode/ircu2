@@ -16,7 +16,6 @@
 #include "migration.h"
 #include "module.h"
 #include "capab.h"
-#include "sasl.h"
 #include "hooks.h"
 #include "channel.h"
 #include "client.h"
@@ -667,70 +666,6 @@ static void test_cap_registration(void)
 
   printf("Passed: module capabilities are reverted on unload\n");
 }
-
-/** A module's SASL mechanisms reach the register and go away with it. */
-static void test_sasl_registration(void)
-{
-  struct ModuleHandle* mod;
-  struct SaslSession ses;
-  unsigned int before = sasl_count();
-
-  mod = module_load("mod_sasl", 0, 0);
-  assert(mod != 0);
-
-  assert(sasl_module_count(mod) == 2);
-  assert(sasl_count() == before + 2);
-
-  assert(sasl_find("X-TEST") != 0);
-  assert(sasl_find("X-TEST")->sm_owner == mod);
-  assert(sasl_find("X-OTHER")->sm_flags & SASL_MECH_NEEDS_TLS);
-
-  /* The registration is not just a name: the exchange runs the module's
-   * code.  "YUBj" is base64 for "abc".
-   */
-  sasl_session_init(&ses);
-  assert(sasl_session_begin(&ses, "X-TEST") == 0);
-  assert(sasl_session_input(&ses, "YWJj") == SASL_CREDENTIAL);
-  assert(0 == strcmp(ses.ss_authcid, "abc"));
-  sasl_session_clear(&ses);
-
-  assert(module_unload(mod) != 0);
-
-  assert(sasl_count() == before);
-  assert(sasl_find("X-TEST") == 0);
-  assert(sasl_find("X-OTHER") == 0);
-  /* The core's are untouched. */
-  assert(sasl_find("PLAIN") != 0);
-  assert(sasl_find("EXTERNAL") != 0);
-
-  printf("Passed: module SASL mechanisms are reverted on unload\n");
-}
-
-/** A module can remove its own mechanism, and nobody else's. */
-static void test_sasl_explicit_removal(void)
-{
-  struct ModuleHandle* mod;
-  unsigned int before = sasl_count();
-
-  mod = module_load("mod_sasl", 0, 0);
-  assert(mod != 0);
-  assert(sasl_module_count(mod) == 2);
-
-  assert(module_del_sasl_mechanism(mod, "X-TEST") != 0);
-  assert(sasl_module_count(mod) == 1);
-  assert(sasl_find("X-TEST") == 0);
-
-  /* Not the core's, and not one it never registered. */
-  assert(module_del_sasl_mechanism(mod, "PLAIN") == 0);
-  assert(module_del_sasl_mechanism(mod, "NOSUCH") == 0);
-  assert(sasl_find("PLAIN") != 0);
-
-  assert(module_unload(mod) != 0);
-  assert(sasl_count() == before);
-
-  printf("Passed: explicit SASL mechanism removal\n");
-}
-
 /** A module can remove its own capability, and nobody else's. */
 static void test_cap_explicit_removal(void)
 {
@@ -956,11 +891,76 @@ static void test_reject_reserved_name(void)
   printf("Passed: a module calling itself \"core\" is refused (%s)\n", err);
 }
 
+/** The digest of the module set: what a link is refused over.
+ *
+ * The properties that matter are that it depends on what is loaded and on
+ * nothing else -- not on the order the modules were loaded in, which two
+ * servers have no reason to agree on -- and that it changes when the set
+ * does.  See include/module_sync.h.
+ */
+static void test_set_digest(void)
+{
+  struct ModuleHandle* a;
+  struct ModuleHandle* b;
+  const char* err = 0;
+  char empty[MODULE_DIGEST_LEN];
+  char one[MODULE_DIGEST_LEN];
+  char both[MODULE_DIGEST_LEN];
+  char again[MODULE_DIGEST_LEN];
+  char names[512];
+
+  assert(module_count() == 0);
+  module_set_digest(empty, sizeof(empty));
+  assert(strlen(empty) == MODULE_DIGEST_LEN - 1);
+
+  a = module_load("mod_good", 0, &err);
+  assert(a != 0);
+  module_set_digest(one, sizeof(one));
+  assert(0 != strcmp(one, empty));
+
+  b = module_load("mod_cmd", 0, &err);
+  assert(b != 0);
+  module_set_digest(both, sizeof(both));
+  assert(0 != strcmp(both, one));
+
+  /* The listing is the sorted names, which is what an operator reads off
+   * a mismatch message.
+   */
+  module_set_names(names, sizeof(names));
+  assert(0 == strcmp(names, "mod_cmd mod_good"));
+
+  /* Load order is not part of the set: the same two modules loaded the
+   * other way round hash the same.  Two servers have no reason to have
+   * loaded them in the same order, so a digest that noticed would refuse
+   * every link.
+   */
+  assert(module_unload(a) != 0);
+  assert(module_unload(b) != 0);
+  assert(module_count() == 0);
+  assert(module_load("mod_cmd", 0, &err) != 0);
+  assert(module_load("mod_good", 0, &err) != 0);
+  module_set_digest(again, sizeof(again));
+  assert(0 == strcmp(again, both));
+
+  assert(module_unload(module_find_file("mod_cmd")) != 0);
+  assert(module_unload(module_find_file("mod_good")) != 0);
+  assert(module_count() == 0);
+  module_set_digest(again, sizeof(again));
+  assert(0 == strcmp(again, empty));
+
+  /* A truncated listing says so rather than looking like a shorter one. */
+  assert(module_load("mod_good", 0, &err) != 0);
+  module_set_names(names, 8);
+  assert(0 != strstr(names, "..."));
+  assert(module_unload(module_find_file("mod_good")) != 0);
+
+  printf("Passed: the module-set digest follows the set and not the order\n");
+}
+
 int main(void)
 {
   channel_init_chan_modes();
   cap_init();
-  sasl_init();
   module_init();
   client_init_user_modes();
 
@@ -991,13 +991,12 @@ int main(void)
   test_cap_registration();
   test_cap_explicit_removal();
   test_cap_cycles();
-  test_sasl_registration();
-  test_sasl_explicit_removal();
   test_command_hook_registration();
   test_migrations_loaded();
   test_module_without_migrations();
   test_reject_bad_migrations();
   test_reject_reserved_name();
+  test_set_digest();
 
   printf("Done.\n");
   return 0;

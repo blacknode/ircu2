@@ -36,6 +36,7 @@ struct Channel;
 #define WHO_FIELD_DIS 256  /**< Show hop count (distance). */
 #define WHO_FIELD_REN 512  /**< Show realname (info). */
 #define WHO_FIELD_IDL 1024 /**< Show idle time. */
+#define WHO_FIELD_ACC 2048 /**< Show account name. */
 #define WHO_FIELD_OPL 4096 /**< Show oplevel. */
 
 /** Default fields for /WHO */

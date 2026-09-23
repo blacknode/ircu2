@@ -199,8 +199,97 @@ something to hand out over IRC.  /STATS M shows the same relative path.
 Everything except LIST also requires the CONFIG_OPERCMDS feature, since it
 changes what code the server is running.
 
-If a RELOAD unloads the module but cannot load it again, the server says
-so plainly: the module is then not loaded at all.
+If a RELOAD unloads the module but cannot load it again, on any server,
+the network ends up without the module; see the next section for why.
+
+
+ONE MODULE SET FOR THE WHOLE NETWORK
+====================================
+
+A module registers commands, user modes, channel modes, capabilities and
+hooks.  All of those change what the server does with what arrives on a
+link, so two servers running different modules do not speak quite the same
+protocol -- and the difference does not show up as an error, it shows up
+as a desync nobody traces back for a week.
+
+So the rule is flat, and the server enforces it:
+
+  EVERY SERVER ON THE NETWORK RUNS EXACTLY THE SAME MODULES, FOR THE WHOLE
+  TIME IT IS ON IT.
+
+There are two halves to that.
+
+A link whose module sets differ is refused.  Right after the SERVER line,
+before any of the burst, each side sends the other a digest of what it
+runs:
+
+  <server> MD SET * <sha256 in hex> <count> :<module names>
+
+Both sides compare and both drop the link by themselves, so neither has to
+wait to be told.  The names are only for the message an operator reads;
+the digest is what decides, and it covers each module's NAME AND VERSION,
+sorted -- two servers running different versions of the same module are
+not running the same module.  Where a module runs (native or process, see
+doc/readme.isolation) is deliberately not part of it: isolation is about
+failure, not about what the module does.
+
+A peer that never sends one is refused when its burst ends.  A set that
+could not be compared is not a set that matched.
+
+The refusal reads, on both sides:
+
+  Refusing link with hub.example.net: it does not run the same modules.
+  Here: filehost history richtext.  There: history richtext.
+
+Loading or unloading is a transaction across the whole network.  /MODULE
+LOAD, UNLOAD and RELOAD do not act on the server the operator happens to
+be on.  That server becomes the coordinator: it asks every server to
+prepare, waits for all of them, and then tells everyone to commit -- or,
+if ANY ONE of them failed, tells everyone to abandon it.  One server that
+cannot load the module is enough to stop the whole network loading it,
+which is the entire point.
+
+  /MODULE LOAD mymodule
+  -> mymodule: LOAD is ready here; waiting for 4 other server(s)
+  -> LOAD of mymodule is done on every server.
+
+  /MODULE LOAD mymodule
+  -> mymodule: LOAD is ready here; waiting for 4 other server(s)
+  -> LOAD of mymodule was abandoned: mymodule: undefined symbol: foo on
+     leaf3.example.net
+
+Preparing a load IS the load: nothing short of opening the shared object
+and running its mi_init can say whether it will load on that server.  So a
+module does briefly exist on the servers that managed it, and an abandoned
+transaction unloads it again.  An unload is the other way round -- nothing
+happens until the commit, because an unload cannot be taken back.
+
+A reload is neither: by the time a server can say it worked, it has
+already replaced the module.  If some other server then fails, everybody
+unloads.  That is deliberate.  The network losing a module is bad; half
+the network running it is worse.
+
+A server that answers nothing is a failure like any other, under
+MODULE_SYNC_TIMEOUT.  So is a server that splits before it answers: it
+would come back without the change, and the rest of the network must not
+be left carrying something it does not have.
+
+Only one transaction runs at a time.  A server asked to prepare while it
+is already in one refuses, which aborts the second and leaves the first
+alone.
+
+The Module{} blocks are a different matter.  They are this server's own
+file, so a /REHASH that changes them is NOT propagated -- propagating it
+would overwrite every other server's configuration from one operator's
+editor.  It is detected instead: after the rehash the server announces its
+new digest to every peer, and the links that no longer match are dropped.
+Which is to say: edit the Module{} blocks on every server, then rehash
+them all, or use /MODULE and let the transaction do it.
+
+MODULE_SYNC turns the whole thing off for one server.  That does not turn
+it off for its peers -- they will still refuse the link -- so it is for a
+server deliberately outside the rule, such as a jupe or a test instance
+linked to nothing.
 
 
 COMMANDS
@@ -628,101 +717,6 @@ modules/hooks/slowauth.c is the reference: it holds a registration, asks
 a worker thread, and resumes.
 
 
-SASL MECHANISMS
-===============
-
-The core speaks the AUTHENTICATE protocol and brings PLAIN and EXTERNAL.
-A mechanism whose exchange the core cannot know in advance -- SCRAM, a
-one-time-password step, OAUTHBEARER against an identity provider -- is a
-module:
-
-  #include "sasl.h"
-
-  static enum SaslStep my_step(struct SaslSession *ses, const char *in,
-                               size_t inlen);
-
-  module_add_sasl_mechanism(mod, "SCRAM-SHA-256", 0, my_step);
-
-A step reads the decoded bytes the client sent and either fills in
-SaslSession::ss_out with a challenge and returns SASL_STEP_CHALLENGE, or
-fills in ss_authcid, ss_authzid and ss_secret and returns
-SASL_STEP_CREDENTIAL.  SASL_STEP_FAIL ends the exchange.
-
-Four things to know:
-
-  * A mechanism decides the *shape* of the exchange, never the answer.
-    Whether the credential is good is the identity provider's business,
-    and that is a separate registration; see include/account.h.  A
-    mechanism that checked a password itself would be one that works on
-    the server it was written for and nowhere else.
-
-  * The name is uppercased and validated (RFC 4422: 1 to 20 characters of
-    A-Z, 0-9, '-' and '_'), so "scram-sha-256" and "SCRAM-SHA-256" are one
-    mechanism and cannot both be registered.
-
-  * Pass SASL_MECH_NEEDS_TLS if the exchange puts a secret on the wire in
-    the clear, as PLAIN does.  The server then refuses it on a plaintext
-    connection before the client sends anything.
-
-  * The session holds a password.  Do not copy it anywhere that outlives
-    the exchange, and do not log it.  The server wipes the session with
-    ircd_crypto_wipe() on every way out, including the client hanging up
-    halfway through.
-
-Registrations are reverted on unload, like everything else, and a module
-cannot remove the core's mechanisms or another module's.
-
-
-THE IDENTITY PROVIDER
-====================
-
-One module answers two questions for the whole server: is this credential
-good, and whose nickname is this?
-
-  #include "account.h"
-
-  static void my_verify(account_id_t id, const struct AccountRequest *req);
-  static void my_lookup(account_id_t id, const char *nick);
-  static void my_cancel(account_id_t id);
-
-  static const struct AccountProvider provider = {
-    "identity", my_verify, my_lookup, my_cancel
-  };
-
-  module_add_account_provider(mod, &provider);
-
-Neither call may block.  They start the work -- a query through db.h, the
-password hash on a worker (see WORKER THREADS and ircd_pwhash.h) -- and
-return; the answer goes back later, in the main thread, with
-account_complete() or account_complete_owner(), exactly once per question
-accepted.  Answering from inside the call is allowed, for a provider with
-a cache.
-
-Five things to know:
-
-  * One provider at a time.  A second registration is refused rather than
-    replacing the first, so two identity modules in ircd.conf are an error
-    and not a coin flip.
-
-  * A question the core has dropped -- the client left, the deadline
-    passed -- is not an error to answer: account_complete() says the
-    handle is no longer outstanding and does nothing.
-
-  * The request does not outlive the call, and its secret is a password.
-    Copy what is needed and nothing more; the core wipes the secret as
-    soon as the call returns.
-
-  * "Could not be established" is not "free".  A lookup that fails --
-    database unreachable, no answer in time -- comes back as
-    ACCOUNT_NICK_UNKNOWN, and a caller must not read that as a nickname
-    nobody has registered.  The one moment an impostor gets somebody
-    else's nickname is the moment the service protecting it is not
-    answering, and that moment can be arranged.
-
-  * Unloading the module fails every question in flight before the code
-    is unmapped, so nothing waits for an answer that is never coming.
-
-
 THE CACHE
 =========
 
@@ -1146,10 +1140,6 @@ THE EXAMPLES
                          reference for registering a channel mode, and
                          nocaps.c's rule made asked-for instead of
                          always-on
-  workers/sendmail/      runs a program on a worker thread and answers
-                         with its exit status; the reference for
-                         module_submit_work() and for a task whose input
-                         and output are bytes and nothing else
   commands/isolated_demo.c
                          registers a command and two hooks, and will
                          crash or spin on request; the reference for
@@ -1167,13 +1157,6 @@ THE EXAMPLES
                          from a directory, and for one that ships
                          translations (po/es.po) and marks its notices
                          with _()
-  services/irc_services/ network services -- NickServ, ChanServ --
-                         embedded in the server: service bots from
-                         Service{} blocks, answering users through
-                         HOOK_MESSAGE_RECEIVED; the reference for
-                         service bots, for HOOK_CONFIG_LOADED, and for
-                         a module that brings a client back when the
-                         network takes it away (doc/readme.services)
   hooks/cmdaudit.c       logs what one user does to another; the
                          reference for HOOK_COMMAND_PRE and
                          HOOK_COMMAND_POST, which fire around every
@@ -1186,18 +1169,10 @@ THE EXAMPLES
                          same shape as the database one and optional in
                          a way it is not: the cache is never the truth
                          (doc/readme.cache)
-  workers/sendmail/      hands outgoing mail to the local MTA on a
-                         worker; the reference for a provider whose work
-                         is a program rather than a socket
-                         (doc/readme.mail)
-  services/identity/     what answers whether a password is right and
-                         whose nickname is whose: the provider behind
-                         umode +r, and the reference for a module that
-                         owns SQL migrations and for cache-then-database
-                         reading (doc/readme.sasl)
   services/history/      what was said, kept: CHATHISTORY, SEARCH, EDIT,
                          REDACT and MARKREAD over PostgreSQL; the
-                         reference for HOOK_MESSAGE_DELIVERED and for
+                         reference for HOOK_MESSAGE_DELIVERED, for a
+                         module that owns SQL migrations, and for
                          keeping every statement a module sends in one
                          file (doc/readme.history)
   services/filehost/     files, over the server's own HTTP listener; the

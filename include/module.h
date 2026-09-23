@@ -49,12 +49,6 @@
 #ifndef INCLUDED_capab_h
 #include "capab.h"      /* CAPFL_*, CapHas() */
 #endif
-#ifndef INCLUDED_sasl_h
-#include "sasl.h"       /* SaslStepFn, SASL_MECH_* */
-#endif
-#ifndef INCLUDED_account_h
-#include "account.h"    /* struct AccountProvider, account_id_t */
-#endif
 #ifndef INCLUDED_cache_h
 #include "cache.h"      /* struct CacheDriver, cache_id_t */
 #endif
@@ -497,67 +491,6 @@ extern int module_hook_resume(struct ModuleHandle* mod, hook_token_t token,
                               enum HookResult result, const char* reason);
 
 /*
- * SASL mechanisms.
- *
- * The core speaks the AUTHENTICATE protocol and brings PLAIN and
- * EXTERNAL; a module adds the mechanisms whose exchange the core cannot
- * know in advance.  A mechanism turns what the client sends into a
- * credential and stops there: whether the credential is any good is the
- * identity provider's business, not the mechanism's.  See include/sasl.h.
- *
- * Registrations are reverted when the module unloads, like everything
- * else here.
- */
-
-/** Register a SASL mechanism.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] name Mechanism name; uppercased, RFC 4422 character set.
- * @param[in] flags SASL_MECH_* flags.
- * @param[in] step One round of the exchange.
- * @return Non-zero on success; zero if the name is malformed or taken.
- */
-extern int module_add_sasl_mechanism(struct ModuleHandle* mod,
-                                     const char* name, unsigned int flags,
-                                     SaslStepFn step);
-
-/** Remove a SASL mechanism this module registered.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] name Mechanism to remove.
- * @return Non-zero if it was found and removed.
- */
-extern int module_del_sasl_mechanism(struct ModuleHandle* mod,
-                                     const char* name);
-
-/*
- * The identity provider.
- *
- * One module answers "is this credential good?" and "whose nickname is
- * this?".  The core holds the register and the questions in flight, the
- * same way it holds the database driver and for the same two reasons:
- * modules cannot resolve each other's symbols, and holding the questions
- * here is what lets the module be unloaded with some outstanding.
- *
- * A provider never blocks.  The query belongs in db.h and the password
- * hash on a worker; the answer comes back through account_complete() in
- * the main thread.  See include/account.h.
- */
-
-/** Register this module as the identity provider.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] provider Static description; must outlive the module.
- * @return Non-zero on success; zero if one is already registered.
- */
-extern int module_add_account_provider(struct ModuleHandle* mod,
-                                       const struct AccountProvider* provider);
-
-/** Withdraw this module's identity provider.
- *
- * Every question in flight is failed before this returns.
- * @param[in] mod Handle passed to mi_init.
- */
-extern void module_del_account_provider(struct ModuleHandle* mod);
-
-/*
  * The cache driver, and using the cache.
  *
  * One module implements the store (modules/workers/redis/); any module may
@@ -632,6 +565,10 @@ extern void module_stats(struct Client* sptr, const struct StatDesc* sd,
                          char* param);
 
 extern void module_init(void);
+/** Act on the Module{} blocks of the configuration just read: load what
+ * is new, keep what is unchanged, replace what changed on disk.  Start-up
+ * and the end of every rehash, before module_sweep(). */
+extern void module_load_configured(void);
 /** Unload every module, leaving the module system up. */
 extern void module_shutdown(void);
 /** Shut down and release the module system; main() only, once, at exit. */
@@ -691,6 +628,44 @@ extern unsigned int module_count(void);
  * code that is currently executing, so the server refuses to do it.
  */
 extern int module_in_callback(void);
+
+/*
+ * The module set, as the rest of the network sees it.
+ *
+ * Every server on the network runs the same modules; a link between two
+ * that do not is refused (include/module_sync.h, doc/readme.modules).
+ * What is compared is this digest, so the comparison costs one string
+ * however many modules there are, and two servers that agree on it agree
+ * on the whole set without having to exchange it.
+ */
+
+/** Bytes needed for the text form of a module-set digest, NUL included. */
+#define MODULE_DIGEST_LEN 65
+
+/** Write the digest of the loaded module set into \a buf.
+ *
+ * SHA-256, in lower-case hex, over the modules sorted by name, each
+ * contributing its name and its version: two servers running different
+ * versions of the same module are not running the same module, any more
+ * than two servers running different modules are.  Where a module runs
+ * (doc/readme.isolation) is deliberately not in it -- isolation is about
+ * failure, not about what the module does.
+ *
+ * @param[out] buf Receives the digest; at least #MODULE_DIGEST_LEN bytes.
+ * @param[in] len Size of \a buf.
+ */
+extern void module_set_digest(char* buf, size_t len);
+
+/** Write the loaded module names into \a buf, sorted, space separated.
+ *
+ * For an operator to read, never for a comparison: the text is truncated
+ * to fit and ends in "..." when it was.  #module_set_digest is what
+ * decides whether two servers match.
+ *
+ * @param[out] buf Receives the list.
+ * @param[in] len Size of \a buf.
+ */
+extern void module_set_names(char* buf, size_t len);
 
 /** Record that the configuration mentioned this module, for rehash. */
 extern void module_mark(struct ModuleHandle* mod);

@@ -25,11 +25,11 @@ WHAT IS HERE THAT WAS NOT IN u2.10.12
     shape: the core holds the configuration and the calls in flight and
     dispatches to one module.  PostgreSQL and Redis drivers ship.
       doc/readme.database, doc/readme.cache, doc/readme.migrations
-  - Identity.  An account *is* a nickname: SASL, an ACCOUNT command for
-    clients that do not speak IRCv3, NickServ, a grace period for
-    somebody wearing a registered nick they have not proved, and mail to
-    verify the address behind it.
-      doc/readme.accounting, doc/readme.sasl, doc/readme.mail
+  - Identity, the classic ircu way: the network's services keep the
+    accounts and say who is logged in to what, and this server records
+    it, hides every user's host behind a cipher of its address, and
+    relays a SASL exchange to them.
+      doc/readme.accounting, doc/readme.services
   - History.  What was said, kept on PostgreSQL and read back with
     CHATHISTORY, searched with SEARCH, corrected with EDIT, taken back
     with REDACT, and marked as read across a person's devices.

@@ -47,6 +47,7 @@
 #include "list.h"
 #include "match.h"
 #include "msg.h"
+#include "module_sync.h"
 #include "msgq.h"
 #include "numeric.h"
 #include "numnicks.h"
@@ -199,6 +200,14 @@ int server_estab(struct Client *cptr, struct ConfItem *aconf)
 		  IsHub(cptr) ? "h" : "", IsService(cptr) ? "s" : "",
 		  IsIPv6(cptr) ? "6" : "", IsTLS(cptr) ? "z" : "", cli_info(cptr));
   }
+
+  /* What this server runs, before anything else it has to say.  Both
+   * ends send it this early and both compare what arrives, so neither
+   * has to wait to be told the link is not acceptable -- and a burst
+   * that is going to be thrown away is thrown away at its very start.
+   * See include/module_sync.h.
+   */
+  modsync_announce(cptr);
 
   /* Send these as early as possible so that glined users/juped servers can
    * be removed from the network while the remote server is still chewing

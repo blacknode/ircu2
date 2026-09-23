@@ -83,7 +83,6 @@ enum AuthRequestFlag {
     AR_AUTH_PENDING,    /**< ident connecting or waiting for response */
     AR_DNS_PENDING,     /**< dns request sent, waiting for response */
     AR_CAP_PENDING,     /**< in middle of CAP negotiations */
-    AR_SASL_PENDING,    /**< SASL exchange under way, see auth_sasl_start() */
     AR_NEEDS_PONG,      /**< user has not PONGed */
     AR_NEEDS_USER,      /**< user must send USER command */
     AR_NEEDS_NICK,      /**< user must send NICK command */
@@ -1643,53 +1642,56 @@ int auth_cap_done(struct AuthRequest *auth)
   return check_auth_finished(auth, AR_CAP_PENDING);
 }
 
-/** Mark that a SASL exchange is under way.
+/** Record the account the services vouched for during registration.
  *
- * One more thing registration waits for, beside ident, DNS, CAP and the
- * PING cookie.  A client may finish CAP negotiation while its credential
- * is still being checked -- the check is a database query, and the whole
- * point of its being asynchronous is that the server does not stop -- so
- * without this the client would be registered before the answer arrived
- * and would be logged in a moment after it was let in.
+ * The reply an XQUERY brings back is "<account>[:<id>[:<flags>]]", the
+ * same shape the account takes in a user mode string, because it is the
+ * services that write both.  Nothing here decides anything: the account
+ * exists because they said so.
  *
  * @param[in] auth Authorization request for client.
- * @return Zero; the client is always kept.
+ * @param[in] account_info What the services answered.
+ * @return Zero if the account was recorded, non-zero if there was none.
  */
-int auth_sasl_start(struct AuthRequest *auth)
+int auth_set_account(struct AuthRequest *auth, const char *account_info)
 {
+  struct Client *sptr;
+  char *account_copy = NULL;
+  char *account;
+  char *id_str;
+  char *flags_str;
+
   assert(auth != NULL);
-  FlagSet(&auth->flags, AR_SASL_PENDING);
+
+  sptr = auth->client;
+  if (!cli_user(sptr) || EmptyString(account_info))
+    return 1;
+
+  DupString(account_copy, account_info);
+  if (!account_copy)
+    return 1;
+
+  account = strtok(account_copy, ":");
+  id_str = strtok(NULL, ":");
+  flags_str = strtok(NULL, " ");
+
+  /* A malformed reply may carry no account name at all. */
+  if (EmptyString(account)) {
+    MyFree(account_copy);
+    return 1;
+  }
+
+  ircd_strncpy(cli_user(sptr)->account, account, ACCOUNTLEN);
+  if (id_str)
+    cli_user(sptr)->acc_id = strtoull(id_str, NULL, 10);
+  if (flags_str)
+    cli_user(sptr)->acc_flags = strtoull(flags_str, NULL, 10);
+
+  SetAccount(sptr);
+
+  sendto_iauth(sptr, "A %s", cli_user(sptr)->account);
+  MyFree(account_copy);
   return 0;
-}
-
-/** Mark that the SASL exchange is over, whatever it decided.
- *
- * Failing is not a reason to keep waiting: the client is let in without
- * +r, under whatever nickname it is entitled to.  Which nickname that is
- * belongs to m_authenticate.c and not to this file.
- *
- * @param[in] auth Authorization request for client.
- * @return Zero if client should be kept, CPTR_KILLED if rejected.
- */
-int auth_sasl_done(struct AuthRequest *auth)
-{
-  assert(auth != NULL);
-  if (!FlagHas(&auth->flags, AR_SASL_PENDING))
-    return 0;
-  return check_auth_finished(auth, AR_SASL_PENDING);
-}
-
-/** Return non-zero if \a cptr is still waiting for a SASL answer.
- * @param[in] cptr Client to test.
- */
-int auth_sasl_pending(struct Client *cptr)
-{
-  struct AuthRequest *auth;
-
-  assert(cptr != NULL);
-  auth = cli_auth(cptr);
-
-  return auth && FlagHas(&auth->flags, AR_SASL_PENDING);
 }
 
 /** Set a client's username, hostname and IP with minimal checking.

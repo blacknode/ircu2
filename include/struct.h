@@ -87,23 +87,19 @@ struct User {
   char               username[USERLEN + 1];
   char               host[HOSTLEN + 1];       /**< displayed hostname */
   char               realhost[HOSTLEN + 1];   /**< actual hostname */
-  /** Registered nick the user is identified to, or an empty string.
-   * Set together with umode +r and always equal to the nick that was
-   * current when +r was granted; see doc/readme.accounting.
-   */
-  char               account[NICKLEN + 1];
-  /** Address of the identity this user authenticated with, or NULL.
+  /** Account this user is logged in to, or an empty string.
    *
-   * Local, and only local.  It does not cross P10, it is never shown to a
-   * third party -- WHOIS reports it only to the user themselves -- and it
-   * does not outlive the session: logging out clears it at the same
-   * moment +r goes away, because a state where one exists without the
-   * other is one the model does not define.  A user who arrived from
-   * another server has NULL here, which is the server saying it does not
-   * know, and is the reason the field is in User rather than Connection:
-   * a remote user has the former and not the latter.  See proposal 007.
+   * Set only by the network's services, which own the whole life cycle of
+   * an account: the server is told with ACCOUNT (token AC, ircd/m_account.c)
+   * from a U:lined server, or reads it out of the user mode string in a
+   * NICK burst, and never decides anything about it itself.  Umode +r says
+   * the name in here is real.  See doc/readme.accounting.
    */
-  const char*        email;
+  char               account[ACCOUNTLEN + 1];
+  uint64_t           acc_id;                  /**< Account id, or 0 if the
+                                                   services did not send one. */
+  uint64_t           acc_flags;               /**< Account flags, as the
+                                                   services define them. */
 };
 
 #endif /* INCLUDED_struct_h */

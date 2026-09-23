@@ -103,8 +103,6 @@ ircu_add_migrations(ircd "${CMAKE_CURRENT_SOURCE_DIR}/migrations"
 # ---------------------------------------------------------------------------
 set(IRCU_SOURCES
   IPcheck.c
-  account.c
-  account_user.c
   batch.c
   bot.c
   cache.c
@@ -158,12 +156,10 @@ set(IRCU_SOURCES
   ircd_vhost.c
   jupe.c
   list.c
-  mail.c
   listener.c
   m_account.c
   m_admin.c
   m_asll.c
-  m_authenticate.c
   m_away.c
   m_batch.c
   m_burst.c
@@ -248,6 +244,7 @@ set(IRCU_SOURCES
   migration_run.c
   memdebug.c
   module.c
+  module_sync.c
   motd.c
   msg_tag.c
   msgid.c
@@ -270,6 +267,7 @@ set(IRCU_SOURCES
   s_serv.c
   s_stats.c
   s_user.c
+  m_sasl.c
   sasl.c
   send.c
   sline.c

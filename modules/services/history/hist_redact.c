@@ -182,7 +182,7 @@ static void hist_redact_deleted(long long rows, void* user)
 static int hist_may_redact(struct Client* cptr, const struct HistFound* found)
 {
   struct Channel* chptr;
-  char mine[NICKLEN + 1];
+  char mine[ACCOUNTLEN + 1];
 
   /* An operator who can delete an account's whole record can certainly
    * delete one message of it. */

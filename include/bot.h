@@ -72,7 +72,6 @@ struct ModuleHandle;
  */
 /** A service of the network: +S +k +o, and protected from /BOT. */
 #define BOT_SERVICE  0x0001
-
 /** One bot the server has introduced. */
 struct Bot {
   struct Client*       b_client;  /**< The client the server introduced. */

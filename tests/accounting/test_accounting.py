@@ -1,13 +1,16 @@
-"""Accounting: umode +r, the hidden host every user carries, and who may
-change whose modes.  The model is described in doc/readme.accounting.
+"""Accounting: the account a user is logged in to, and the hidden host
+every user carries.  The model is described in doc/readme.accounting.
 
 * Every user is +x from registration on; the visible host is the cipher
   of the user's address (tests/vhost.py) and a user cannot take +x off.
-* +r means "identified to the nick in use"; the account is the nick.  It
-  is granted or taken away by a server, by a service bot (+S) or in a
-  burst -- never by the user -- and it does not survive a nick change.
-* WHOIS shows 307 "is a registered user" for a +r user; 330 is gone.
-* A service bot may change the modes of any user but an operator.
+  That half is this server's own and does not come from the services.
+* An account is what the network's services say it is.  They send
+  ``ACCOUNT`` (token ``AC``) from a U:lined server, or ``+r <account>``
+  in a NICK burst; the ircd records it, sets +r and passes it on.  There
+  is no ``-r``: this server cannot take away what it did not give.
+* WHOIS shows 330 "is logged in as" with the account name.
+* A service bot (+S) may change another user's modes, but not an
+  operator's, and not the modes only a server may set.
 """
 
 import asyncio
@@ -78,6 +81,14 @@ def _has(msgs, numeric):
     return any(m.command == numeric for m in msgs)
 
 
+def _account_in(msgs):
+    """The account name RPL_WHOISACCOUNT reported, or None."""
+    for m in msgs:
+        if m.command == "330":
+            return m.params[2]
+    return None
+
+
 async def _umodes(client):
     """The client's own user modes, as MODE <nick> reports them."""
     await client.send(f"MODE {client.nick}")
@@ -97,6 +108,20 @@ async def _wait_mode(client, letter, sign, timeout=5.0):
         applied = parse_mode_string(msg.params[-1])
         if applied.get(letter) == sign:
             return msg
+
+
+async def _login(services, client, account, acc_id=None, acc_flags=None):
+    """Log ``client`` in the way the services do, and wait for +r."""
+    await services.send_register(client.nick, account=account, acc_id=acc_id,
+                                 acc_flags=acc_flags)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while True:
+        if "r" in await _umodes(client):
+            return
+        if loop.time() >= deadline:
+            raise AssertionError(f"{client.nick} never became +r")
+        await asyncio.sleep(0.2)
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +210,7 @@ async def test_service_bot_keeps_its_configured_host(ircd_network, services):
 
 
 # ---------------------------------------------------------------------------
-# +r
+# The account
 # ---------------------------------------------------------------------------
 
 async def test_user_cannot_set_plus_r(ircd_network):
@@ -193,126 +218,168 @@ async def test_user_cannot_set_plus_r(ircd_network):
     user, _ = await _connect(hub, "acc10")
     observer, _ = await _connect(hub, "acc10o")
     try:
-        await user.send("MODE acc10 +r")
+        await user.send("MODE acc10 +r mine")
         await user.assert_no_message("MODE", timeout=1.5)
         assert "r" not in await _umodes(user)
-        assert not _has(await _whois(observer, "acc10"), "307")
+        assert _account_in(await _whois(observer, "acc10")) is None
     finally:
         await _quit(user, observer)
 
 
-async def test_server_grants_and_revokes_plus_r(ircd_network, services):
+async def test_account_grants_plus_r_and_whois_reports_it(ircd_network, services):
+    """ACCOUNT from the services is what logs a user in."""
     hub = ircd_network["hub"]
     user, _ = await _connect(hub, "acc11")
     observer, _ = await _connect(hub, "acc11o")
     try:
-        await services.wait_for_user("acc11")
-        await services.send_register("acc11")
-        msg = await _wait_mode(user, "r", "+")
-        assert msg.prefix == SERVICES, f"MODE should come from the server: {msg.raw}"
-        assert "r" in await _umodes(user)
-
+        await _login(services, user, "acc11acct")
         whois = await _whois(observer, "acc11")
-        reg = [m for m in whois if m.command == "307"]
-        assert reg, f"expected 307 after +r: {whois}"
-        assert reg[0].params[1] == "acc11", reg[0].raw
-        assert not _has(whois, "330"), "330 must not be sent any more"
-
-        await services.send_unregister("acc11")
-        await _wait_mode(user, "r", "-")
-        assert "r" not in await _umodes(user)
-        assert not _has(await _whois(observer, "acc11"), "307")
+        assert _account_in(whois) == "acc11acct", whois
+        assert not _has(whois, "307"), "307 is not how an account is reported"
     finally:
         await _quit(user, observer)
 
 
-async def test_plus_r_in_nick_burst(ircd_network, services):
+async def test_an_account_cannot_be_taken_away(ircd_network, services):
+    """There is no -r.  A mode string that asks for one changes nothing."""
     hub = ircd_network["hub"]
+    user, _ = await _connect(hub, "acc12")
     observer, _ = await _connect(hub, "acc12o")
     try:
-        await services.introduce_user("acc12r", modes="+ir")
+        await _login(services, user, "acc12acct")
+        await services.send_user_mode("acc12", "-r")
+        await asyncio.sleep(0.5)
+        assert "r" in await _umodes(user)
+        assert _account_in(await _whois(observer, "acc12")) == "acc12acct"
+    finally:
+        await _quit(user, observer)
+
+
+async def test_account_from_a_server_that_is_not_ulined_is_ignored(
+        ircd_network, services, spy):
+    """Only a U:lined server may say who somebody is."""
+    hub = ircd_network["hub"]
+    user, _ = await _connect(hub, "acc13")
+    observer, _ = await _connect(hub, "acc13o")
+    try:
+        numnick = await spy.wait_for_user("acc13")
+        await spy.send_account(numnick, "stolen")
+        await asyncio.sleep(0.7)
+        assert "r" not in await _umodes(user)
+        assert _account_in(await _whois(observer, "acc13")) is None
+
+        # The same line from the U:lined server is accepted, which is what
+        # makes the refusal above about who sent it and not about the line.
+        await _login(services, user, "acc13acct")
+        assert _account_in(await _whois(observer, "acc13")) == "acc13acct"
+    finally:
+        await _quit(user, observer)
+
+
+async def test_account_in_a_nick_burst(ircd_network, services):
+    """+r takes the account as its parameter in the NICK that introduces a
+    user, which is how an account reaches a server that was not there."""
+    hub = ircd_network["hub"]
+    observer, _ = await _connect(hub, "acc14o")
+    try:
+        await services.introduce_user("acc14r", modes="+ir", account="acc14acct")
         await asyncio.sleep(0.3)
-        assert _has(await _whois(observer, "acc12r"), "307")
+        assert _account_in(await _whois(observer, "acc14r")) == "acc14acct"
     finally:
         await _quit(observer)
 
 
-async def test_plus_r_relayed_in_nick_burst_without_parameter(ircd_network, services, spy):
-    """What the hub tells its peers about a +r user: +r, no account token."""
+async def test_account_relayed_in_the_nick_burst(ircd_network, services, spy):
+    """What the hub tells a peer about a logged-in user: +r and the name."""
     hub = ircd_network["hub"]
-    user, _ = await _connect(hub, "acc13")
+    user, _ = await _connect(hub, "acc15")
     try:
-        await services.wait_for_user("acc13")
-        await services.send_register("acc13")
-        await asyncio.sleep(0.5)
+        await _login(services, user, "acc15acct")
 
         # Reconnect the spy so the hub bursts the user afresh.
         await spy.disconnect()
         await spy.connect(hub["host"], hub["server_port"])
         await spy.handshake()
-        await spy.wait_for_user("acc13")
-        nick_lines = [strip_msg_tags(ln) for ln in spy.received if " N acc13 " in ln]
+        await spy.wait_for_user("acc15")
+        nick_lines = [strip_msg_tags(ln) for ln in spy.received if " N acc15 " in ln]
         assert nick_lines, spy.received[-20:]
         head = nick_lines[-1].split(" :", 1)[0]
         parts = head.split()
-        # <src> N nick hop ts user host +modes ip numnick
-        assert len(parts) == 10, f"unexpected token after +modes: {nick_lines[-1]!r}"
+        # <src> N nick hop ts user host +modes <account> ip numnick
+        assert len(parts) == 11, f"unexpected NICK shape: {nick_lines[-1]!r}"
         assert parts[7].startswith("+"), nick_lines[-1]
         assert "r" in parts[7] and "x" in parts[7], nick_lines[-1]
+        assert parts[8] == "acc15acct", nick_lines[-1]
     finally:
         await _quit(user)
 
 
-async def test_nick_change_drops_plus_r(ircd_network, services):
+async def test_account_id_and_flags_ride_with_the_name(ircd_network, services, spy):
+    """``<account>:<id>:<flags>`` is one parameter; all three cross a link."""
     hub = ircd_network["hub"]
-    user, _ = await _connect(hub, "acc14")
-    observer, _ = await _connect(hub, "acc14o")
+    user, _ = await _connect(hub, "acc16")
     try:
-        await services.wait_for_user("acc14")
-        await services.send_register("acc14")
-        await _wait_mode(user, "r", "+")
+        await _login(services, user, "acc16acct", acc_id=17, acc_flags=3)
 
-        await user.send("NICK acc14b")
-        await user.wait_for("NICK", timeout=5.0)
-        user.nick = "acc14b"
-        await _wait_mode(user, "r", "-")
-        assert "r" not in await _umodes(user)
-        assert not _has(await _whois(observer, "acc14b"), "307")
+        await spy.disconnect()
+        await spy.connect(hub["host"], hub["server_port"])
+        await spy.handshake()
+        await spy.wait_for_user("acc16")
+        nick_lines = [strip_msg_tags(ln) for ln in spy.received if " N acc16 " in ln]
+        assert nick_lines, spy.received[-20:]
+        parts = nick_lines[-1].split(" :", 1)[0].split()
+        assert parts[8] == "acc16acct:17:3", nick_lines[-1]
     finally:
-        await _quit(user, observer)
+        await _quit(user)
 
 
-async def test_case_only_nick_change_keeps_plus_r(ircd_network, services):
+async def test_account_is_relayed_to_the_other_servers(ircd_network, services, spy):
+    """A login on a running network travels as ACCOUNT, not as a burst."""
     hub = ircd_network["hub"]
-    user, _ = await _connect(hub, "acc15abc")
-    observer, _ = await _connect(hub, "acc15o")
+    user, _ = await _connect(hub, "acc17")
     try:
-        await services.wait_for_user("acc15abc")
-        await services.send_register("acc15abc")
-        await _wait_mode(user, "r", "+")
+        numnick = await spy.wait_for_user("acc17")
+        await spy.drain_messages()
+        await _login(services, user, "acc17acct")
+        await asyncio.sleep(0.5)
+        relayed = [strip_msg_tags(ln) for ln in spy.received
+                   if f" AC {numnick} " in f"{strip_msg_tags(ln)} "]
+        assert relayed, spy.received[-20:]
+        assert relayed[-1].split()[3] == "acc17acct", relayed[-1]
+    finally:
+        await _quit(user)
 
-        await user.send("NICK Acc15ABC")
+
+async def test_the_account_survives_a_nick_change(ircd_network, services):
+    """An account is not the nick: changing one does not give up the other."""
+    hub = ircd_network["hub"]
+    user, _ = await _connect(hub, "acc18")
+    observer, _ = await _connect(hub, "acc18o")
+    try:
+        await _login(services, user, "acc18acct")
+        await user.send("NICK acc18b")
         await user.wait_for("NICK", timeout=5.0)
-        user.nick = "Acc15ABC"
-        await user.assert_no_message("MODE", timeout=1.5)
+        user.nick = "acc18b"
+        await asyncio.sleep(0.4)
         assert "r" in await _umodes(user)
-        assert _has(await _whois(observer, "Acc15ABC"), "307")
+        assert _account_in(await _whois(observer, "acc18b")) == "acc18acct"
     finally:
         await _quit(user, observer)
 
 
-async def test_remote_nick_change_drops_plus_r_on_hub(ircd_network, services):
-    """The rule is applied by every server to the NICK it sees: a remote
-    user's nick change drops +r on the hub too, with nothing on the wire."""
+async def test_a_remote_nick_change_keeps_the_account_on_the_hub(
+        ircd_network, services):
+    """The same rule applied to a user this server only heard about."""
     hub = ircd_network["hub"]
-    observer, _ = await _connect(hub, "acc16o")
+    observer, _ = await _connect(hub, "acc19o")
     try:
-        numnick = await services.introduce_user("acc16r", modes="+ir")
+        numnick = await services.introduce_user("acc19r", modes="+ir",
+                                                account="acc19acct")
         await asyncio.sleep(0.3)
-        assert _has(await _whois(observer, "acc16r"), "307")
-        await services._send(f"{numnick} N acc16s {int(time.time())}")
+        assert _account_in(await _whois(observer, "acc19r")) == "acc19acct"
+        await services._send(f"{numnick} N acc19s {int(time.time())}")
         await asyncio.sleep(0.3)
-        assert not _has(await _whois(observer, "acc16s"), "307")
+        assert _account_in(await _whois(observer, "acc19s")) == "acc19acct"
     finally:
         await _quit(observer)
 
@@ -327,16 +394,16 @@ async def test_service_bot_sets_modes_on_another_user(ircd_network, services):
     try:
         bot = await services.introduce_user("acc20bot", modes="+oikS")
         await services.wait_for_user("acc20")
-        await services.send_user_mode("acc20", "+r", from_numnick=bot)
-        msg = await _wait_mode(user, "r", "+")
+        await services.send_user_mode("acc20", "+d", from_numnick=bot)
+        msg = await _wait_mode(user, "d", "+")
         assert msg.prefix and msg.prefix.startswith("acc20bot!"), msg.raw
 
-        await services.send_user_mode("acc20", "-r+i", from_numnick=bot)
+        await services.send_user_mode("acc20", "-d+i", from_numnick=bot)
         msg = await user.wait_for("MODE", timeout=5.0)
         applied = parse_mode_string(msg.params[-1])
-        assert applied.get("r") == "-", msg.raw
+        assert applied.get("d") == "-", msg.raw
         modes = await _umodes(user)
-        assert "r" not in modes and "i" in modes
+        assert "d" not in modes and "i" in modes
     finally:
         await _quit(user)
 
@@ -353,9 +420,9 @@ async def test_service_bot_cannot_touch_an_operator(ircd_network, services):
     try:
         bot = await services.introduce_user("acc21bot", modes="+oikS")
         await services.wait_for_user("acc21op")
-        await services.send_user_mode("acc21op", "+r", from_numnick=bot)
+        await services.send_user_mode("acc21op", "+d", from_numnick=bot)
         await oper.assert_no_message("MODE", timeout=1.5)
-        assert "r" not in await _umodes(oper)
+        assert "d" not in await _umodes(oper)
     finally:
         await _quit(oper)
 
@@ -367,10 +434,10 @@ async def test_service_bot_cannot_grant_server_only_modes(ircd_network, services
     try:
         bot = await services.introduce_user("acc22bot", modes="+oikS")
         await services.wait_for_user("acc22")
-        await services.send_user_mode("acc22", "+okSBr-x", from_numnick=bot)
-        msg = await _wait_mode(user, "r", "+")
+        await services.send_user_mode("acc22", "+okSBd-x", from_numnick=bot)
+        await _wait_mode(user, "d", "+")
         modes = await _umodes(user)
-        assert "r" in modes and "x" in modes, modes
+        assert "d" in modes and "x" in modes, modes
         for letter in "okSB":
             assert letter not in modes, modes
     finally:
@@ -383,9 +450,9 @@ async def test_plain_remote_user_cannot_set_modes_on_others(ircd_network, servic
     try:
         other = await services.introduce_user("acc23x", modes="+i")
         await services.wait_for_user("acc23")
-        await services.send_user_mode("acc23", "+r", from_numnick=other)
+        await services.send_user_mode("acc23", "+d", from_numnick=other)
         await user.assert_no_message("MODE", timeout=1.5)
-        assert "r" not in await _umodes(user)
+        assert "d" not in await _umodes(user)
     finally:
         await _quit(user)
 
@@ -404,10 +471,10 @@ async def test_local_user_cannot_set_modes_on_others(ircd_network):
 
 
 # ---------------------------------------------------------------------------
-# What still keys on +r
+# What keys on the account
 # ---------------------------------------------------------------------------
 
-async def test_regonly_channel_admits_plus_r_user(ircd_network, services):
+async def test_regonly_channel_admits_an_identified_user(ircd_network, services):
     hub = ircd_network["hub"]
     owner, _ = await _connect(hub, "acc30own")
     user, _ = await _connect(hub, "acc30")
@@ -420,28 +487,30 @@ async def test_regonly_channel_admits_plus_r_user(ircd_network, services):
         await user.send("JOIN #acc30")
         assert (await user.wait_for("477", timeout=5.0)).command == "477"
 
-        await services.wait_for_user("acc30")
-        await services.send_register("acc30")
-        await _wait_mode(user, "r", "+")
+        await _login(services, user, "acc30acct")
         await user.send("JOIN #acc30")
         assert (await user.wait_for("366", timeout=5.0)).command == "366"
     finally:
         await _quit(owner, user)
 
 
-async def test_whox_has_no_account_field(ircd_network, services):
-    """WHOX %a is gone: a request for it is ignored, no field appended."""
+async def test_whox_reports_the_account(ircd_network, services):
+    """WHOX %a is the account name, and "0" for a user who has none."""
     hub = ircd_network["hub"]
     user, _ = await _connect(hub, "acc31")
+    other, _ = await _connect(hub, "acc31o")
     try:
-        await services.wait_for_user("acc31")
-        await services.send_register("acc31")
-        await _wait_mode(user, "r", "+")
+        await _login(services, user, "acc31acct")
         await user.send("WHO acc31 %na")
         msgs = await user.collect_until("315", timeout=5.0)
         rows = [m for m in msgs if m.command == "354"]
         assert rows, msgs
-        # <me> <nick> only: nothing was appended for 'a'.
-        assert rows[0].params[1:] == ["acc31"], rows[0].raw
+        assert rows[0].params[1:] == ["acc31", "acc31acct"], rows[0].raw
+
+        await user.send("WHO acc31o %na")
+        msgs = await user.collect_until("315", timeout=5.0)
+        rows = [m for m in msgs if m.command == "354"]
+        assert rows, msgs
+        assert rows[0].params[1:] == ["acc31o", "0"], rows[0].raw
     finally:
-        await _quit(user)
+        await _quit(user, other)

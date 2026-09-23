@@ -90,6 +90,7 @@
 #include "numeric.h"
 #include "numnicks.h"
 #include "s_auth.h"
+#include "sasl.h"
 #include "send.h"
 #include "sline.h"
 
@@ -133,6 +134,8 @@ int ms_xreply(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
     auth_send_xreply(sptr, routing + 6, reply);
   else if (!ircd_strncmp("spam:", routing, 5))
     sline_xreply_handler(sptr, routing + 5, reply);
+  else if (!ircd_strncmp("sasl:", routing, 5))
+    sasl_send_xreply(sptr, routing + 5, reply);
   else
     /* If we don't know where to route it, log it and drop it */
     log_write(LS_SYSTEM, L_NOTICE, 0, "Received unroutable extension reply "

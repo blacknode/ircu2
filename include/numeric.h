@@ -248,7 +248,7 @@ extern const struct Numeric* get_error_numeric(int err);
 /*      RPL_CHANNEL_URL      328           dalnet, anothernet */
 #define RPL_CREATIONTIME     329
 /*      RPL_WHOWAS_TIME      330               ? */
-/*      RPL_WHOISACCOUNT     330        no longer sent; see 307 */
+#define RPL_WHOISACCOUNT     330        /* the account a user is logged in to */
 #define RPL_NOTOPIC          331
 #define RPL_TOPIC            332
 #define RPL_TOPICWHOTIME     333        /* Undernet extension */
@@ -474,8 +474,7 @@ extern const struct Numeric* get_error_numeric(int err);
 #define RPL_WHOISSECURE      671        /* Nefarious, Undernet */
 #define RPL_YOURLANGUAGESARE 687        /* IRCv3 draft/languages */
 #define RPL_WHOISLANGUAGE    690        /* IRCv3 draft/languages */
-#define RPL_WHOISEMAIL       691        /* proposal 007; only to oneself */
-#define RPL_WHOISFROZEN      692        /* proposal 007; umode +f */
+#define RPL_WHOISFROZEN      692        /* umode +f */
 
 /*	RPL_LOGON	     600	dalnet,unreal
 	RPL_LOGOFF           601	dalnet,unreal
@@ -500,7 +499,7 @@ extern const struct Numeric* get_error_numeric(int err);
 	RPL_EODUMP	     642	unreal
 */
 
-/* IRCv3 SASL; see doc/readme.accounting and proposal 007. */
+/* IRCv3 SASL; see doc/readme.accounting. */
 #define RPL_LOGGEDIN         900
 #define RPL_LOGGEDOUT        901
 #define ERR_NICKLOCKED       902
@@ -514,13 +513,7 @@ extern const struct Numeric* get_error_numeric(int err);
 #define ERR_TOOMANYLANGUAGES 981        /* IRCv3 draft/languages */
 #define ERR_NOLANGUAGE       982        /* IRCv3 draft/languages */
 
-#define ERR_ACCOUNTFAIL      983        /* proposal 007 */
-#define RPL_ACCOUNTLIST      984        /* proposal 007 */
-#define RPL_ENDOFACCOUNTLIST 985        /* proposal 007 */
-#define ERR_NOTAUTHENTICATED 986        /* proposal 007 */
-#define ERR_FROZEN           987        /* proposal 007; umode +f */
-#define RPL_VERIFYSENT       988        /* proposal 007; mail.h */
-#define RPL_VERIFIED         989        /* proposal 007; mail.h */
+#define ERR_FROZEN           987        /* umode +f */
 
 #define ERR_LASTERROR        990
 

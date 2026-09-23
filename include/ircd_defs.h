@@ -45,6 +45,14 @@
  * server query.
  */
 #define USERLEN         10
+/** Maximum length of an account name.
+ *
+ * An account belongs to the network's services, not to the server: it
+ * arrives with the ACCOUNT (AC) command or in a NICK burst's user mode
+ * string, and the server only keeps it and shows it.  See
+ * doc/readme.accounting.
+ */
+#define ACCOUNTLEN      12
 /** Exactly long enough to hold one (1) segment of FQDN or hostname.
  * This is due to an historical misinterpretation of RFC 1034.
  * 3.1. Name space specifications and terminology

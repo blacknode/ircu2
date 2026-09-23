@@ -290,7 +290,7 @@ static void file_row_from(struct FileRow* row, struct json_t* data,
   if ((text = db_row_str(data, n, "id")))
     ircd_strncpy(row->fr_id, text, FILE_ID_LEN);
   if ((text = db_row_str(data, n, "account")))
-    ircd_strncpy(row->fr_account, text, NICKLEN);
+    ircd_strncpy(row->fr_account, text, ACCOUNTLEN);
   if ((text = db_row_str(data, n, "target")))
     ircd_strncpy(row->fr_target, text, CHANNELLEN);
   if ((text = db_row_str(data, n, "name")))

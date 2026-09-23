@@ -363,24 +363,6 @@ than "no", it is a bug, whether or not it has caused one yet.
 THE EXAMPLES
 ============
 
-  modules/workers/sendmail/ hands a message to the local MTA -- fork,
-                            exec, write and wait, every one of which
-                            blocks -- and answers with an exit status;
-                            the reference for module_submit_work(), and
-                            the smallest example of the rule that what
-                            crosses is bytes and nothing else.
-
-  modules/services/identity/
-                            verifies a password with Argon2 in a pool
-                            thread; the reference for referring to a
-                            client by numnick rather than by pointer,
-                            because the answer comes back long after the
-                            question and the client may be gone.  With
-                            WORKER_THREADS at zero it refuses and says
-                            so, rather than hashing on the main thread
-                            and stopping the server for a quarter of a
-                            second per login.
-
   modules/workers/postgres/ one dedicated worker per pooled connection,
                             each with a loop of its own; the reference
                             for module_spawn_worker(), worker_post() and

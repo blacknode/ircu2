@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ircu2\n"
 "Report-Msgid-Bugs-To: coder-com@undernet.org\n"
-"POT-Creation-Date: 2026-09-16 10:24+0000\n"
+"POT-Creation-Date: 2026-09-23 00:45+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -22,51 +22,6 @@ msgstr ""
 msgid "%C :on %u ca %u(%u) ft %u(%u)%s"
 msgstr ""
 
-#: ircd/account.c:177
-#, no-c-format
-msgid "authentication succeeded"
-msgstr ""
-
-#: ircd/account.c:178
-#, no-c-format
-msgid "no such account, or the password is wrong"
-msgstr ""
-
-#: ircd/account.c:179
-#, no-c-format
-msgid "that identity has no such account"
-msgstr ""
-
-#: ircd/account.c:180
-#, no-c-format
-msgid "that account is suspended"
-msgstr ""
-
-#: ircd/account.c:181
-#, no-c-format
-msgid "somebody else is using that nickname"
-msgstr ""
-
-#: ircd/account.c:182
-#, no-c-format
-msgid "that nickname is registered already"
-msgstr ""
-
-#: ircd/account.c:183
-#, no-c-format
-msgid "that address already holds as many accounts as it may"
-msgstr ""
-
-#: ircd/account.c:184
-#, no-c-format
-msgid "the identity service is not available"
-msgstr ""
-
-#: ircd/account.c:185
-#, no-c-format
-msgid "the identity service did not answer in time"
-msgstr ""
-
 #: ircd/channel.c:265
 #, no-c-format
 msgid ":Bans: inuse %zu(%zu) free %zu alloc %zu"
@@ -77,8 +32,8 @@ msgstr ""
 msgid ":Classes: inuse: %d(%d)"
 msgstr ""
 
-#: ircd/gline.c:328 ircd/motd.c:336 ircd/s_auth.c:2244 ircd/s_auth.c:2920
-#: ircd/s_auth.c:2963 ircd/s_debug.c:186
+#: ircd/gline.c:328 ircd/motd.c:336 ircd/s_auth.c:2246 ircd/s_auth.c:2922
+#: ircd/s_auth.c:2965 ircd/s_debug.c:186
 #, no-c-format
 msgid ":%s"
 msgstr ""
@@ -118,37 +73,37 @@ msgstr ""
 msgid ":No log %s is set for subsystem %s"
 msgstr ""
 
-#: ircd/ircd_features.c:799
+#: ircd/ircd_features.c:905
 #, no-c-format
 msgid ":Integer value of %s: %d"
 msgstr ""
 
-#: ircd/ircd_features.c:804
+#: ircd/ircd_features.c:910
 #, no-c-format
 msgid ":Boolean value of %s: %s"
 msgstr ""
 
-#: ircd/ircd_features.c:811
+#: ircd/ircd_features.c:917
 #, no-c-format
 msgid ":String value of %s: %s"
 msgstr ""
 
-#: ircd/ircd_features.c:814
+#: ircd/ircd_features.c:920
 #, no-c-format
 msgid ":String value for %s not set"
 msgstr ""
 
-#: ircd/ircd_features.c:937
+#: ircd/ircd_features.c:1043
 #, no-c-format
 msgid "%c %s %d"
 msgstr ""
 
-#: ircd/ircd_features.c:943 ircd/ircd_features.c:950
+#: ircd/ircd_features.c:1049 ircd/ircd_features.c:1056
 #, no-c-format
 msgid "%c %s %s"
 msgstr ""
 
-#: ircd/ircd_features.c:953
+#: ircd/ircd_features.c:1059
 #, no-c-format
 msgid "%c %s"
 msgstr ""
@@ -193,12 +148,12 @@ msgstr ""
 msgid "F LOG %s"
 msgstr ""
 
-#: ircd/ircd_netconf.c:300
+#: ircd/ircd_netconf.c:305
 #, no-c-format
 msgid "%Tu %s :%s"
 msgstr ""
 
-#: ircd/ircd_relay.c:679
+#: ircd/ircd_relay.c:875
 #, no-c-format
 msgid "* :Target left %s. Failed to deliver: [%.20s]"
 msgstr ""
@@ -211,56 +166,6 @@ msgstr ""
 #: ircd/list.c:508
 #, no-c-format
 msgid ":%s: inuse %zu(%zu) alloc %zu"
-msgstr ""
-
-#: ircd/m_account.c:146
-#, no-c-format
-msgid "in use, default"
-msgstr ""
-
-#: ircd/m_account.c:147
-#, no-c-format
-msgid "in use"
-msgstr ""
-
-#: ircd/m_account.c:148
-#, no-c-format
-msgid "default"
-msgstr ""
-
-#: ircd/m_account.c:149
-#, no-c-format
-msgid "available"
-msgstr ""
-
-#: ircd/m_account.c:175
-#, no-c-format
-msgid "that is not an address"
-msgstr ""
-
-#: ircd/m_account.c:179
-#, no-c-format
-msgid "that password is too long"
-msgstr ""
-
-#: ircd/m_account.c:203
-#, no-c-format
-msgid "another login is already under way"
-msgstr ""
-
-#: ircd/m_account.c:207
-#, no-c-format
-msgid "you have already authenticated"
-msgstr ""
-
-#: ircd/m_account.c:211
-#, no-c-format
-msgid "too many failed attempts on this connection"
-msgstr ""
-
-#: ircd/m_account.c:215
-#, no-c-format
-msgid "this server will not take a password over an unencrypted connection"
 msgstr ""
 
 #: ircd/m_asll.c:150 ircd/m_asll.c:183
@@ -353,57 +258,52 @@ msgstr ""
 msgid "%C :Highest connection count: %d (%d clients)"
 msgstr ""
 
-#: ircd/m_module.c:59
+#: ircd/m_module.c:62
 #, no-c-format
-msgid ":Module %s (%s %s, ABI %u): modules/%s -- %s [loaded by %s]"
+msgid ":Module %s (%s %s, ABI %u): modules/%s -- %s [%s, loaded by %s]"
 msgstr ""
 
-#: ircd/m_module.c:66
+#: ircd/m_module.c:75
 #, no-c-format
 msgid ":%u module%s loaded"
 msgstr ""
 
-#: ircd/m_module.c:122 ircd/m_module.c:189
+#: ircd/m_module.c:82
+#, no-c-format
+msgid ":Module set: %s"
+msgstr ""
+
+#: ircd/m_module.c:138 ircd/m_module.c:205
 #, no-c-format
 msgid "%C :MODULE MIGRATION subcommand must be LIST, STATUS, APPLY or REVERT"
 msgstr ""
 
-#: ircd/m_module.c:137
+#: ircd/m_module.c:153
 #, no-c-format
 msgid "%C :MODULE MIGRATION %s needs a module name"
 msgstr ""
 
-#: ircd/m_module.c:147
+#: ircd/m_module.c:163
 #, no-c-format
 msgid "%C :The server's own migrations run at start-up and are not applied or reverted by hand"
 msgstr ""
 
-#: ircd/m_module.c:154 ircd/m_module.c:258 ircd/m_module.c:278
+#: ircd/m_module.c:170
 #, no-c-format
 msgid "%C :No module named %s is loaded"
 msgstr ""
 
-#: ircd/m_module.c:167
+#: ircd/m_module.c:183
 #, no-c-format
 msgid "%C :%s is not a version; migrations are numbered v1, v2 and so on"
 msgstr ""
 
-#: ircd/m_module.c:244
+#: ircd/m_module.c:273
 #, no-c-format
-msgid "%C :Could not load %s: %s"
+msgid "%C :Isolation must be native or process"
 msgstr ""
 
-#: ircd/m_module.c:264 ircd/m_module.c:288
-#, no-c-format
-msgid "%C :Could not unload %s"
-msgstr ""
-
-#: ircd/m_module.c:298
-#, no-c-format
-msgid "%C :Unloaded %s but could not load it again: %s"
-msgstr ""
-
-#: ircd/m_module.c:316
+#: ircd/m_module.c:315
 #, no-c-format
 msgid "%C :MODULE subcommand must be LIST, LOAD, UNLOAD, RELOAD or MIGRATION"
 msgstr ""
@@ -478,69 +378,89 @@ msgstr ""
 msgid "%s :%s"
 msgstr ""
 
-#: ircd/m_xquery.c:141 ircd/m_xreply.c:122 ircd/s_user.c:283
+#: ircd/m_xquery.c:141 ircd/m_xreply.c:122 ircd/s_user.c:223
 #, no-c-format
 msgid "* :Server has disconnected"
 msgstr ""
 
-#: ircd/migration_run.c:642 ircd/migration_run.c:760
+#: ircd/migration_run.c:643 ircd/migration_run.c:769
 #, no-c-format
 msgid "%C :Cannot reach the database: %s"
 msgstr ""
 
-#: ircd/migration_run.c:770 ircd/migration_run.c:791
+#: ircd/migration_run.c:779 ircd/migration_run.c:800
 #, no-c-format
 msgid "%C :Module %s ships no migrations"
 msgstr ""
 
-#: ircd/migration_run.c:798
+#: ircd/migration_run.c:807
 #, no-c-format
 msgid "%C :Module %s has no v%u; it declares v1 to v%u"
 msgstr ""
 
-#: ircd/migration_run.c:805
+#: ircd/migration_run.c:814
 #, no-c-format
 msgid "%C :A migration of %s is already running; wait for it"
 msgstr ""
 
-#: ircd/module.c:1498
+#: ircd/module.c:1748
 #, no-c-format
 msgid ":Module %s %s: %u command%s, %u user mode%s%s%s, %u channel mode%s%s%s, %u capabilit%s%s%s, from modules/%s, loaded by %s"
 msgstr ""
 
-#: ircd/module.c:1527
+#: ircd/module.c:1772
 #, no-c-format
 msgid ":Module %s: %u task%s in flight, %u dedicated worker%s"
 msgstr ""
 
-#: ircd/module.c:1533
+#: ircd/module.c:1778
 #, no-c-format
 msgid ":%u module%s loaded, ABI %u"
 msgstr ""
 
-#: ircd/module.c:1543
+#: ircd/module.c:1787
 #, no-c-format
 msgid ":Workers disabled (WORKER_THREADS is 0)"
 msgstr ""
 
-#: ircd/module.c:1546
+#: ircd/module.c:1790
 #, no-c-format
 msgid ":Workers: %u pool thread%s, %u dedicated"
 msgstr ""
 
-#: ircd/module.c:1555
+#: ircd/module.c:1799
 #, no-c-format
 msgid ":Workers: %u queued, %u running, %u waiting to be delivered"
 msgstr ""
 
-#: ircd/module.c:1558
+#: ircd/module.c:1802
 #, no-c-format
 msgid ":Workers: %u submitted, %u completed, %u rejected"
 msgstr ""
 
-#: ircd/module.c:1573
+#: ircd/module.c:1817
 #, no-c-format
 msgid ":Hook %s: %u registered, %u call%s"
+msgstr ""
+
+#: ircd/module_sync.c:731
+#, no-c-format
+msgid "%C :Another module transaction is in progress; try again in a moment"
+msgstr ""
+
+#: ircd/module_sync.c:742
+#, no-c-format
+msgid "%C :MODULE_SYNC is off on %s, so %s cannot be done network-wide from here"
+msgstr ""
+
+#: ircd/module_sync.c:780
+#, no-c-format
+msgid "%C :Could not %s %s: %s"
+msgstr ""
+
+#: ircd/module_sync.c:792
+#, no-c-format
+msgid "%C :%s of %s is ready here; waiting for %u other server(s)"
 msgstr ""
 
 #: ircd/motd.c:295
@@ -588,112 +508,112 @@ msgstr ""
 msgid ":% 4d: %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u"
 msgstr ""
 
-#: ircd/s_auth.c:125
+#: ircd/s_auth.c:124
 #, no-c-format
 msgid "Looking up your hostname"
 msgstr ""
 
-#: ircd/s_auth.c:126
+#: ircd/s_auth.c:125
 #, no-c-format
 msgid "Found your hostname"
 msgstr ""
 
-#: ircd/s_auth.c:127
+#: ircd/s_auth.c:126
 #, no-c-format
 msgid "Couldn't look up your hostname"
 msgstr ""
 
-#: ircd/s_auth.c:128
+#: ircd/s_auth.c:127
 #, no-c-format
 msgid "Checking Ident"
 msgstr ""
 
-#: ircd/s_auth.c:129
+#: ircd/s_auth.c:128
 #, no-c-format
 msgid "Got ident response"
 msgstr ""
 
-#: ircd/s_auth.c:130
+#: ircd/s_auth.c:129
 #, no-c-format
 msgid "No ident response"
 msgstr ""
 
-#: ircd/s_auth.c:132
+#: ircd/s_auth.c:131
 #, no-c-format
 msgid "Your forward and reverse DNS do not match, ignoring hostname."
 msgstr ""
 
-#: ircd/s_auth.c:133
+#: ircd/s_auth.c:132
 #, no-c-format
 msgid "Invalid hostname"
 msgstr ""
 
-#: ircd/s_auth.c:390
+#: ircd/s_auth.c:389
 #, no-c-format
 msgid ":Your username is invalid."
 msgstr ""
 
-#: ircd/s_auth.c:392
+#: ircd/s_auth.c:391
 #, no-c-format
 msgid ":Connect with your real username, in lowercase."
 msgstr ""
 
-#: ircd/s_auth.c:394
+#: ircd/s_auth.c:393
 #, no-c-format
 msgid ":If your mail address were foo@bar.com, your username would be foo."
 msgstr ""
 
-#: ircd/s_auth.c:1133
+#: ircd/s_auth.c:1132
 #, no-c-format
 msgid ":Your client may not be compatible with this server."
 msgstr ""
 
-#: ircd/s_auth.c:1135
+#: ircd/s_auth.c:1134
 #, no-c-format
 msgid ":Compatible clients are available at %s"
 msgstr ""
 
-#: ircd/s_auth.c:1532
+#: ircd/s_auth.c:1531
 #, no-c-format
 msgid ":To connect, type /QUOTE PONG %u"
 msgstr ""
 
-#: ircd/s_auth.c:2916
+#: ircd/s_auth.c:2918
 #, no-c-format
 msgid " :%s"
 msgstr ""
 
-#: ircd/s_bsd.c:985
+#: ircd/s_bsd.c:1010
 #, no-c-format
 msgid "%C :Server %s already present from %s"
 msgstr ""
 
-#: ircd/s_bsd.c:993
+#: ircd/s_bsd.c:1018
 #, no-c-format
 msgid "%C :Connection to %s already in progress"
 msgstr ""
 
-#: ircd/s_bsd.c:1031
+#: ircd/s_bsd.c:1056
 #, no-c-format
 msgid "%C :Connect to host %s failed: no Connect block"
 msgstr ""
 
-#: ircd/s_bsd.c:1044
+#: ircd/s_bsd.c:1069
 #, no-c-format
 msgid "%C :Couldn't connect to %s"
 msgstr ""
 
-#: ircd/s_conf.c:115 ircd/s_conf.c:131 ircd/s_conf.c:1577
+#: ircd/s_conf.c:154 ircd/s_conf.c:170 ircd/s_conf.c:1429
 #, no-c-format
 msgid ":Connection from your host is refused on this server."
 msgstr ""
 
-#: ircd/s_conf.c:1435
+#: ircd/s_conf.c:1276
 #, no-c-format
 msgid ":TLS initialization failed"
 msgstr ""
 
-#: ircd/s_conf.c:1583 ircd/s_conf.c:1594
+#: ircd/s_conf.c:1434 ircd/s_conf.c:1445
 #, no-c-format
 msgid ":%s."
 msgstr ""
@@ -1176,12 +1096,6 @@ msgctxt "306"
 msgid ":You have been marked as being away"
 msgstr ""
 
-#: ircd/s_err.c:659
-#, no-c-format
-msgctxt "307"
-msgid "%s :is a registered user"
-msgstr ""
-
 #: ircd/s_err.c:667
 #, no-c-format
 msgctxt "311"
@@ -1264,6 +1178,12 @@ msgstr ""
 #, no-c-format
 msgctxt "329"
 msgid "%s %Tu"
+msgstr ""
+
+#: ircd/s_err.c:705
+#, no-c-format
+msgctxt "330"
+msgid "%s %s :is logged in as"
 msgstr ""
 
 #: ircd/s_err.c:707
@@ -1968,12 +1888,6 @@ msgctxt "690"
 msgid "%s %s :can speak these languages."
 msgstr ""
 
-#: ircd/s_err.c:1427
-#, no-c-format
-msgctxt "691"
-msgid "%s %s :is the address this account belongs to"
-msgstr ""
-
 #: ircd/s_err.c:1429
 #, no-c-format
 msgctxt "692"
@@ -1983,7 +1897,7 @@ msgstr ""
 #: ircd/s_err.c:1845
 #, no-c-format
 msgctxt "900"
-msgid "%s %s :You are now logged in as %s"
+msgid "%s!%s@%s %s :You are now logged in as %s"
 msgstr ""
 
 #: ircd/s_err.c:1847
@@ -2007,7 +1921,7 @@ msgstr ""
 #: ircd/s_err.c:1853
 #, no-c-format
 msgctxt "904"
-msgid ":SASL authentication failed"
+msgid ":%s"
 msgstr ""
 
 #: ircd/s_err.c:1855
@@ -2031,7 +1945,7 @@ msgstr ""
 #: ircd/s_err.c:1861
 #, no-c-format
 msgctxt "908"
-msgid "%s :are the available SASL mechanisms"
+msgid "%s :are available SASL mechanisms"
 msgstr ""
 
 #: ircd/s_err.c:2007
@@ -2046,162 +1960,138 @@ msgctxt "982"
 msgid "%s :Languages are not supported by this server."
 msgstr ""
 
-#: ircd/s_err.c:2011
-#, no-c-format
-msgctxt "983"
-msgid ":Authentication failed: %s"
-msgstr ""
-
-#: ircd/s_err.c:2013
-#, no-c-format
-msgctxt "984"
-msgid "%s %s :%s"
-msgstr ""
-
-#: ircd/s_err.c:2015
-#, no-c-format
-msgctxt "985"
-msgid ":End of ACCOUNT LIST"
-msgstr ""
-
-#: ircd/s_err.c:2017
-#, no-c-format
-msgctxt "986"
-msgid ":You have not authenticated to an account"
-msgstr ""
-
 #: ircd/s_err.c:2019
 #, no-c-format
 msgctxt "987"
 msgid "%s :You must identify to this nickname before you can use that"
 msgstr ""
 
-#: ircd/s_misc.c:477
+#: ircd/s_misc.c:489
 #, no-c-format
 msgid "%C :Link with %s canceled: %s"
 msgstr ""
 
-#: ircd/s_misc.c:647
+#: ircd/s_misc.c:659
 #, no-c-format
 msgid ":accepts %u refused %u"
 msgstr ""
 
-#: ircd/s_misc.c:650
+#: ircd/s_misc.c:662
 #, no-c-format
 msgid ":inactive %u all in use %u bad ip %u collided %u"
 msgstr ""
 
-#: ircd/s_misc.c:654
+#: ircd/s_misc.c:666
 #, no-c-format
 msgid ":bad username %u G/K-lined %u bad password %u no client block %u"
 msgstr ""
 
-#: ircd/s_misc.c:658
+#: ircd/s_misc.c:670
 #, no-c-format
 msgid ":class full %u IP full %u bad socket %u throttled %u"
 msgstr ""
 
-#: ircd/s_misc.c:662
+#: ircd/s_misc.c:674
 #, no-c-format
 msgid ":not hub %u crule faile %u no server block %u bad password %u"
 msgstr ""
 
-#: ircd/s_misc.c:666
+#: ircd/s_misc.c:678
 #, no-c-format
 msgid ":bad client fingerprint %u bad server fingerprint %u"
 msgstr ""
 
-#: ircd/s_misc.c:669
+#: ircd/s_misc.c:681
 #, no-c-format
 msgid ":unknown commands %u prefixes %u"
 msgstr ""
 
-#: ircd/s_misc.c:671
+#: ircd/s_misc.c:683
 #, no-c-format
 msgid ":nick collisions %u unknown closes %u"
 msgstr ""
 
-#: ircd/s_misc.c:673
+#: ircd/s_misc.c:685
 #, no-c-format
 msgid ":wrong direction %u empty %u"
 msgstr ""
 
-#: ircd/s_misc.c:675
+#: ircd/s_misc.c:687
 #, no-c-format
 msgid ":numerics seen %u mode fakes %u"
 msgstr ""
 
-#: ircd/s_misc.c:677
+#: ircd/s_misc.c:689
 #, no-c-format
 msgid ":auth successes %u fails %u"
 msgstr ""
 
-#: ircd/s_misc.c:678
+#: ircd/s_misc.c:690
 #, no-c-format
 msgid ":local connections %u"
 msgstr ""
 
-#: ircd/s_misc.c:680
+#: ircd/s_misc.c:692
 #, no-c-format
 msgid ":Client server"
 msgstr ""
 
-#: ircd/s_misc.c:682
+#: ircd/s_misc.c:694
 #, no-c-format
 msgid ":connected %u %u maxconn %u"
 msgstr ""
 
-#: ircd/s_misc.c:684
+#: ircd/s_misc.c:696
 #, no-c-format
 msgid ":bytes sent %Lu %Lu"
 msgstr ""
 
-#: ircd/s_misc.c:686
+#: ircd/s_misc.c:698
 #, no-c-format
 msgid ":bytes recv %Lu %Lu"
 msgstr ""
 
-#: ircd/s_misc.c:688
+#: ircd/s_misc.c:700
 #, no-c-format
 msgid ":time connected %Lu %Lu"
 msgstr ""
 
-#: ircd/s_serv.c:166
+#: ircd/s_serv.c:167
 #, no-c-format
 msgid "%C :Link with %s established."
 msgstr ""
 
-#: ircd/s_stats.c:313
+#: ircd/s_stats.c:314
 #, no-c-format
 msgid "Connection SendQ SendM SendKBytes RcveM RcveKBytes :Open since"
 msgstr ""
 
-#: ircd/s_stats.c:333
+#: ircd/s_stats.c:334
 #, no-c-format
 msgid "%s %u %u %Lu %u %Lu :%Tu"
 msgstr ""
 
-#: ircd/s_stats.c:352
+#: ircd/s_stats.c:353
 #, no-c-format
 msgid "Module  Description      Entry Point"
 msgstr ""
 
-#: ircd/s_stats.c:369
+#: ircd/s_stats.c:370
 #, no-c-format
 msgid "%s  %s     0x%X"
 msgstr ""
 
-#: ircd/s_stats.c:466
+#: ircd/s_stats.c:467
 #, no-c-format
 msgid ":%-20s %-20s Flags  Hops %-8s %5s %4s %4s %4s %5s %6s %-6s %-10s Info"
 msgstr ""
 
-#: ircd/s_stats.c:588
+#: ircd/s_stats.c:589
 #, no-c-format
 msgid "%C :%c (%s) - %s"
 msgstr ""
 
-#: ircd/s_user.c:950
+#: ircd/s_user.c:866
 #, no-c-format
 msgid "%s :You need to be identified to a registered account to contact this user -- you can obtain an account from %s"
 msgstr ""

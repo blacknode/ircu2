@@ -91,22 +91,6 @@ add_ircu_test(cache_t
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
 
-# The mail register and the signed token underneath it: the register the
-# way cache_t and db_t test theirs, and the token one flipped character at
-# a time, because a signature that accepts something it did not sign is a
-# thing that compiles and runs.
-add_ircu_test(mail_t
-  "${IRCU_IRCD_DIR}/ircd_alloc.c"
-  "${IRCU_IRCD_DIR}/ircd_snprintf.c"
-  "${IRCU_IRCD_DIR}/ircd_base64.c"
-  "${IRCU_IRCD_DIR}/ircd_sha256.c"
-  "${IRCU_IRCD_DIR}/ircd_string.c"
-  "${IRCU_IRCD_DIR}/ircd_token.c"
-  "${IRCU_IRCD_DIR}/ircd_vhost.c"
-  "${IRCU_IRCD_DIR}/mail.c"
-  "${IRCU_IRCD_DIR}/match.c"
-  "${IRCU_IRCD_DIR}/numnicks.c")
-
 # The frames between the server and an out-of-process module host.  They
 # depend on nothing -- no client, no allocator, no log -- which is what
 # lets the parser be tested on its own; and it is a parser reading bytes
@@ -118,18 +102,6 @@ add_ircu_test(http_t
   "${IRCU_IRCD_DIR}/http.c"
   "${IRCU_IRCD_DIR}/ircd_alloc.c"
   "${IRCU_IRCD_DIR}/ircd_string.c")
-
-add_ircu_test(account_t
-  "${IRCU_IRCD_DIR}/account.c"
-  "${IRCU_IRCD_DIR}/ircd_alloc.c"
-  "${IRCU_IRCD_DIR}/ircd_string.c")
-
-add_ircu_test(sasl_t
-  "${IRCU_IRCD_DIR}/ircd_alloc.c"
-  "${IRCU_IRCD_DIR}/ircd_base64.c"
-  "${IRCU_IRCD_DIR}/ircd_sha256.c"
-  "${IRCU_IRCD_DIR}/ircd_string.c"
-  "${IRCU_IRCD_DIR}/sasl.c")
 
 add_ircu_test(hooks_t
   "${IRCU_IRCD_DIR}/hooks.c"
@@ -216,12 +188,10 @@ add_ircu_test(module_t
   "${IRCU_IRCD_DIR}/ircd_string.c"
   "${IRCU_IRCD_DIR}/migration.c"
   "${IRCU_IRCD_DIR}/module.c"
-  "${IRCU_IRCD_DIR}/account.c"
   "${IRCU_IRCD_DIR}/cache.c"
   "${IRCU_IRCD_DIR}/http.c"
   "${IRCU_IRCD_DIR}/ircd_base64.c"
   "${IRCU_IRCD_DIR}/ircd_sha256.c"
-  "${IRCU_IRCD_DIR}/sasl.c"
   "${IRCU_IRCD_DIR}/worker.c")
 target_link_libraries(module_t PRIVATE ${CMAKE_DL_LIBS})
 set_target_properties(module_t PROPERTIES ENABLE_EXPORTS ON)
@@ -247,7 +217,7 @@ function(_ircu_test_module target source subdir)
 endfunction()
 
 foreach(_fixture mod_good mod_badabi mod_failinit mod_nosym mod_umode
-                 mod_cmode mod_cap mod_cmdhook mod_sasl mod_core)
+                 mod_cmode mod_cap mod_cmdhook mod_core)
   _ircu_test_module(${_fixture} ${_fixture} /test)
 endforeach()
 _ircu_test_module(mod_cmd mod_cmd /test/mod_cmd)

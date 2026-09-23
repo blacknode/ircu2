@@ -26,7 +26,6 @@
 #include "channel.h"
 #include "class.h"
 #include "cache.h"
-#include "mail.h"
 #include "client.h"
 #include "crule.h"
 #include "db.h"
@@ -94,7 +93,6 @@
   struct DenyConf *dconf;
   struct ServerConf *sconf;
   struct s_map *smap;
-  struct ServiceConf *svc;
   struct Privs privs;
   struct Privs privs_dirty;
 
@@ -122,9 +120,7 @@ enum ConfigBlock
   BLOCK_IPCHECK,
   BLOCK_DATABASE,
   BLOCK_REDIS,
-  BLOCK_SERVICE,
   BLOCK_SECURITY,
-  BLOCK_MAIL,
   BLOCK_LAST_BLOCK
 };
 
@@ -145,7 +141,7 @@ permitted(enum ConfigBlock type)
     "Admin", "Class", "Client", "Connect", "CRule", "Features",
     "General", "IAuth", "Include", "Jupe", "Kill", "Module", "Motd",
     "Oper", "Port", "Pseudo", "Quarantine", "UWorld", "WebIRC", "IPCheck",
-    "Database", "Redis", "Service", "Security",
+    "Database", "Redis", "Security",
     NULL
   };
 
@@ -231,11 +227,11 @@ static void free_slist(struct SLink **link) {
 %token PREPEND
 %token USERMODE
 %token IAUTH
+%token PROGRAM
 %token MODULE
 %token ISOLATION
 %token FAST
 %token AUTOCONNECT
-%token PROGRAM
 %token TOK_IPV4 TOK_IPV6
 %token DNS
 %token WEBIRC
@@ -244,7 +240,6 @@ static void free_slist(struct SLink **link) {
 %token IPCHECK
 %token EXCEPT
 %token DATABASE
-%token SERVICE
 %token TYPE
 %token CHANNEL
 %token DSN
@@ -257,10 +252,6 @@ static void free_slist(struct SLink **link) {
 %token TIMEOUT_MS
 %token MIGRATION_TIMEOUT
 %token REDIS
-%token MAIL
-%token VERIFY_WINDOW
-%token VERIFY_URL
-%token RESEND_INTERVAL
 %token SOCKET
 %token PREFIX
 %token SECURITY
@@ -310,8 +301,7 @@ block: adminblock | generalblock | classblock | connectblock |
        uworldblock | operblock | portblock | jupeblock | clientblock |
        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
        pseudoblock | iauthblock | webircblock | ipcheckblock |
-       moduleblock | databaseblock | redisblock | serviceblock | securityblock |
-       mailblock |
+       moduleblock | databaseblock | redisblock | securityblock |
        includeblock |
        error '}' ';' { yyerrok; };
 
@@ -1486,131 +1476,6 @@ moduleisolation: ISOLATION '=' QSTRING ';'
   MyFree($3);
 };
 
-/* A Service{} block describes one service bot of the network -- a
- * NickServ, a ChanServ -- for the irc_services module to introduce.  The
- * server records it and checks what it can: the nick is a nick, the
- * type is given, no two blocks share a name.  What the type means, and
- * whether the module knows it, is the module's business; it reads the
- * list on HOOK_CONFIG_LOADED.  See doc/readme.services.
- */
-serviceblock: SERVICE {
-  if (!permitted(BLOCK_SERVICE)) YYERROR;
-  svc = MyCalloc(1, sizeof(*svc));
-} '{' serviceitems '}' ';'
-{
-  const char *p;
-  int valid = 1;
-
-  if (!svc->name) {
-    parse_error("Missing name in Service block");
-    valid = 0;
-  } else if (!svc->type) {
-    parse_error("Missing type in Service %s block", svc->name);
-    valid = 0;
-  } else if (conf_find_service(svc->name)) {
-    parse_error("Duplicate Service %s block", svc->name);
-    valid = 0;
-  } else if (*svc->name == '-' || IsDigit(*svc->name)
-             || strlen(svc->name) > NICKLEN) {
-    parse_error("Service name %s is not a valid nick", svc->name);
-    valid = 0;
-  } else {
-    for (p = svc->name; *p; p++)
-      if (!IsNickChar(*p)) {
-        parse_error("Service name %s is not a valid nick", svc->name);
-        valid = 0;
-        break;
-      }
-  }
-
-  if (valid)
-    conf_add_service(svc);
-  else
-    conf_free_service(svc);
-  svc = NULL;
-};
-
-serviceitems: serviceitem serviceitems | serviceitem;
-serviceitem: servicename | servicetype | serviceusername | servicehost |
-  servicedescription | servicechannel | serviceoption;
-servicename: NAME '=' QSTRING ';'
-{
-  MyFree(svc->name);
-  svc->name = $3;
-};
-servicetype: TYPE '=' QSTRING ';'
-{
-  MyFree(svc->type);
-  svc->type = $3;
-};
-serviceusername: USERNAME '=' QSTRING ';'
-{
-  MyFree(svc->username);
-  svc->username = $3;
-};
-servicehost: HOST '=' QSTRING ';'
-{
-  MyFree(svc->host);
-  svc->host = $3;
-};
-servicedescription: DESCRIPTION '=' QSTRING ';'
-{
-  MyFree(svc->description);
-  svc->description = $3;
-};
-/* Repeatable: one line per channel.  Kept in file order so the bot joins
- * them in the order the operator wrote them.
- */
-servicechannel: CHANNEL '=' QSTRING ';'
-{
-  struct SLink *link, **tail;
-
-  if (!IsChannelName($3) || !strIsIrcCh($3)) {
-    parse_error("Service channel %s is not a channel name", $3);
-    MyFree($3);
-  } else {
-    link = make_link();
-    link->value.cp = $3;
-    link->next = NULL;
-    for (tail = &svc->channels; *tail; tail = &(*tail)->next)
-      ;
-    *tail = link;
-  }
-};
-
-/* Anything else the service itself needs to be told, as a quoted name and
- * a value:
- *
- *   Service {
- *     name = "NickServ";
- *     type = "nickserv";
- *     "grace_period" = 60;
- *     "max_accounts" = 3;
- *   };
- *
- * The core keeps these verbatim and never reads one.  A keyword here for
- * every option any service might ever grow would put the grammar in the
- * way of writing a service, and a block of its own for each service would
- * be the same problem spelled differently; the module that implements the
- * type reads the names it knows through conf_service_option().
- *
- * The left-hand side is a quoted string, so no option can collide with an
- * item above, and a number is accepted as well as a string because most
- * of them are numbers -- both are kept as text.
- */
-serviceoption: QSTRING '=' QSTRING ';'
-{
-  conf_service_set_option(svc, $1, $3);
-}
-| QSTRING '=' timespec ';'
-{
-  char *text;
-
-  text = (char*) MyMalloc(32);
-  ircd_snprintf(NULL, text, 32, "%d", $3);
-  conf_service_set_option(svc, $1, text);
-};
-
 iauthblock: IAUTH {
   if (!permitted(BLOCK_IAUTH)) YYERROR;
 } '{' iauthitems '}' ';' {
@@ -1849,78 +1714,6 @@ redisprefix: PREFIX '=' QSTRING ';'
   cache_conf_set_prefix($3);
 };
 
-/* Mail {
- *   from = "noreply@example.net";
- *   program = "/usr/sbin/sendmail";
- *   timeout = 30 seconds;
- *   verify_window = 1 days;
- *   resend_interval = 5 minutes;
- *   verify_url = "https://example.net/verify?t=%s";
- * };
- *
- * The block is the core's and the provider reads it, exactly as the
- * Database{} and Redis{} blocks are: what a message is (a sender, a
- * deadline, how long a token is good for) belongs to the server, and how
- * it reaches a mail server belongs to whichever module was loaded to do
- * it.  Without the block nothing is sent -- mail_available() is false --
- * and a server that sends no mail is an ordinary server.
- */
-mailblock: MAIL
-{
-  if (!permitted(BLOCK_MAIL)) YYERROR;
-  mail_conf_clear();
-} '{' mailitems '}' ';'
-{
-  const char *err = 0;
-
-  if (!mail_conf_commit(&err))
-    parse_error("%s", err ? err : "Mail: block is incomplete");
-};
-
-mailitems: mailitem mailitems | mailitem;
-mailitem: mailfrom | mailprogram | mailtimeout | mailwindow |
-  mailresend | mailurl;
-
-mailfrom: FROM '=' QSTRING ';'
-{
-  mail_conf_set_from($3);
-};
-/* Read by the provider, not by the core: modules/workers/sendmail/ hands
- * the message to this program.  A provider that speaks SMTP itself will
- * want other fields, and it can have them when it exists -- config nobody
- * reads is config invented blind.
- */
-mailprogram: PROGRAM '=' QSTRING ';'
-{
-  mail_conf_set_program($3);
-};
-mailtimeout: TIMEOUT '=' timespec ';'
-{
-  mail_conf_set_timeout($3);
-};
-/* How long a verification token is good for.  Short, because a token that
- * cannot be revoked is a token whose window is the whole of its risk.
- */
-mailwindow: VERIFY_WINDOW '=' timespec ';'
-{
-  mail_conf_set_window($3);
-};
-/* The shortest gap between two messages to one client, so that "send it
- * again" is not a way to have this server mail somebody else repeatedly.
- */
-mailresend: RESEND_INTERVAL '=' timespec ';'
-{
-  mail_conf_set_resend($3);
-};
-/* Where the token goes in a link, for a deployment that has somewhere to
- * put one.  With no template the mail carries the token itself, which is
- * what a network with no web side wants.
- */
-mailurl: VERIFY_URL '=' QSTRING ';'
-{
-  mail_conf_set_verify_url($3);
-};
-
 /* Security { virtual_host_key = "AbCdEfGhIjKl"; };
  *
  * The block is mandatory: every user's visible host is a cipher of its
@@ -1981,7 +1774,5 @@ blocktype: ALL { $$ = ~0; }
   | IPCHECK { $$ = 1 << BLOCK_IPCHECK; }
   | DATABASE { $$ = 1 << BLOCK_DATABASE; }
   | REDIS { $$ = 1 << BLOCK_REDIS; }
-  | MAIL { $$ = 1 << BLOCK_MAIL; }
-  | SERVICE { $$ = 1 << BLOCK_SERVICE; }
   | SECURITY { $$ = 1 << BLOCK_SECURITY; }
   ;

@@ -411,21 +411,20 @@ struct Client;
 #define TOK_CAP			"CAP"
 #define CMD_CAP			MSG_CAP, TOK_CAP
 
-/* AUTHENTICATE has no P10 token on purpose: it never crosses the link.
- * Every server runs the identity module against the same store, so there
- * is nothing to route.  See proposal 007 section 2.
+/* AUTHENTICATE is between a client and this server: the exchange is
+ * relayed to the network's services as an XQUERY (ircd/sasl.c), so the
+ * command itself never crosses a link and needs no token.
  */
 #define MSG_AUTHENTICATE	"AUTHENTICATE"
 #define TOK_AUTHENTICATE	"AUTHENTICATE"
 #define CMD_AUTHENTICATE	MSG_AUTHENTICATE, TOK_AUTHENTICATE
 
-/* ACCOUNT has no P10 token either, for AUTHENTICATE's reason and one
- * more: "AC" is what the historical ircu account burst used, and giving
- * it a different meaning here would have an old peer's burst land on a
- * client command.  Nothing about ACCOUNT crosses a link.
+/* ACCOUNT is how the network's services tell every server that a user
+ * logged in; AC is the token ircu has always used for it.  It only ever
+ * comes from a U:lined server -- see ircd/m_account.c.
  */
-#define MSG_ACCOUNT		"ACCOUNT"
-#define TOK_ACCOUNT		"ACCOUNT"
+#define MSG_ACCOUNT		"ACCOUNT"	/* ACCO */
+#define TOK_ACCOUNT		"AC"
 #define CMD_ACCOUNT		MSG_ACCOUNT, TOK_ACCOUNT
 
 #define MSG_XQUERY		"XQUERY"
@@ -442,7 +441,7 @@ struct Client;
 
 
 #define MSG_MODULE              "MODULE"        /* MODU */
-#define TOK_MODULE              "MODULE"
+#define TOK_MODULE              "MD"
 #define CMD_MODULE		MSG_MODULE, TOK_MODULE
 
 #define MSG_CONFIG		"CONFIG"
@@ -481,7 +480,7 @@ struct Client;
                                          * is what lets a command a
                                          * module registers say so too.
                                          * See include/client.h and
-                                         * proposal 007 section 6. */
+                                         * doc/readme.accounting. */
 
 /*
  * Structures

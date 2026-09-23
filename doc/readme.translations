@@ -278,9 +278,9 @@ passes to send_reply() as SND_EXPLICIT is looked up once more in "core",
 not found, and left alone.
 
 Text in a table (a command's help line) is marked N_() where it is written
-and translated with _() where it is shown.  irc_services' svc_reply()
-translates its format itself, so its call sites are extracted with
---keyword=svc_reply:2 and carry no _().
+and translated with _() where it is shown.  A module whose own reply
+helper translates its format itself has its call sites extracted with a
+--keyword of its own in the `pot` target, and they carry no _().
 
 The template for a module is written next to its catalogs by the same
 `pot` target: modules/<type>/<name>/po/<name>.pot.

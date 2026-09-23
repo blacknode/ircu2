@@ -212,6 +212,11 @@ enum Flag
     FLAG_EXEMPT_THROTTLE,           /**< exempt from input throttling (raised-maxflood class) */
     FLAG_CAP302,                    /**< client supports IRCv3.2 */
     FLAG_SPAMHOLD,                  /**< user is the sender or recipient of a message on hold */
+    FLAG_MODSYNC_OK,                /**< peer server stated its module set and
+                                         it is the same as ours; see
+                                         include/module_sync.h */
+    FLAG_SASL,                      /**< authenticated with SASL; the services
+                                         answered for this connection */
     FLAG_LAST_FLAG,                 /**< number of flags */
   };
 
@@ -296,8 +301,10 @@ struct Connection
   capset_t            con_capab;     /**< Client capabilities (from us) */
   capset_t            con_active;    /**< Active capabilities (to us) */
   struct AuthRequest* con_auth;      /**< Auth request for client */
-  struct SaslState*   con_sasl;      /**< SASL exchange in progress, or NULL;
-                                          ircd/m_authenticate.c owns it */
+  uint64_t            con_sasl;      /**< Routing cookie of the SASL exchange
+                                          this connection has with the
+                                          services, or 0; ircd/sasl.c owns it */
+  struct Timer        con_sasl_timer; /**< Deadline for that exchange */
   const struct wline* con_wline;     /**< WebIRC authorization for client */
   char*               con_rexmit;    /**< TLS retransmission data */
   size_t              con_rexmit_len; /**, TLS retransmission length */
@@ -394,6 +401,8 @@ struct Client {
 #define cli_active(cli)		con_active(cli_connect(cli))
 /** Get the SASL exchange in progress for the client, or NULL. */
 #define cli_sasl(cli)		con_sasl(cli_connect(cli))
+/** Get the deadline of \a cli's SASL exchange. */
+#define cli_sasl_timer(cli)	(&con_sasl_timer(cli_connect(cli)))
 /** Get client name. */
 #define cli_name(cli)		((cli)->cli_name)
 /** Get client username (ident). */
@@ -556,6 +565,8 @@ struct Client {
 #define con_auth(con)		((con)->con_auth)
 /** Get the SASL exchange in progress on the connection, or NULL. */
 #define con_sasl(con)		((con)->con_sasl)
+/** Get the deadline of \a con's SASL exchange. */
+#define con_sasl_timer(con)	((con)->con_sasl_timer)
 /** Get the WebIRC block (if any) used by the connection. */
 #define con_wline(con)          ((con)->con_wline)
 /** Get the WebSocket mode for the connection. */
@@ -721,7 +732,7 @@ struct Client {
  * It is using a registered nickname it has not proved is its own.  Until
  * it identifies, changes nick, or is renamed when the grace period runs
  * out, every command but the handful that lead out of the state is
- * refused; see MFLG_FROZEN_OK in msg.h and proposal 007.
+ * refused; see MFLG_FROZEN_OK in msg.h and doc/readme.accounting.
  */
 #define IsFrozen(x)             HasUFlag(x, FLAG_FREEZE)
 /** Return non-zero if the client has set mode +x (hidden host). */

@@ -656,7 +656,7 @@ static Numeric replyTable[] = {
 /* 306 */
   N(RPL_NOWAWAY, "306", ":You have been marked as being away"),
 /* 307 */
-  N(RPL_WHOISREGNICK, "307", "%s :is a registered user"),
+  { 0 },
 /* 308 */
   { 0 },
 /* 309 */
@@ -702,7 +702,7 @@ static Numeric replyTable[] = {
 /* 329 */
   N(RPL_CREATIONTIME, "329", "%s %Tu"),
 /* 330 */
-  { 0 },
+  N(RPL_WHOISACCOUNT, "330", "%s %s :is logged in as"),
 /* 331 */
   N(RPL_NOTOPIC, "331", "%s :No topic is set."),
 /* 332 */
@@ -1424,7 +1424,7 @@ static Numeric replyTable[] = {
 /* 690 */
   N(RPL_WHOISLANGUAGE, "690", "%s %s :can speak these languages."),
 /* 691 */
-  N(RPL_WHOISEMAIL, "691", "%s %s :is the address this account belongs to"),
+  { 0 },
 /* 692 */
   N(RPL_WHOISFROZEN, "692", "%s :must identify to this nickname before doing anything else"),
 /* 693 */
@@ -1842,7 +1842,7 @@ static Numeric replyTable[] = {
 /* 899 */
   { 0 },
 /* 900 */
-  N(RPL_LOGGEDIN, "900", "%s %s :You are now logged in as %s"),
+  N(RPL_LOGGEDIN, "900", "%s!%s@%s %s :You are now logged in as %s"),
 /* 901 */
   N(RPL_LOGGEDOUT, "901", "%s :You are now logged out"),
 /* 902 */
@@ -1850,7 +1850,7 @@ static Numeric replyTable[] = {
 /* 903 */
   N(RPL_SASLSUCCESS, "903", ":SASL authentication successful"),
 /* 904 */
-  N(ERR_SASLFAIL, "904", ":SASL authentication failed"),
+  N(ERR_SASLFAIL, "904", ":%s"),
 /* 905 */
   N(ERR_SASLTOOLONG, "905", ":SASL message too long"),
 /* 906 */
@@ -1858,7 +1858,7 @@ static Numeric replyTable[] = {
 /* 907 */
   N(ERR_SASLALREADY, "907", ":You have already authenticated using SASL"),
 /* 908 */
-  N(RPL_SASLMECHS, "908", "%s :are the available SASL mechanisms"),
+  N(RPL_SASLMECHS, "908", "%s :are available SASL mechanisms"),
 /* 909 */
   { 0 },
 /* 910 */
@@ -2008,19 +2008,19 @@ static Numeric replyTable[] = {
 /* 982 */
   N(ERR_NOLANGUAGE, "982", "%s :Languages are not supported by this server."),
 /* 983 */
-  N(ERR_ACCOUNTFAIL, "983", ":Authentication failed: %s"),
+  { 0 },
 /* 984 */
-  N(RPL_ACCOUNTLIST, "984", "%s %s :%s"),
+  { 0 },
 /* 985 */
-  N(RPL_ENDOFACCOUNTLIST, "985", ":End of ACCOUNT LIST"),
+  { 0 },
 /* 986 */
-  N(ERR_NOTAUTHENTICATED, "986", ":You have not authenticated to an account"),
+  { 0 },
 /* 987 */
   N(ERR_FROZEN, "987", "%s :You must identify to this nickname before you can use that"),
 /* 988 */
-  N(RPL_VERIFYSENT, "988", "%s :A message with a verification token is on its way"),
+  { 0 },
 /* 989 */
-  N(RPL_VERIFIED, "989", "%s :That address is verified"),
+  { 0 },
 /* 990 */
   { 0 },
 /* 991 */

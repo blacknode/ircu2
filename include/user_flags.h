@@ -22,7 +22,7 @@
   (BITSET << 31) /**< +f: carries a registered nick without having proved \
                     it; every command but the ones that let it identify, \
                     talk to a service or change nick is refused.  Only \
-                    the server or a +S bot sets it.  See proposal 007. */
+                    the server or a +S bot sets it.  See doc/readme.accounting. */
 #define FLAG_DEBUG (BITSET << 32)     /**< send global debug/anti-hack info */
 #define FLAG_INVISIBLE (BITSET << 34) /**< makes user invisible */
 #define FLAG_CHSERV                                                            \

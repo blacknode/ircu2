@@ -181,40 +181,6 @@ struct s_map {
 };
 
 
-/** One Service{} block: a service bot for a module to introduce.
- *
- * The server only records it.  A module -- irc_services -- walks the list
- * on HOOK_CONFIG_LOADED and creates a bot for each block whose type it
- * knows; see doc/readme.services.  Fields not given are NULL, and the
- * module applies the bot_create() defaults.
- */
-/** One free-form setting inside a Service{} block.
- *
- * What a service needs to be told is the service's business, not the
- * grammar's: NickServ wants a grace period and a limit on accounts per
- * address, ChanServ will want something else, and a block of its own for
- * each of them would mean a keyword in the lexer for every option any
- * service ever grows.  So an option is a quoted name and a value, the
- * core keeps them verbatim, and the module that implements the type reads
- * the ones it knows and ignores the rest.
- */
-struct ServiceOption {
-  struct ServiceOption* next;  /**< Next option, in file order. */
-  char*                 name;  /**< Option name, as written. */
-  char*                 value; /**< Its value, always as a string. */
-};
-
-struct ServiceConf {
-  struct ServiceConf* next;    /**< Next block, in file order. */
-  char*               name;    /**< Nick.  Required, unique. */
-  char*               type;    /**< Which service this is, e.g. "nickserv". */
-  char*               username; /**< Ident, or NULL. */
-  char*               host;    /**< Host, or NULL. */
-  char*               description; /**< Real name, or NULL. */
-  struct SLink*       channels; /**< Channels to sit on, value.cp each. */
-  struct ServiceOption* options; /**< Free-form settings, in file order. */
-};
-
 struct ModuleList {
   char *mod_name;
   struct ModuleList *next;
@@ -264,32 +230,9 @@ extern struct ConfItem *conf_debug_iline(const char *client);
 extern void conf_add_module(const char *name, int isolated);
 extern void free_mapping(struct s_map *smap);
 extern void conf_add_module_node(const char *name, int isolated);
+/** Drop the Module{} blocks of the configuration being replaced. */
+extern void conf_clear_modules(void);
 
-
-/** Take ownership of a parsed Service{} block; \a svc must be complete. */
-extern void conf_add_service(struct ServiceConf *svc);
-/** Release a Service{} block that was not added. */
-extern void conf_free_service(struct ServiceConf *svc);
-/** The Service{} blocks of the current configuration, in file order. */
-extern const struct ServiceConf *conf_service_list(void);
-/** The Service{} block whose name is \a nick, or NULL. */
-extern const struct ServiceConf *conf_find_service(const char *nick);
-/** The first Service{} block of type \a type, or NULL. */
-extern const struct ServiceConf *conf_find_service_type(const char *type);
-/** Record a free-form setting; the parser only.  Takes both strings. */
-extern void conf_service_set_option(struct ServiceConf *svc, char *name,
-                                    char *value);
-/** A service's setting, or \a def when the block did not give one.
- * @param[in] svc The block.
- * @param[in] name Option name, compared case-insensitively.
- * @param[in] def What to return when it is absent.
- */
-extern const char *conf_service_option(const struct ServiceConf *svc,
-                                       const char *name, const char *def);
-/** The same, read as a number.  \a def is returned for an absent or
- * unreadable value, so a typo does not silently become zero. */
-extern int conf_service_option_int(const struct ServiceConf *svc,
-                                   const char *name, int def);
 
 extern void yyerror(const char *msg);
 

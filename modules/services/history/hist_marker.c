@@ -72,7 +72,7 @@
 struct HistMark {
   char hm_numnick[10];             /**< Who asked. */
   time_t hm_born;                  /**< When they connected. */
-  char hm_account[NICKLEN + 1];    /**< Their account, canonical. */
+  char hm_account[ACCOUNTLEN + 1]; /**< Their account, canonical. */
   char hm_target[CHANNELLEN + 1];  /**< As they wrote it. */
   char hm_canon[CHANNELLEN + 1];   /**< Canonical. */
   int  hm_broadcast;               /**< Tell their other clients too. */
@@ -113,7 +113,7 @@ static void hist_mark_broadcast(const char* account, const char* target,
 
   for (i = 0; i <= HighestFd; i++) {
     struct Client* cptr = LocalClientArray[i];
-    char mine[NICKLEN + 1];
+    char mine[ACCOUNTLEN + 1];
 
     if (!cptr || !IsUser(cptr) || !IsAccount(cptr) || !cli_user(cptr))
       continue;

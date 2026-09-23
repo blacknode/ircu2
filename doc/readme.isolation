@@ -106,7 +106,7 @@ cost is, so what ircd/modhost/modhost_api.c implements is the profile an
                       module_command_count()
   hooks               module_add_hook(), module_del_hook(),
                       module_hook_resume()
-  identity            module_dir(), module_loaded_by()
+  the module itself   module_dir(), module_loaded_by()
   the log             log_write()
   memory              MyMalloc(), MyCalloc(), MyFree(), MyRealloc()
   strings             ircd_strncpy(), ircd_strcmp(), ircd_strncmp(),
@@ -202,10 +202,10 @@ WHEN TO USE IT
 Use "process" for what you did not write and do not review: integrations,
 third-party modules, anything that runs a client's logic.
 
-Use "native" for your own code on the critical path -- identity, history,
-the database driver -- both because those need the parts of the API that
-are not in the profile and because an extra process between the server
-and its own database buys nothing.
+Use "native" for your own code on the critical path -- history, the
+file host, the database driver -- both because those need the parts of
+the API that are not in the profile and because an extra process between
+the server and its own database buys nothing.
 
 The rule worth keeping: **no third-party module goes in native.**
 

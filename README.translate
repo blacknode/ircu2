@@ -43,4 +43,4 @@ msgmerge -U modules/commands/x/po/es.po modules/commands/x/po/x.pot
 
 msginit = idioma nuevo (una vez); msgmerge = idioma existente tras cambiar los fuentes. Nunca ambos sobre el mismo fichero en la misma pasada.
 
-modules/services/irc_services/ es el ejemplo completo a copiar: services.h:40 define I18N_DOMAIN, irc_services.c:552 lo abre, y po/ tiene irc_services.pot + es.po.
+modules/commands/m_bot/ es el ejemplo completo a copiar: define su I18N_DOMAIN, lo abre en mi_init, y po/ tiene m_bot.pot + es.po.

@@ -93,16 +93,15 @@ conftest.py            # pytest fixtures (ircd_hub, ircd_network, make_client)
     test_fix.py
     test_edge_cases.py
   accounting/
-    test_accounting.py       # umode +r (server / +S bot / burst), the hidden host
+    test_accounting.py       # the account (ACCOUNT from a U:lined server, +r in
+                             # a burst, WHOIS 330, WHOX %a), the hidden host
                              # every user carries, who may change whose modes
-  identity/
-    test_identity.py         # umode +f and what it blocks, +r clearing it, the
-                             # guest-* rename, what ACCOUNT refuses, the sasl
-                             # capability with no provider to answer for it
-  identity_db/
-    test_identity_db.py      # the same with a provider: REGISTER / IDENTIFY /
-                             # PASSWORD / DROP over a real PostgreSQL, the
-                             # account limit, and the grace period end to end
+  account_notify/
+    test_account_notify.py   # account-notify: who is told, locally and across
+                             # a link, and who is not
+  account_flags/
+    test_account_flags.py    # account:id:flags in the NICK burst, and the
+                             # client ACCOUNT line carrying the name alone
   history/
     test_history.py          # CHATHISTORY over the same PostgreSQL: the six
                              # shapes, a replayed message keeping its msgid and
@@ -179,15 +178,15 @@ The hub also has Connect blocks for two external test servers used by the P10 te
 
 Configs are baked into the Docker images (in `docker/`), not volume-mounted.
 
-### Identity topology (`identity_db/`, `history/`, `conversation/`, `files/`)
+### Store topology (`history/`, `conversation/`, `files/`)
 
-One ircd with the identity module and the PostgreSQL it stores accounts
-in -- and, since phase 2, the history module and the messages it stores
-there too.  Not part of the hub/leaf network: what is tested is one server
-answering for itself, and the store is per-topology so a run cannot
-inherit accounts from another one.
+One ircd with a PostgreSQL behind it, for the modules that keep what
+they hear: history, the conversation model and the file host.  Not part
+of the hub/leaf network: what is tested is one server answering for
+itself, and the store is per-topology so a run cannot inherit rows from
+another one.
 
-`history/` and `conversation/` share it because half of what is worth
+`history/` and `conversation/` need it because half of what is worth
 testing about CHATHISTORY needs accounts: a direct message is stored only
 when both ends have identified, a conversation is read back by account,
 REDACT asks who wrote a message, and a read marker belongs to a person
@@ -196,13 +195,18 @@ the file host keeps its metadata in the same database, and only an
 identified client may upload.  Those
 tests put a token unique to the run in every nickname and channel name,
 because the store outlives them -- a fixed name would read back the
-previous run's messages and a fixed nickname would already be registered.
+previous run's messages and a fixed account would read back its files.
 
-| Service       | Server Name        | Client | S2S  | Numeric | IP         |
-|---------------|--------------------|--------|------|---------|------------|
-| ircd-identity | identity.test.net  | 6673   | 4430 | 7       | 10.55.0.51 |
-|               | (its HTTP listener)| 6680   | —    | —       |            |
-| identity-db   | postgres:17-alpine | 15432  | —    | —       | 10.55.0.50 |
+The accounts come from the network's services, as they do on a real
+network: the `store_services` fixture links `tests/p10_server.py` as the
+U:lined `services.test.net` and sends `ACCOUNT`.  The server itself runs
+no services and knows nothing about passwords.
+
+| Service    | Server Name        | Client | S2S  | Numeric | IP         |
+|------------|--------------------|--------|------|---------|------------|
+| ircd-store | store.test.net     | 6673   | 4430 | 7       | 10.55.0.51 |
+|            | (its HTTP listener)| 6680   | —    | —       |            |
+| store-db   | postgres:17-alpine | 15432  | —    | —       | 10.55.0.50 |
 
 There is no Redis: the cache is never the truth (see `doc/readme.cache`),
 so a server without one answers exactly the same and one container fewer
@@ -210,10 +214,9 @@ has to come up.  The database runs with `fsync=off` — it is rebuilt every
 run, so durability buys nothing and costs a second per migration.
 
 The schema is not seeded by the image.  The tests create it themselves
-with `/MODULE MIGRATION APPLY identity` (and `... APPLY history`), which
-is how a deployment does it.  Until it exists every nickname lookup fails, and a failed lookup is
-never read as "free", so every client is renamed to `guest-*`: bring the
-server up, migrate, then let users in.
+with `/MODULE MIGRATION APPLY history` (and `... APPLY filehost`), which
+is how a deployment does it: bring the server up, migrate, then let
+users in.
 
 The image carries every module the build produced under
 `/opt/ircu/lib/modules`, which is where the loader looks.  A module is

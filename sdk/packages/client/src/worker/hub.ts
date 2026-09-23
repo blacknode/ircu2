@@ -287,6 +287,7 @@ export class WorkerHub {
       status: client.connectionStatus,
       nick: state.nick,
       identified: state.identified,
+      ...(state.account !== undefined ? { account: state.account } : {}),
       frozen: state.frozen,
       channels: [...state.channels.values()].map((c) => ({
         name: c.name,
@@ -321,10 +322,9 @@ export class WorkerHub {
 
 /** Does `text` mention `nick`?
  *
- * On this server an account **is** a nickname, so mentioning `maria` is
- * mentioning the account whenever `+r` says she proved it -- there is no
- * separate thing to match against, which is why this is a word match on
- * the nickname and not a lookup.
+ * The nickname, because that is what somebody types: an account is a
+ * name the services keep and nobody addresses anybody by it.  So this is
+ * a word match on the nickname and not a lookup.
  *
  * Word boundaries by hand rather than by regular expression: a nickname
  * may contain `[`, `]`, `\`, `^` and `{`, and several of those are

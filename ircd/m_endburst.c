@@ -88,9 +88,11 @@
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_string.h"
+#include "module_sync.h"
 #include "msg.h"
 #include "numeric.h"
 #include "numnicks.h"
+#include "s_misc.h"
 #include "send.h"
 
 /* #include <assert.h> -- Now using assert in ircd_log.h */
@@ -114,6 +116,14 @@ int ms_end_of_burst(struct Client* cptr, struct Client* sptr, int parc, char* pa
 
   assert(0 != cptr);
   assert(0 != sptr);
+
+  /* A directly linked peer has had the whole burst to say what modules
+   * it runs, and a set that was never stated is not a set that matched.
+   * Checked here rather than on a timer because this is the moment the
+   * peer itself says it has finished talking.
+   */
+  if (MyConnect(sptr) && modsync_burst_done(sptr))
+    return CPTR_KILLED;
 
   sendto_opmask_butone(0, SNO_NETWORK, "Completed net.burst from %C.", 
   	sptr);

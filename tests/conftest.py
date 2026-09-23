@@ -103,13 +103,14 @@ LIMITS = {
     "name": "limits.test.net",
 }
 
-# One server with the identity module and the PostgreSQL behind it; no
-# leaves, because what is tested there is one server answering for itself.
-IDENTITY = {
+# One server with a database behind it -- history, the conversation
+# model and the file host -- and no leaves, because what is tested there
+# is one server answering for itself.
+STORE = {
     "host": "127.0.0.1",
     "port": 6673,
     "server_port": 4430,
-    "name": "identity.test.net",
+    "name": "store.test.net",
     "db_port": 15432,
     "http_port": 6680,
 }
@@ -264,11 +265,11 @@ def _start_topology_limits():
     time.sleep(2)
 
 
-def _start_topology_identity():
+def _start_topology_store():
     # depends_on waits for the database's healthcheck, so the ircd starts
     # with something to connect to; its own pool still takes a moment.
-    _start_services("ircd-identity")
-    wait_for_port(IDENTITY["host"], IDENTITY["port"], timeout=120.0)
+    _start_services("ircd-store")
+    wait_for_port(STORE["host"], STORE["port"], timeout=120.0)
     time.sleep(2)
 
 
@@ -312,7 +313,7 @@ _TOPOLOGIES = {
     "tls_network": _start_topology_tls_network,
     "tls_hub": _start_topology_tls_hub,
     "limits": _start_topology_limits,
-    "identity": _start_topology_identity,
+    "store": _start_topology_store,
     "dns": _start_topology_dns,
     "nf_compat": _start_topology_nf_compat,
 }
@@ -328,7 +329,7 @@ _SATISFIED_BY = {
     "tls_network": {"tls_network"},
     "tls_hub": {"tls_hub"},
     "limits": {"limits"},
-    "identity": {"identity"},
+    "store": {"store"},
     "dns": {"dns"},
     "nf_compat": {"nf_compat"},
 }
@@ -339,7 +340,7 @@ _FIXTURE_TOPOLOGY = {
     "ircd_tls_network": "tls_network",
     "ircd_tls_hub": "tls_hub",
     "ircd_limits": "limits",
-    "ircd_identity": "identity",
+    "ircd_store": "store",
     "ircd_dns_hub": "dns",
     "ircd_nf_compat": "nf_compat",
 }
@@ -347,7 +348,7 @@ _FIXTURE_TOPOLOGY = {
 # Collection order: tests with no docker dependency first, then one
 # contiguous block per topology. "network" runs before "hub" so hub-only
 # tests reuse the already-running network (see _SATISFIED_BY).
-_TOPOLOGY_ORDER = ["network", "hub", "limits", "identity", "dns", "nf_compat",
+_TOPOLOGY_ORDER = ["network", "hub", "limits", "store", "dns", "nf_compat",
                    "tls_network", "tls_hub"]
 
 _active_topology = None
@@ -390,7 +391,7 @@ def _ensure_topology(name):
 def topology_generation():
     """How many times a topology has been started in this session.
 
-    For a fixture that builds state *inside* a container -- the identity
+    For a fixture that builds state *inside* a container -- a module's
     schema, applied with /MODULE MIGRATION APPLY -- and wants to build it
     once rather than once per test.  It cannot simply be session-scoped:
     a session-scoped fixture is set up before the function-scoped autouse
@@ -490,9 +491,9 @@ def ircd_network():
 
 
 @pytest.fixture(scope="session")
-def ircd_identity():
-    """Connection info for the identity server and its database."""
-    return IDENTITY
+def ircd_store():
+    """Connection info for the store server and its database."""
+    return STORE
 
 
 @pytest.fixture(scope="session")
@@ -673,6 +674,23 @@ async def ulined_server(ircd_hub):
     """
     srv = P10Server(name="services.test.net", numeric=4, password="testpass")
     await srv.connect(ircd_hub["host"], ircd_hub["server_port"])
+    await srv.handshake()
+    yield srv
+    await srv.disconnect()
+
+
+@pytest_asyncio.fixture
+async def store_services(ircd_store):
+    """A U:lined P10 server linked to the store server.
+
+    The store topology has no services of its own: an account is what the
+    network's services say it is, and here they are this fake server,
+    U:lined as "services.test.net" in tests/docker/ircd-store.conf.  It is
+    what the tests in history/, conversation/ and files/ log a client in
+    with -- see :func:`p10_server.P10Server.send_register`.
+    """
+    srv = P10Server(name="services.test.net", numeric=4, password="testpass")
+    await srv.connect(ircd_store["host"], ircd_store["server_port"])
     await srv.handshake()
     yield srv
     await srv.disconnect()

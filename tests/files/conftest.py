@@ -1,15 +1,11 @@
 """Fixtures for the file tests.
 
-The schema and an account come from identity_db/: a file belongs to an
-account, and an account is what that suite already knows how to make.
-Importing its ``address`` fixture rather than writing one again is what
-keeps the two suites saying the same thing about what an account is.
+A file belongs to an account, and an account is what the network's
+services say it is: ``store_services`` (tests/conftest.py) is the U:lined
+P10 server that logs a client in, the way doc/readme.accounting describes.
 
-What cannot be imported is the schema, because there are two sets of
-migrations here -- identity's, because the tests log in, and filehost's --
-and the fixture below is therefore the one ``address`` resolves to: a
-fixture is looked up from the test that asks for it, not from the module
-it was written in.
+The schema is the file host's own, created the way an operator creates
+it -- ``/MODULE MIGRATION APPLY filehost``.
 """
 
 import asyncio
@@ -18,18 +14,53 @@ import pytest
 
 from irc_client import IRCClient
 
-from identity_db.test_identity_db import (  # noqa: F401  (pytest fixture)
-    _drain,
-    _oper,
-    _quit,
-    _read_notices,
-    address,
-)
 
-
-#: Which topology generation the schemas were applied to, so that they are
+#: Which topology generation the schema was applied to, so that it is
 #: applied once per container and not once per test.
 _schema_generation = None
+
+
+async def _drain(client, timeout=1.0):
+    """Read until the stream goes quiet."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            await client.recv(timeout=0.4)
+        except (asyncio.TimeoutError, TimeoutError):
+            return
+
+
+async def _oper(client):
+    await client.send("OPER testoper operpass")
+    await client.wait_for("381", timeout=10.0)
+
+
+async def _quit(client):
+    try:
+        await client.send("QUIT :done")
+    except Exception:
+        pass
+    await client.disconnect()
+
+
+async def _read_notices(client, timeout=10.0):
+    """Every NOTICE until the stream goes quiet."""
+    lines = []
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+
+    while loop.time() < deadline:
+        try:
+            msg = await client.recv(timeout=1.0)
+        except (asyncio.TimeoutError, TimeoutError):
+            if lines:
+                return lines
+            continue
+        if msg.command == "NOTICE":
+            lines.append(msg.params[-1])
+
+    return lines
 
 
 async def _apply(client, module):
@@ -58,23 +89,18 @@ async def _apply(client, module):
 
 
 @pytest.fixture
-async def schema(ircd_identity, topology_generation):
-    """Both schemas, created the way an operator creates them.
-
-    Two modules, two sets of migrations, one operator running both --
-    which is how a deployment does it, and therefore how this does it.
-    """
+async def schema(ircd_store, topology_generation):
+    """The file host's schema, created the way an operator creates it."""
     global _schema_generation
 
     if _schema_generation != topology_generation:
         client = IRCClient()
-        await client.connect(ircd_identity["host"], ircd_identity["port"])
+        await client.connect(ircd_store["host"], ircd_store["port"])
         try:
             await client.register("filemigrator", "oper", "File Migrator")
             await _drain(client)
             await _oper(client)
 
-            await _apply(client, "identity")
             await _apply(client, "filehost")
         finally:
             await _quit(client)

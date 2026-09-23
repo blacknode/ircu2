@@ -48,9 +48,10 @@ Direct messages, when HISTORY_PRIVATE is on (it is by default) **and both
 ends have identified**.  The second condition is not a judgement about
 guests.  A direct message is shown back to the two people in it and to
 nobody else, and the only durable handle on a person this server has is
-the nickname they proved is theirs: filing a message under a bare
-nickname would show it to whoever is wearing that nickname next week.
-With nobody it can safely be shown to, there is no reason to keep it.
+the account the network's services say they are logged in to: filing a
+message under a bare nickname would show it to whoever is wearing that
+nickname next week.  With nobody it can safely be shown to, there is no
+reason to keep it.
 
 Reactions, as TAGMSGs.  A TAGMSG carries tags and no text of its own, so
 most of them are nothing to keep -- a typing indicator is true for four
@@ -117,7 +118,7 @@ servers only agree on the key if they agree on the timestamp.
   target             the channel or nickname as the sender wrote it
   target_canon       lower-cased the way IRC lower-cases a name
   sender_nick        the nickname they were wearing
-  sender_account     the nickname they proved, canonical, or NULL
+  sender_account     the account they were logged in to, canonical, or NULL
   recipient_account  for a direct message; NULL for a channel
   body               the text, or the reaction for a kind-2 row
   reply_to           the message this one answers, or NULL

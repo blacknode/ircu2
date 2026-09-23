@@ -77,19 +77,3 @@ void timer_del(struct Timer *timer)
     (void) timer;
 }
 
-/* The SASL and account registers call back into the protocol side to
- * recalculate what the "sasl" capability advertises -- the same shape as
- * capab.c calling cap_new().  What that recalculation needs is a client
- * list to announce to, which a unit test does not have.
- */
-void sasl_advertise(void)
-{
-}
-
-/* Likewise the safeguard that renames every frozen client when the
- * identity provider goes away: it lives in account_user.c, the half that
- * dereferences clients, and account.c is tested without it.
- */
-void account_provider_gone(void)
-{
-}

@@ -5,7 +5,14 @@ Fase 0 **cerrada**: el registro de capacidades (§5.1), los hooks genéricos de
 comando (§5.7), los identificadores de mensaje (§5.4), `BATCH` con
 `labeled-response` (§5.3), `draft/multiline` (§5.2), la criptografía `ircd_*`
 (§5.8) y los hooks asíncronos (§5.5) están implementados.
-Fase 1 **en curso**: la identidad (§6) tiene su propia propuesta, la 007.
+Fase 1 **revertida**: la identidad (§6) tuvo su propia propuesta, la 007;
+se implementó entera y después se deshizo. El accounting volvió al modelo
+clásico de ircu —una cuenta no es un nick, y el ciclo de vida lo lleva el
+nodo de servicios, no el ircd—, así que **todo lo que esta propuesta dice
+sobre §6 es historia**; lo que describe el árbol es
+`doc/readme.accounting`. De la fase 1 sobreviven el `+x` obligatorio, el
+vhost por TEA, el modo `+f` y la capa SASL, que ahora sólo retransmite el
+intercambio al nodo de servicios.
 **Depende de:** 001 (API de módulos), 002 (hilos), 003 (modos por módulo),
 004 (configuración desde el entorno), 005 (traducciones)
 **Introduce:** `include/capab.h` + `ircd/capab.c`, los hooks de comando y
@@ -974,13 +981,12 @@ Todo esto son tags sobre `msgid`, y cabe en módulos una vez existe la fase 0:
   No cruza ningún enlace: la marca vive en el almacén que todos los
   servidores leen, así que a las copias de esa persona en otros servidores
   se lo cuenta su propio servidor.
-- **Menciones:** derivadas de la cuenta, no del nick. **Ya está, por el
-  modelo de identidad y no por código nuevo**: aquí una cuenta *es* un
-  nickname (propuesta 007), así que mencionar a `maria` es mencionar la
-  cuenta `maria` siempre que esa persona se haya identificado, y `+r` es
-  exactamente lo que dice si lo ha hecho. No hace falta resolver nada, y el
-  servidor no se pone a interpretar prosa para adivinar a quién se
-  menciona, que es trabajo del cliente y además frágil.
+- **Menciones:** por el nick, que es lo que la gente escribe. Con la
+  fase 1 revertida una cuenta ya no es un nickname, pero la conclusión no
+  cambia: nadie se dirige a nadie por el nombre de su cuenta, así que no
+  hay nada que resolver y el servidor no se pone a interpretar prosa para
+  adivinar a quién se menciona, que es trabajo del cliente y además
+  frágil.
 
 ### 7.3 Fase 4 — Texto enriquecido — **implementado**
 
@@ -1426,10 +1432,11 @@ todo él es pasado.
 
 Lo que trajo cada fase, en una línea:
 
-- **F1, identidad** (propuesta 007): `AUTHENTICATE`, `ACCOUNT`, una cuenta
-  que *es* un nickname, el renombrado a `guest-*`, la congelación `+f`, el
-  módulo `identity` sobre PostgreSQL con Redis delante, NickServ, y el
-  correo que verifica la dirección (doc/readme.mail).
+- **F1, identidad** (propuesta 007): **revertida**. Lo que quedó es el
+  `+x` obligatorio, el vhost por TEA, la congelación `+f` y SASL como
+  retransmisión al nodo de servicios; el resto —el módulo `identity`,
+  NickServ como módulo, el renombrado a `guest-*`, el correo— se retiró
+  con el rollback al accounting clásico (doc/readme.accounting).
 - **F2, historial**: `CHATHISTORY`, `SEARCH`, `EDIT`, `REDACT`, `MARKREAD`
   y la retención, en `modules/services/history/`.
 - **F3, conversación**: hilos y reacciones sobre el `msgid` que ya
@@ -1473,10 +1480,11 @@ módulo los necesite.
 **La identidad (§6)** fue lo siguiente, y consumió exactamente lo que la
 fase 0 dejó puesto: `ircd_pwhash_*` en un *worker* para verificar sin parar
 el servidor, `HOOK_PENDING` para retener el registro mientras esa
-verificación ocurre, y `msgid`/`batch` para lo que vino después. Tiene su
-propia propuesta (007), y el modelo que allí se decidió no es el que este
-párrafo anticipaba: no hay «cuentas-nickname» separadas de la cuenta, una
-cuenta **es** un nickname.
+verificación ocurre, y `msgid`/`batch` para lo que vino después. Tuvo su
+propia propuesta (007) y se deshizo entera: meter los servicios dentro del
+ircd choca con que todos los nodos cargan los mismos módulos, y un bot por
+nodo es o una colisión de nicks o un cliente que no se propaga, que es peor.
+El camino es el de siempre, un nodo de servicios dedicado.
 
 Cada fase será una propuesta con su propio documento. Las que ya se sabe que lo
 necesitan: el modelo de identidad (§6), el aislamiento de módulos (§7.7) y,

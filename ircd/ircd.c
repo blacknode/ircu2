@@ -27,9 +27,7 @@
 #include "IPcheck.h"
 #include "capab.h"
 #include "batch.h"
-#include "account.h"
 #include "cache.h"
-#include "mail.h"
 #include "channel.h"
 #include "class.h"
 #include "client.h"
@@ -54,6 +52,7 @@
 #include "migration.h"
 #include "hooks.h"
 #include "module.h"
+#include "module_sync.h"
 #include "motd.h"
 #include "msg.h"
 #include "msgid.h"
@@ -777,7 +776,7 @@ int main(int argc, char **argv) {
   cap_init();   /* likewise, for the client capabilities: the core's take
                    the positions enum Capab names before a module can ask
                    for a free one */
-  sasl_init();  /* PLAIN and EXTERNAL, before a module adds its own */
+  sasl_init();
   initwhowas();
   initmsgtree();
   initstats();
@@ -805,6 +804,12 @@ int main(int argc, char **argv) {
 
   /* After init_conf() */
   module_init();
+
+  /* The module set is a property of the network, so the timers that
+   * bound a link check and a network-wide load exist from here on; see
+   * include/module_sync.h.
+   */
+  modsync_init();
 
 
 
@@ -928,15 +933,13 @@ int main(int argc, char **argv) {
    * unloading one waits for the work it has in flight; worker_shutdown()
    * then stops whatever the core itself started.
    */
+  modsync_shutdown();
   module_close();
   cap_close();
-  sasl_close();
-  account_close();
   worker_shutdown();
   migration_shutdown();
   db_shutdown();
   cache_shutdown();
-  mail_close();
   http_shutdown();
   i18n_close();
 

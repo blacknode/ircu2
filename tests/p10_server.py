@@ -93,6 +93,7 @@ class P10Server:
         max_clients: int = 64,
         description: str = "Test Services",
         server_flags: str = "s",
+        mirror_module_set: bool = True,
     ):
         self.name = name
         self.numeric = numeric
@@ -100,6 +101,16 @@ class P10Server:
         self.max_clients = max_clients
         self.description = description
         self.server_flags = server_flags
+        # Every server on the network runs the same modules, and a link
+        # whose sets differ -- or that never says -- is refused
+        # (doc/readme.modules).  A fake server has no modules of its own
+        # to sum up, so it states back whatever the ircd stated to it,
+        # which is what a peer running the same set would have sent.  A
+        # test that wants the refusal builds its peer with
+        # ``mirror_module_set=False``.
+        self.mirror_module_set = mirror_module_set
+        #: The ``MD SET`` line the ircd announced, if any.
+        self.module_set: str | None = None
 
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -218,6 +229,14 @@ class P10Server:
                 # The cookie is the second token (after G), strip the !
                 cookie = tokens[2].lstrip("!") if len(tokens) > 2 else tokens[-1]
                 await self._send(f"{self._num} Z {self._num} :{cookie}")
+                continue
+
+            # The module set the ircd announces on the link.  Stated
+            # back verbatim, before anything else is done with the line.
+            if len(tokens) >= 4 and tokens[1] == "MD" and tokens[2] == "SET":
+                self.module_set = payload.split(" ", 1)[1]
+                if self.mirror_module_set:
+                    await self._send(f"{self._num} {self.module_set}")
                 continue
 
             # Parse NICK (N) messages to track users
@@ -420,22 +439,43 @@ class P10Server:
 
         Format: <source> M <target nick> :<mode>
 
-        The ircd accepts a MODE for somebody else only from a server or from
-        a service bot (+S) acting on a non-operator; see doc/readme.accounting.
-        ``from_numnick`` defaults to this server's numeric.  Setting +r marks
-        the target as identified to its current nick (there is no ACCOUNT
-        message any more, and +r takes no parameter).
+        The ircd accepts a MODE for somebody else only from a server; see
+        doc/readme.accounting.  Logging somebody in is ACCOUNT, not a mode
+        change -- use :meth:`send_account`.
         """
         source = from_numnick or self._num
         await self._send(f"{source} M {target_nick} :{mode}")
 
-    async def send_register(self, target_nick: str):
-        """Mark ``target_nick`` as identified (+r) on this server's authority."""
-        await self.send_user_mode(target_nick, "+r")
+    async def send_account(self, target_numnick: str, account: str,
+                           acc_id: int | None = None,
+                           acc_flags: int | None = None):
+        """Log a user in, the way the network's services do.
 
-    async def send_unregister(self, target_nick: str):
-        """Take +r away from ``target_nick``."""
-        await self.send_user_mode(target_nick, "-r")
+        Format: <our_numeric> AC <target numnick> <account> [<id> [<flags>]]
+
+        The ircd only accepts this from a U:lined server (ircd/m_account.c),
+        so the fake server's Uworld{} block has to name it.  The account is
+        not something the ircd decides: it records what it is told, sets
+        +r, and passes it on.
+        """
+        line = f"{self._num} AC {target_numnick} {account}"
+        if acc_id is not None:
+            line += f" {acc_id}"
+            if acc_flags is not None:
+                line += f" {acc_flags}"
+        await self._send(line)
+
+    async def send_register(self, target_nick: str, account: str | None = None,
+                            acc_id: int | None = None,
+                            acc_flags: int | None = None):
+        """Log ``target_nick`` in, defaulting the account to the nick.
+
+        Waits for the user to be known so the numnick can be resolved;
+        ACCOUNT takes a numnick, not a nickname.
+        """
+        numnick = await self.wait_for_user(target_nick)
+        await self.send_account(numnick, account or target_nick, acc_id,
+                                acc_flags)
 
     async def introduce_user(
         self,
@@ -445,15 +485,16 @@ class P10Server:
         modes: str = "+i",
         realname: str = "Fake User",
         ip: str = "127.0.0.1",
+        account: str | None = None,
     ) -> str:
         """Introduce a user originating from this server via a P10 N message.
 
         Format: <our_num> N <nick> <hops> <ts> <user> <host> <+modes> <b64ip> <numnick> :<realname>
 
-        ``modes`` may include ``r`` (identified to the nick), which takes no
-        parameter: the account is the nick itself.  ``ip`` is the IPv4
-        address the user is introduced from; the receiving server derives
-        the user's hidden host from it (tests/vhost.py).
+        ``modes`` may include ``r``, which takes the account name as its
+        parameter -- pass ``account`` for it, or the nick is used.  ``ip``
+        is the IPv4 address the user is introduced from; the receiving
+        server derives the user's hidden host from it (tests/vhost.py).
 
         Returns the new user's numnick.
         """
@@ -462,8 +503,11 @@ class P10Server:
         numnick = self._num + int_to_b64(client_num, 3)
         ts = int(time.time())
         ip64 = ipv4_to_b64(ip)
+        mode_field = modes
+        if "r" in modes.lstrip("+"):
+            mode_field = f"{modes} {account or nick}"
         await self._send(
-            f"{self._num} N {nick} 1 {ts} {username} {host} {modes} "
+            f"{self._num} N {nick} 1 {ts} {username} {host} {mode_field} "
             f"{ip64} {numnick} :{realname}"
         )
         self.users[nick.lower()] = {

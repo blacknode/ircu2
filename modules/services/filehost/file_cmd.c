@@ -30,11 +30,11 @@
  * can make an HTTP request can then do the upload, including curl, which
  * is what makes this usable from a client written in 1998.
  *
- * **Only an identified client may upload.**  An account is a nickname
- * (proposal 007), and the only durable handle on a person here is the
- * nickname they proved: filing an upload under a bare nick would put it
- * under whoever wears that nick next week, and quota, listing and
- * deletion all hang off that name.
+ * **Only an identified client may upload.**  The only durable handle on
+ * a person here is the account the network's services vouched for:
+ * filing an upload under a bare nick would put it under whoever wears
+ * that nick next week, and quota, listing and deletion all hang off that
+ * name.
  */
 #include "config.h"
 

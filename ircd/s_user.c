@@ -115,16 +115,6 @@ void free_user(struct User* user)
   if (--user->refcnt == 0) {
     if (user->away)
       MyFree(user->away);
-    /* The address is const so that nothing outside user_set_email() is
-     * tempted to write through it; freeing it needs an lvalue that is
-     * not, which is what the local is for.
-     */
-    if (user->email) {
-      char* email = (char*) user->email;
-
-      user->email = 0;
-      MyFree(email);
-    }
     /*
      * sanity check
      */
@@ -135,56 +125,6 @@ void free_user(struct User* user)
     MyFree(user);
     assert(userCount>0);
     --userCount;
-  }
-}
-
-/** Forget the address \a cptr authenticated with.
- *
- * Called wherever the identification goes away: a logout, a nick change,
- * the client leaving.  Safe to call when there is nothing to forget,
- * because most of those paths do not know whether there was.
- *
- * @param[in,out] cptr Client to clear.
- */
-void user_clear_email(struct Client* cptr)
-{
-  struct User* user;
-
-  assert(0 != cptr);
-
-  user = cli_user(cptr);
-  if (!user || !user->email)
-    return;
-
-  {
-    char* email = (char*) user->email;
-
-    user->email = 0;
-    MyFree(email);
-  }
-}
-
-/** Record the address \a cptr authenticated with.
- *
- * Only the server that did the authenticating calls this: the address is
- * local to the connection and never arrives from the network.  Passing
- * NULL or an empty string is the same as user_clear_email().
- *
- * @param[in,out] cptr Client that authenticated.
- * @param[in] email Address of the identity, or NULL.
- */
-void user_set_email(struct Client* cptr, const char* email)
-{
-  assert(0 != cptr);
-  assert(0 != cli_user(cptr));
-
-  user_clear_email(cptr);
-
-  if (email && *email) {
-    char* copy;
-
-    DupString(copy, email);
-    cli_user(cptr)->email = copy;
   }
 }
 
@@ -521,26 +461,28 @@ int register_user(struct Client *cptr, struct Client *sptr)
     ++UserStats.opers;
 
   tmpstr = umode_str(sptr);
-  /* Send full IP address to IPv6-grokking servers. */
-  sendcmdto_flag_serv_butone(user->server, CMD_NICK, cptr,
-                             FLAG_IPV6, FLAG_LAST_FLAG,
-                             "%s %d %Tu %s %s %s%s%s%s %s%s :%s",
-                             cli_name(sptr), cli_hopcount(sptr) + 1,
-                             cli_lastnick(sptr),
-                             user->username, user->realhost,
-                             *tmpstr ? "+" : "", tmpstr, *tmpstr ? " " : "",
-                             iptobase64(ip_base64, &cli_ip(sptr), sizeof(ip_base64), 1),
-                             NumNick(sptr), cli_info(sptr));
-  /* Send fake IPv6 addresses to pre-IPv6 servers. */
-  sendcmdto_flag_serv_butone(user->server, CMD_NICK, cptr,
-                             FLAG_LAST_FLAG, FLAG_IPV6,
-                             "%s %d %Tu %s %s %s%s%s%s %s%s :%s",
-                             cli_name(sptr), cli_hopcount(sptr) + 1,
-                             cli_lastnick(sptr),
-                             user->username, user->realhost,
-                             *tmpstr ? "+" : "", tmpstr, *tmpstr ? " " : "",
-                             iptobase64(ip_base64, &cli_ip(sptr), sizeof(ip_base64), 0),
-                             NumNick(sptr), cli_info(sptr));
+  {
+    /* Send full IP address to IPv6-grokking servers. */
+    sendcmdto_flag_serv_butone(user->server, CMD_NICK, cptr,
+                               FLAG_IPV6, FLAG_LAST_FLAG,
+                               "%s %d %Tu %s %s %s%s%s%s %s%s :%s",
+                               cli_name(sptr), cli_hopcount(sptr) + 1,
+                               cli_lastnick(sptr),
+                               user->username, user->realhost,
+                               *tmpstr ? "+" : "", tmpstr, *tmpstr ? " " : "",
+                               iptobase64(ip_base64, &cli_ip(sptr), sizeof(ip_base64), 1),
+                               NumNick(sptr), cli_info(sptr));
+    /* Send fake IPv6 addresses to pre-IPv6 servers. */
+    sendcmdto_flag_serv_butone(user->server, CMD_NICK, cptr,
+                               FLAG_LAST_FLAG, FLAG_IPV6,
+                               "%s %d %Tu %s %s %s%s%s%s %s%s :%s",
+                               cli_name(sptr), cli_hopcount(sptr) + 1,
+                               cli_lastnick(sptr),
+                               user->username, user->realhost,
+                               *tmpstr ? "+" : "", tmpstr, *tmpstr ? " " : "",
+                               iptobase64(ip_base64, &cli_ip(sptr), sizeof(ip_base64), 0),
+                               NumNick(sptr), cli_info(sptr));
+  }
 
   /* A language chosen before registration goes out right behind the
    * NICK, so that every server answers this user in it from the start;
@@ -558,14 +500,6 @@ int register_user(struct Client *cptr, struct Client *sptr)
     if ((cli_snomask(sptr) != SNO_DEFAULT) && SendServNotice(sptr))
       send_reply(sptr, RPL_SNOMASK, cli_snomask(sptr), cli_snomask(sptr));
   }
-
-  /* A client that authenticated during registration could not be given
-   * +r then: it was not a user yet, and a user mode cannot be granted to
-   * something that is not one.  Its nickname was taken at the time, so
-   * this only hands over the mode and the address.
-   */
-  if (MyConnect(sptr))
-    sasl_registered(sptr);
 
   hook_notify(HOOK_CLIENT_REGISTERED, sptr, cptr, NULL, NULL);
 
@@ -705,24 +639,6 @@ int set_nick_name(struct Client* cptr, struct Client* sptr,
       hRemClient(sptr);
     strcpy(cli_name(sptr), nick);
     hAddClient(sptr);
-
-    /* +r says "identified to the nick in use"; it does not survive the
-     * nick changing.  Every server applies this to the NICK it sees, so
-     * nothing is propagated -- only the user is told.  A change of case
-     * alone keeps the identification, with the account respelled.
-     */
-    if (IsUser(sptr) && IsAccount(sptr)) {
-      if (0 == ircd_strcmp(oldnick, nick))
-        ircd_strncpy(cli_user(sptr)->account, nick, NICKLEN);
-      else {
-        flag_t old = cli_uflags(sptr);
-
-        ClearAccount(sptr);
-        cli_user(sptr)->account[0] = '\0';
-        if (MyUser(sptr))
-          send_umode(sptr, sptr, old, ALL_UMODES);
-      }
-    }
 
     /* The hook gets the client already renamed, with the name it had in
      * hc_arg.  Fires for remote clients too: a notification cannot
@@ -1161,18 +1077,14 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
   char buf[BUFSIZE];
   int prop = 0;
   char* tls_fingerprint = NULL;
-  /* +r and +f may come from a server, from a service bot acting on
-   * somebody else, from a burst, or from this server itself; a user never
-   * grants either to itself, and a local bot acting on itself is a user
-   * like any other here.  IsMe() is the last of those: &me is STAT_ME
-   * rather than STAT_SERVER, so IsServer() is false for it, and without
-   * this the core could not grant the mode it is the authority for
-   * (account_login()).  Nothing off a socket reaches it -- the client
-   * path drops the prefix, so sptr is the client itself, and on the
-   * server path IsServer(cptr) is already true.
+  char* account = NULL;
+  /* +r and +f are the network services' to set, never a user's.  An
+   * account exists because the services said so -- this server does not
+   * check a credential and does not keep one -- so the mode only ever
+   * arrives from a server: a MODE from the services' own link, or a NICK
+   * burst.  See doc/readme.accounting.
    */
-  int may_set_r = IsServer(cptr) || IsServer(sptr) || IsMe(sptr)
-    || (IsServiceBot(sptr) && sptr != acptr);
+  int may_set_r = IsServer(cptr) || IsServer(sptr);
 
   what = UMODE_ADD;
 
@@ -1325,14 +1237,15 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
          */
 	break;
       case 'r':
-        /* +r: identified to the nick in use.  The account is the nick
-         * itself, so the letter takes no parameter.  Who may set it is
+        /* +r takes the account name as its parameter.  There is no -r:
+         * an account is not something this server can take away, because
+         * it is not something this server gave.  Who may set it is
          * settled below, once the whole string has been read.
          */
-	if (what == UMODE_ADD)
+	if (*(p + 1) && (what == UMODE_ADD)) {
+	  account = *(++p);
 	  SetAccount(acptr);
-	else
-	  ClearAccount(acptr);
+	}
 	break;
       case 'z':
         if (what == UMODE_ADD) {
@@ -1469,33 +1382,41 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
     else
       set_snomask(acptr, 0, SNO_SET);
   }
-  /*
-   * The account follows the flag: the nick in use when +r was granted,
-   * nothing once it is taken away.
+  /* The account name rides in the mode string, after the letters, and is
+   * read out here: "+oir maria:17:3" is maria, account id 17, flags 3.
+   * That is how an account reaches a server in a NICK burst; on a running
+   * network it arrives with ACCOUNT instead (ircd/m_account.c).  Either
+   * way it comes from the services, never from this server.
    */
-  if (!WasAccount(setflags) && IsAccount(acptr)) {
-    ircd_strncpy(cli_user(acptr)->account, cli_name(acptr), NICKLEN);
+  if (!WasAccount(setflags) && IsAccount(acptr) && account) {
+    int len = ACCOUNTLEN;
+    char* id;
+    char* flags;
 
-    /* And the freeze goes with it.  +f means "carrying a registered nick
-     * this client has not proved is its own", and +r is exactly that
+    if ((id = strchr(account, ':'))) {
+      len = (id++) - account;
+      cli_user(acptr)->acc_id = strtoull(id, NULL, 10);
+
+      if ((flags = strchr(id, ':'))) {
+        cli_user(acptr)->acc_flags = strtoull(flags + 1, NULL, 10);
+        *flags = '\0';
+      }
+      Debug((DEBUG_DEBUG, "Received account in user mode: \"%s\", id %qu, "
+             "flags %qu", account, cli_user(acptr)->acc_id,
+             cli_user(acptr)->acc_flags));
+    }
+
+    ircd_strncpy(cli_user(acptr)->account, account, len);
+
+    /* The freeze goes with it.  +f means "carrying a registered nick this
+     * client has not proved is its own", and an account is exactly that
      * proof, so the two cannot both be true; leaving the mode on would
      * mean a client that had just identified could still do nothing.
      * Done here rather than by whoever grants +r because there is no
-     * other way for the grant and the release to be the same event, and
-     * only a server or a +S bot reaches either.  See proposal 007
-     * section 6.
+     * other way for the grant and the release to be the same event.
      */
     ClearFrozen(acptr);
   }
-  else if (WasAccount(setflags) && !IsAccount(acptr)) {
-    cli_user(acptr)->account[0] = '\0';
-    /* And the address with it: the two are one identification, and a
-     * client that is no longer identified must not still be carrying the
-     * address it identified with.  See proposal 007 section 8.
-     */
-    user_clear_email(acptr);
-  }
-
   if (IsServer(cptr) && feature_bool(FEAT_NETWORK_FEATURES) &&
       tls_fingerprint && tls_fingerprint[0] != '_') {
     ircd_strncpy(cli_tls_fingerprint(acptr), tls_fingerprint, 64);
@@ -1578,8 +1499,8 @@ int set_user_mode_on(struct Client *cptr, struct Client *sptr,
   if (!IsUser(acptr) || parc < 3)
     return 0;
   /* A server, this server itself, or a service bot on a non-operator.
-   * IsMe() is the core's own hand -- account_login() grants +r through
-   * here -- and is not reachable by anything that arrives on a socket.
+   * IsMe() is the core's own hand and is not reachable by anything that
+   * arrives on a socket.
    */
   if (!IsServer(sptr) && !IsMe(sptr)
       && !(IsServiceBot(sptr) && !IsAnOper(acptr)))
@@ -1612,6 +1533,38 @@ char *umode_str(struct Client *cptr)
       continue;
     if (HasUFlag(cptr, um->flag) && (um->flag & FLAG_GLOBAL_UMODES))
       *m++ = um->c;
+  }
+
+  /* The account name rides after the letters, which is how it reaches a
+   * server that was not linked when the services granted it: "+oir
+   * maria", or "maria:17" with an account id, or "maria:17:3" with the
+   * flags as well.  do_user_mode() reads it back.  The order matters --
+   * +r comes before +z in the mode list, so the account is appended
+   * before the fingerprint.
+   */
+  if (IsAccount(cptr))
+  {
+    char* t = cli_user(cptr)->account;
+
+    *m++ = ' ';
+    while ((*m++ = *t++))
+      ; /* Empty loop */
+    m--; /* back up over the nul the copy left */
+
+    if (cli_user(cptr)->acc_id) {
+      char nbuf[40];
+
+      if (cli_user(cptr)->acc_flags)
+        ircd_snprintf(0, t = nbuf, sizeof(nbuf), ":%qu:%qu",
+                      cli_user(cptr)->acc_id, cli_user(cptr)->acc_flags);
+      else
+        ircd_snprintf(0, t = nbuf, sizeof(nbuf), ":%qu",
+                      cli_user(cptr)->acc_id);
+
+      while ((*m++ = *t++))
+        ; /* Empty loop */
+      m--;
+    }
   }
 
   /** If the client is on a secure connection (umode +z) we append the fingerprint.

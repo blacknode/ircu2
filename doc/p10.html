@@ -710,9 +710,10 @@ the "Host" part of the user@host mask.</LI>
 
 <LI>
 [<B>Optional</B>]: User modes. If present, this is always +&lt;user modes
-for this client>.  The +r usermode (identified to the nick in use) takes
-no parameter: the account is the nick itself.  A +z usermode may be
-followed by a TLS certificate fingerprint.  See doc/readme.accounting.</LI>
+for this client>.  The +r usermode (logged in) is followed by the
+account, as &lt;account>[:&lt;id>[:&lt;flags>]] -- one parameter, so the
+line does not grow a field per number.  A +z usermode may be followed by
+a TLS certificate fingerprint.  See doc/readme.accounting.</LI>
 
 <LI>
 The real IP address of this client, a Base64 encoded 32bit int.</LI>
@@ -1112,17 +1113,28 @@ succeed never the less.
 <BLOCKQUOTE><TT>AZAAA N Nick2 955423230</TT></BLOCKQUOTE>
 <B>4.2.2 - MODE</B>
 <BLOCKQUOTE><TT>AZAAA M Nick2 :+odi</TT>
-<BR><TT>AX M Nick2 :+r</TT>
-<BR><TT>AXAAB M Nick2 :-r</TT></BLOCKQUOTE>
+<BR><TT>AX M Nick2 +r maria</TT>
+<BR><TT>AX M Nick2 :+f</TT></BLOCKQUOTE>
 <P>A MODE for another user is accepted from a server (any mode, on any
 user) and from a service bot with user mode +S (on any user who is not
-an operator, and only the modes a user could set on itself plus +r and
--r).  The +r usermode marks a user as identified to the nick it uses and
-replaces what the ACCOUNT message used to do; it is carried in NICK
-during net bursts without a parameter, and every server takes it away
-by itself when the user changes nick.  See doc/readme.accounting.
+an operator, and only the modes a user could set on itself plus +r).
+The +r usermode marks a user as logged in and takes the account as its
+parameter; there is no -r, because a server cannot take away what it did
+not give.  The +f usermode (frozen) marks a user the services are
+holding while they work out whether it may keep the nickname it is
+wearing; it takes no parameter and both directions are a server's or a
++S bot's.  See doc/readme.accounting.
 <P><B>4.2.3 - ACCOUNT</B>
-<P>Removed.  There is no account name apart from the nick; see MODE +r.
+<BLOCKQUOTE><TT>AX AC AZAAA maria</TT>
+<BR><TT>AX AC AZAAA maria 17 3</TT></BLOCKQUOTE>
+<P>Says which account a user is logged in to, and is how one reaches a
+server on a running network; a server that was not there when it went
+past learns it from the +r parameter in the NICK burst instead.
+Accepted only from a U:lined server (a Uworld block naming the source),
+and relayed on.  The parameters are the target's numnick, the account
+name (at most 12 characters), and optionally a numeric account id and a
+numeric flag word.  A second ACCOUNT naming a different account for a
+user who already has one is a protocol violation, not a change.
 <P><B>4.2.4 - LANGUAGE</B>
 <BLOCKQUOTE><TT>AZAAA LG es-ar es</TT></BLOCKQUOTE>
 <P>The user's language preference, as given to the LANGUAGE command: up
@@ -1184,6 +1196,9 @@ in a NICK message may have an argument. -Kev
 user is accepted from servers and +S service bots. See doc/readme.accounting.
 <BR>[2026-09-13]: Added LANGUAGE (LG), the user's language preference. See
 doc/readme.translations.
+<BR>[2026-09-23]: Restored ACCOUNT (AC) and the +r parameter: an account is
+a name the network's services keep, not the nickname. There is still no -r.
+Added +f (frozen). See doc/readme.accounting.
 <P><A NAME="chap8.1"></A><B><FONT SIZE=+1>8.1 TODO</FONT></B>
 <UL>
 <LI>

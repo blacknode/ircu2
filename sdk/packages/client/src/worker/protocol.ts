@@ -82,6 +82,8 @@ export interface WorkerSnapshot {
   readonly status: string;
   readonly nick: string;
   readonly identified: boolean;
+  /** The account, when identified.  Not the nickname. */
+  readonly account?: string;
   readonly frozen: boolean;
   readonly channels: readonly {
     readonly name: string;

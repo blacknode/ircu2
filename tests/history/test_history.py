@@ -1,14 +1,15 @@
 """CHATHISTORY: what was said, read back.
 
 Phase 2 of doc/proposals/006-comunicaciones-unificadas.md.  The topology
-is the identity one -- one ircd and one PostgreSQL (marker ``identity``)
--- because half of what is worth testing here needs accounts: a direct
+is the store one -- one ircd and one PostgreSQL (marker ``store``) --
+because half of what is worth testing here needs accounts: a direct
 message is stored only when both ends have identified, and a conversation
-is read back by account.
+is read back by account.  The accounts come from the network's services,
+as they do anywhere else: ``store_services`` is the U:lined P10 server
+that sends the ACCOUNT.
 
 The schema is created the way a real deployment creates it, by an
-operator running /MODULE MIGRATION APPLY, and this file applies both
-sets: identity's, because the tests log in, and history's.
+operator running /MODULE MIGRATION APPLY.
 
 See doc/readme.history.
 """
@@ -21,7 +22,7 @@ import pytest
 
 from irc_client import IRCClient
 
-pytestmark = pytest.mark.identity
+pytestmark = pytest.mark.store
 
 #: A token unique to this run, put in every nickname and channel name.
 #:
@@ -98,16 +99,15 @@ _schema_generation = None
 
 
 @pytest.fixture
-async def schema(ircd_identity, topology_generation):
-    """Create both schemas once, the way an operator would."""
+async def schema(ircd_store, topology_generation):
+    """Create the history schema once, the way an operator would."""
     global _schema_generation
 
     if _schema_generation == topology_generation:
         return True
 
-    client = await _oper(ircd_identity)
+    client = await _oper(ircd_store)
     try:
-        await _apply(client, "identity")
         await _apply(client, "history")
     finally:
         await client.disconnect()
@@ -194,9 +194,9 @@ def _bodies(messages):
 # --------------------------------------------------------------------- #
 
 
-async def test_channel_latest_comes_back_oldest_first(schema, ircd_identity):
+async def test_channel_latest_comes_back_oldest_first(schema, ircd_store):
     """What was said in a channel is read back in the order it was said."""
-    speaker = await _connect(ircd_identity, f"hspeak1{TAG}")
+    speaker = await _connect(ircd_store, f"hspeak1{TAG}")
     await speaker.send(f"JOIN #hist1{TAG}")
     await _drain(speaker)
 
@@ -205,7 +205,7 @@ async def test_channel_latest_comes_back_oldest_first(schema, ircd_identity):
     await asyncio.sleep(1.5)
     await _drain(speaker)
 
-    reader = await _connect(ircd_identity, f"hread1{TAG}")
+    reader = await _connect(ircd_store, f"hread1{TAG}")
     await reader.send(f"JOIN #hist1{TAG}")
     await _drain(reader)
 
@@ -220,7 +220,7 @@ async def test_channel_latest_comes_back_oldest_first(schema, ircd_identity):
 
 
 async def test_a_replayed_message_keeps_its_name_and_its_time(schema,
-                                                              ircd_identity):
+                                                              ircd_store):
     """A stored message goes back out under the msgid and time it had.
 
     That is the whole point of storing them: the client is shown the same
@@ -228,7 +228,7 @@ async def test_a_replayed_message_keeps_its_name_and_its_time(schema,
     has.  A transcript stamped "now" would be a list of when somebody
     scrolled.
     """
-    speaker = await _connect(ircd_identity, f"hspeak2{TAG}")
+    speaker = await _connect(ircd_store, f"hspeak2{TAG}")
     await speaker.send(f"JOIN #hist2{TAG}")
     await _drain(speaker)
 
@@ -251,9 +251,9 @@ async def test_a_replayed_message_keeps_its_name_and_its_time(schema,
     await speaker.disconnect()
 
 
-async def test_paging_through_a_channel(schema, ircd_identity):
+async def test_paging_through_a_channel(schema, ircd_store):
     """BEFORE, AFTER and AROUND page around a message by name."""
-    speaker = await _connect(ircd_identity, f"hspeak3{TAG}")
+    speaker = await _connect(ircd_store, f"hspeak3{TAG}")
     await speaker.send(f"JOIN #hist3{TAG}")
     await _drain(speaker)
 
@@ -284,9 +284,9 @@ async def test_paging_through_a_channel(schema, ircd_identity):
     await speaker.disconnect()
 
 
-async def test_between_reads_the_same_either_way_round(schema, ircd_identity):
+async def test_between_reads_the_same_either_way_round(schema, ircd_store):
     """BETWEEN's two points may arrive in either order."""
-    speaker = await _connect(ircd_identity, f"hspeak4{TAG}")
+    speaker = await _connect(ircd_store, f"hspeak4{TAG}")
     await speaker.send(f"JOIN #hist4{TAG}")
     await _drain(speaker)
 
@@ -312,9 +312,9 @@ async def test_between_reads_the_same_either_way_round(schema, ircd_identity):
     await speaker.disconnect()
 
 
-async def test_the_limit_is_the_servers(schema, ircd_identity):
+async def test_the_limit_is_the_servers(schema, ircd_store):
     """A client asking for more than the maximum gets the maximum."""
-    speaker = await _connect(ircd_identity, f"hspeak5{TAG}")
+    speaker = await _connect(ircd_store, f"hspeak5{TAG}")
     await speaker.send(f"JOIN #hist5{TAG}")
     await _drain(speaker)
 
@@ -326,21 +326,21 @@ async def test_the_limit_is_the_servers(schema, ircd_identity):
 
     _, inside, _ = await _chathistory(speaker, f"CHATHISTORY LATEST #hist5{TAG} * 500")
 
-    # HISTORY_MAX_LIMIT in tests/docker/ircd-identity.conf.
+    # HISTORY_MAX_LIMIT in tests/docker/ircd-store.conf.
     assert len(inside) == 20
 
     await speaker.disconnect()
 
 
-async def test_a_channel_you_are_not_on_is_refused(schema, ircd_identity):
+async def test_a_channel_you_are_not_on_is_refused(schema, ircd_store):
     """A channel's history is exactly as private as the channel."""
-    member = await _connect(ircd_identity, f"hspeak6{TAG}")
+    member = await _connect(ircd_store, f"hspeak6{TAG}")
     await member.send(f"JOIN #hist6{TAG}")
     await _drain(member)
     await member.send(f"PRIVMSG #hist6{TAG} :members only")
     await asyncio.sleep(1.5)
 
-    outsider = await _connect(ircd_identity, f"hout6{TAG}")
+    outsider = await _connect(ircd_store, f"hout6{TAG}")
     failed, _, _ = await _chathistory(outsider,
                                       f"CHATHISTORY LATEST #hist6{TAG} * 10")
 
@@ -358,14 +358,14 @@ async def test_a_channel_you_are_not_on_is_refused(schema, ircd_identity):
 
 
 async def test_a_conversation_between_strangers_is_not_stored(schema,
-                                                              ircd_identity):
+                                                              ircd_store):
     """A direct message with an unidentified end is not kept.
 
     There would be nobody it could later be shown to: the only durable
     handle on a person is the nickname they proved is theirs.
     """
-    a = await _connect(ircd_identity, f"hanon1{TAG}")
-    b = await _connect(ircd_identity, f"hanon2{TAG}")
+    a = await _connect(ircd_store, f"hanon1{TAG}")
+    b = await _connect(ircd_store, f"hanon2{TAG}")
 
     await a.send(f"PRIVMSG hanon2{TAG} :nobody will remember this")
     await asyncio.sleep(1.5)
@@ -382,33 +382,36 @@ async def test_a_conversation_between_strangers_is_not_stored(schema,
     await b.disconnect()
 
 
-async def _register(hub, nick, address):
-    """Bring up a client that has proved its nickname."""
+async def _register(hub, services, nick):
+    """A client whose nickname the network's services have vouched for.
+
+    The account comes from an ACCOUNT out of the U:lined server, which is
+    the only way one ever arrives (doc/readme.accounting).
+    """
     client = await _connect(hub, nick)
-    await client.send(f"PRIVMSG NickServ :REGISTER {address} hunter2hunter2")
+    await services.send_register(nick, account=nick)
 
     loop = asyncio.get_event_loop()
     deadline = loop.time() + 15
     while loop.time() < deadline:
-        try:
-            msg = await client.recv(timeout=1.0)
-        except (asyncio.TimeoutError, TimeoutError):
-            continue
-        if msg.command == "MODE" and "r" in msg.params[-1]:
+        await client.send(f"MODE {nick}")
+        msg = await client.wait_for("221", timeout=3.0)
+        if "r" in msg.params[-1]:
             await _drain(client)
             return client
+        await asyncio.sleep(0.3)
 
-    raise AssertionError(f"{nick} never got +r")
+    raise AssertionError(f"{nick} never got an account")
 
 
-async def test_a_conversation_is_read_back_by_both_ends(schema, ircd_identity):
+async def test_a_conversation_is_read_back_by_both_ends(schema, ircd_store, store_services):
     """A direct message between two identified people is kept, once.
 
     One row, not two: both ends read the same message back, and it is the
     same message they saw when it was sent.
     """
-    a = await _register(ircd_identity, f"hconv1{TAG}", f"hconv1{TAG}@example.org")
-    b = await _register(ircd_identity, f"hconv2{TAG}", f"hconv2{TAG}@example.org")
+    a = await _register(ircd_store, store_services, f"hconv1{TAG}")
+    b = await _register(ircd_store, store_services, f"hconv2{TAG}")
 
     await a.send(f"PRIVMSG hconv2{TAG} :are you there")
     await asyncio.sleep(0.3)
@@ -434,9 +437,9 @@ async def test_a_conversation_is_read_back_by_both_ends(schema, ircd_identity):
     await b.disconnect()
 
 
-async def test_targets_lists_who_you_have_talked_to(schema, ircd_identity):
-    a = await _register(ircd_identity, f"htarg1{TAG}", f"htarg1{TAG}@example.org")
-    b = await _register(ircd_identity, f"htarg2{TAG}", f"htarg2{TAG}@example.org")
+async def test_targets_lists_who_you_have_talked_to(schema, ircd_store, store_services):
+    a = await _register(ircd_store, store_services, f"htarg1{TAG}")
+    b = await _register(ircd_store, store_services, f"htarg2{TAG}")
 
     await a.send(f"PRIVMSG htarg2{TAG} :hello there")
     await asyncio.sleep(2)
@@ -452,16 +455,16 @@ async def test_targets_lists_who_you_have_talked_to(schema, ircd_identity):
     await b.disconnect()
 
 
-async def test_a_third_party_cannot_read_a_conversation(schema, ircd_identity):
+async def test_a_third_party_cannot_read_a_conversation(schema, ircd_store, store_services):
     """Asking about somebody else's conversation finds nothing.
 
     Not a refusal with a different shape, which would tell the asker the
     conversation exists: the query is by the pair of accounts, and the
     asker is not one of them, so there is simply nothing there.
     """
-    a = await _register(ircd_identity, f"hsnoop1{TAG}", f"hsnoop1{TAG}@example.org")
-    b = await _register(ircd_identity, f"hsnoop2{TAG}", f"hsnoop2{TAG}@example.org")
-    c = await _register(ircd_identity, f"hsnoop3{TAG}", f"hsnoop3{TAG}@example.org")
+    a = await _register(ircd_store, store_services, f"hsnoop1{TAG}")
+    b = await _register(ircd_store, store_services, f"hsnoop2{TAG}")
+    c = await _register(ircd_store, store_services, f"hsnoop3{TAG}")
 
     await a.send(f"PRIVMSG hsnoop2{TAG} :a secret")
     await asyncio.sleep(2)
@@ -479,15 +482,24 @@ async def test_a_third_party_cannot_read_a_conversation(schema, ircd_identity):
     await c.disconnect()
 
 
-async def test_messages_to_a_service_are_never_stored(schema, ircd_identity):
-    """That is where passwords go."""
-    client = await _connect(ircd_identity, f"hsvc1{TAG}")
-    await client.send("PRIVMSG NickServ :HELP")
+async def test_messages_to_a_service_are_never_stored(schema, ircd_store,
+                                                     store_services):
+    """That is where passwords go.
+
+    The service is a +S bot the network's services introduce, which is
+    what a real one is: the store server runs no bot of its own.
+    """
+    bot = f"hbot{TAG}"
+    await store_services.introduce_user(bot, modes="+oikS")
+    await asyncio.sleep(0.5)
+
+    client = await _connect(ircd_store, f"hsvc1{TAG}")
+    await client.send(f"PRIVMSG {bot} :HELP")
     await asyncio.sleep(1.5)
     await _drain(client)
 
     failed, _, _ = await _chathistory(client,
-                                      "CHATHISTORY LATEST NickServ * 10")
+                                      f"CHATHISTORY LATEST {bot} * 10")
 
     # Unidentified, so refused before anything could be read -- and there
     # is nothing there either way.
@@ -501,8 +513,8 @@ async def test_messages_to_a_service_are_never_stored(schema, ircd_identity):
 # --------------------------------------------------------------------- #
 
 
-async def test_an_unknown_subcommand_fails_by_name(schema, ircd_identity):
-    client = await _connect(ircd_identity, f"hbad1{TAG}")
+async def test_an_unknown_subcommand_fails_by_name(schema, ircd_store):
+    client = await _connect(ircd_store, f"hbad1{TAG}")
     failed, _, _ = await _chathistory(client, "CHATHISTORY SIDEWAYS #x * 10")
 
     assert failed.command == "FAIL"
@@ -512,8 +524,8 @@ async def test_an_unknown_subcommand_fails_by_name(schema, ircd_identity):
     await client.disconnect()
 
 
-async def test_a_bad_selector_fails(schema, ircd_identity):
-    client = await _connect(ircd_identity, f"hbad2{TAG}")
+async def test_a_bad_selector_fails(schema, ircd_store):
+    client = await _connect(ircd_store, f"hbad2{TAG}")
     await client.send(f"JOIN #hist7{TAG}")
     await _drain(client)
 
@@ -526,14 +538,14 @@ async def test_a_bad_selector_fails(schema, ircd_identity):
     await client.disconnect()
 
 
-async def test_a_client_without_batch_is_told_in_words(schema, ircd_identity):
+async def test_a_client_without_batch_is_told_in_words(schema, ircd_store):
     """A client that cannot read a batch cannot be answered with one.
 
     It also has no standard-replies, so what it gets is a NOTICE carrying
     the same words -- the rule that a client which negotiated nothing sees
     only what it has always seen.
     """
-    client = await _connect(ircd_identity, f"hplain{TAG}", caps=None)
+    client = await _connect(ircd_store, f"hplain{TAG}", caps=None)
     await client.send(f"JOIN #hist8{TAG}")
     await _drain(client)
 
@@ -556,9 +568,9 @@ async def _notices(client, command, seconds=6.0):
     return await _collect(client, seconds)
 
 
-async def test_history_needs_its_own_privilege(schema, ircd_identity):
+async def test_history_needs_its_own_privilege(schema, ircd_store):
     """Reading everyone's messages is not something being an oper grants."""
-    client = await _connect(ircd_identity, f"hpriv{TAG}")
+    client = await _connect(ircd_store, f"hpriv{TAG}")
     await client.send("HISTORY STATUS")
     msg = await client.wait_for("481", timeout=5)
 
@@ -567,14 +579,14 @@ async def test_history_needs_its_own_privilege(schema, ircd_identity):
     await client.disconnect()
 
 
-async def test_history_status_counts_what_is_stored(schema, ircd_identity):
-    speaker = await _connect(ircd_identity, f"hstat{TAG}")
+async def test_history_status_counts_what_is_stored(schema, ircd_store):
+    speaker = await _connect(ircd_store, f"hstat{TAG}")
     await speaker.send(f"JOIN #hstat{TAG}")
     await _drain(speaker)
     await speaker.send(f"PRIVMSG #hstat{TAG} :counted")
     await asyncio.sleep(1.5)
 
-    oper = await _oper(ircd_identity)
+    oper = await _oper(ircd_store)
     lines = await _notices(oper, "HISTORY STATUS")
 
     assert any("messages stored" in line for line in lines)
@@ -585,15 +597,15 @@ async def test_history_status_counts_what_is_stored(schema, ircd_identity):
 
 
 async def test_export_and_forget_agree_on_what_is_yours(schema,
-                                                        ircd_identity):
+                                                        ircd_store, store_services):
     """What a person is handed is what a person can have destroyed.
 
     Both are the same predicate -- everything the account sent and every
     direct message it received -- so the count the export writes is the
     count the delete removes.
     """
-    a = await _register(ircd_identity, f"hgdpr1{TAG}", f"hgdpr1{TAG}@ex.org")
-    b = await _register(ircd_identity, f"hgdpr2{TAG}", f"hgdpr2{TAG}@ex.org")
+    a = await _register(ircd_store, store_services, f"hgdpr1{TAG}")
+    b = await _register(ircd_store, store_services, f"hgdpr2{TAG}")
 
     await a.send(f"JOIN #hgdpr{TAG}")
     await _drain(a)
@@ -603,7 +615,7 @@ async def test_export_and_forget_agree_on_what_is_yours(schema,
     await b.send(f"PRIVMSG hgdpr1{TAG} :answered")
     await asyncio.sleep(2)
 
-    oper = await _oper(ircd_identity)
+    oper = await _oper(ircd_store)
 
     lines = await _notices(oper, f"HISTORY STATUS hgdpr1{TAG}")
     assert any(f"hgdpr1{TAG} has 3 of" in line for line in lines), lines
@@ -628,8 +640,8 @@ async def test_export_and_forget_agree_on_what_is_yours(schema,
     await oper.disconnect()
 
 
-async def test_an_unknown_history_subcommand_fails(schema, ircd_identity):
-    oper = await _oper(ircd_identity)
+async def test_an_unknown_history_subcommand_fails(schema, ircd_store):
+    oper = await _oper(ircd_store)
     lines = await _notices(oper, "HISTORY SIDEWAYS", seconds=3)
 
     assert any("STATUS, PURGE, EXPORT or FORGET" in line for line in lines)
@@ -637,10 +649,10 @@ async def test_an_unknown_history_subcommand_fails(schema, ircd_identity):
     await oper.disconnect()
 
 
-async def test_the_capability_advertises_the_limit(schema, ircd_identity):
+async def test_the_capability_advertises_the_limit(schema, ircd_store):
     """A client learns the ceiling before it asks, not by being cut down."""
     client = IRCClient()
-    await client.connect(ircd_identity["host"], ircd_identity["port"])
+    await client.connect(ircd_store["host"], ircd_store["port"])
     await client.send("CAP LS 302")
     msg = await client.wait_for("CAP", timeout=5)
 

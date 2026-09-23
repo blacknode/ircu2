@@ -61,10 +61,9 @@ void hist_canon(char* buf, size_t buflen, const char* name)
 
 /** The account a client has proved, or NULL.
  *
- * An account is a nickname, so this is the nickname the client showed it
- * was entitled to -- which is the only name a message can safely be filed
- * under.  A nickname nobody proved is one somebody else may be wearing
- * tomorrow.
+ * This is the account the network's services vouched for, which is the
+ * only name a message can safely be filed under.  A nickname nobody
+ * proved is one somebody else may be wearing tomorrow.
  */
 static const char* hist_account_of(struct Client* cptr)
 {
@@ -146,8 +145,8 @@ enum HookResult hist_capture(struct HookContext* ctx, void* user)
   const char* react = 0;
   char prefix[NICKLEN + USERLEN + HOSTLEN + 3];
   char canon[CHANNELLEN + 1];
-  char from_canon[NICKLEN + 1];
-  char to_canon[NICKLEN + 1];
+  char from_canon[ACCOUNTLEN + 1];
+  char to_canon[ACCOUNTLEN + 1];
   const char* sender_account;
   const char* recipient_account;
 
@@ -232,7 +231,7 @@ enum HookResult hist_capture(struct HookContext* ctx, void* user)
     /* Both ends have to have proved their nicknames, and not because a
      * guest deserves less.  A direct message is shown back to the two
      * people in it and to nobody else, and the only handle on a person
-     * this server has is the nickname they proved: filing a message
+     * this server has is the account the services vouched for: filing a message
      * under a bare nickname would show it to whoever is wearing that
      * nickname next week.  With nobody it can safely be shown to, there
      * is no reason to keep it.

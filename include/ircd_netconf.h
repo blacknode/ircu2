@@ -55,6 +55,14 @@ struct ConfigCallback {
 
 /** Network configuration options */
 enum NetConf {
+    /* SASL: where the services that answer an exchange live, and what
+     * mechanisms they take.  The services announce these with CF, so the
+     * server never has them in its own file.
+     */
+    NETCONF_SASL_SERVER,
+    NETCONF_SASL_MECHANISMS,
+    NETCONF_SASL_TIMEOUT,
+
     /* S:line related settings */
     NETCONF_SLINE_SERVER,
     NETCONF_SLINE_HOLD_TIMEOUT,

@@ -20,7 +20,6 @@
  */
 #include "config.h"
 
-#include "account.h"
 #include "bot.h"
 #include "cache.h"
 #include "capab.h"
@@ -35,6 +34,7 @@
 #include "ircd_log.h"
 #include "ircd_reply.h"
 #include "ircd_snprintf.h"
+#include "ircd_sha256.h"
 #include "ircd_string.h"
 #include "migration.h"
 #include "modhost.h"
@@ -43,7 +43,6 @@
 #include "numeric.h"
 #include "parse.h"
 #include "s_debug.h"
-#include "sasl.h"
 #include "send.h"
 #include "worker.h"
 
@@ -931,58 +930,14 @@ int module_hook_resume(struct ModuleHandle *mod, hook_token_t token,
   return hook_resume(token, result, reason);
 }
 
-/** Register a SASL mechanism for a module.
+/** Register the cache driver for a module.
  *
- * The core brings PLAIN and EXTERNAL; everything else -- SCRAM, a
- * one-time-password step, OAUTHBEARER for an identity provider -- is a
- * module, because the exchange is the only part of it the core can know
- * in advance.  The name is uppercased, so two modules cannot register the
- * same mechanism under two spellings.
+ * One driver at a time, the same arrangement db.h has: the core holds
+ * the Redis{} block and the calls in flight, and a module is what
+ * actually talks to the store.  See doc/readme.cache.
  *
  * @param[in] mod Handle passed to mi_init.
- * @param[in] name Mechanism name, e.g. "SCRAM-SHA-256".
- * @param[in] flags SASL_MECH_* flags.
- * @param[in] step One round of the exchange.
- * @return Non-zero on success.
- */
-int module_add_sasl_mechanism(struct ModuleHandle *mod, const char *name,
-                              unsigned int flags, SaslStepFn step) {
-  assert(0 != mod);
-  return sasl_register(mod, name, flags, step);
-}
-
-/** Remove a SASL mechanism this module registered.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] name Mechanism to remove.
- * @return Non-zero if it was found and removed.
- */
-int module_del_sasl_mechanism(struct ModuleHandle *mod, const char *name) {
-  assert(0 != mod);
-  return sasl_unregister(mod, name);
-}
-
-/** Register this module as the identity provider.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] provider Static description of the provider.
- * @return Non-zero on success.
- */
-int module_add_account_provider(struct ModuleHandle *mod,
-                                const struct AccountProvider *provider) {
-  assert(0 != mod);
-  return account_register_provider(mod, provider);
-}
-
-/** Withdraw this module's identity provider.
- * @param[in] mod Handle passed to mi_init.
- */
-void module_del_account_provider(struct ModuleHandle *mod) {
-  assert(0 != mod);
-  account_unregister_provider(mod);
-}
-
-/** Register this module as the cache driver.
- * @param[in] mod Handle passed to mi_init.
- * @param[in] driver Static description of the driver.
+ * @param[in] driver The driver's callbacks.
  * @return Non-zero on success.
  */
 int module_add_cache_driver(struct ModuleHandle *mod,
@@ -1547,16 +1502,6 @@ static int module_unload_internal(struct ModuleHandle *mod, int quiet) {
    * negotiated one has to be told it is gone.
    */
   module_drop_caps(mod);
-  /* And its SASL mechanisms, before the code that implements them is
-   * unmapped: a client halfway through an exchange with a mechanism that
-   * no longer exists would be answered by a pointer into nothing.
-   */
-  sasl_drop_module(mod);
-  /* And the identity provider, which fails every question in flight: a
-   * caller waiting on an answer from code that is about to be unmapped
-   * would wait for ever.
-   */
-  account_unregister_provider(mod);
 
   for (mod_p = &manager->mod_list; *mod_p; mod_p = &(*mod_p)->mh_next) {
     if (*mod_p == mod) {
@@ -1629,6 +1574,113 @@ void module_unload_isolated(struct ModuleHandle *mod) {
 
 int module_unload(struct ModuleHandle *mod) {
   return module_unload_internal(mod, 0);
+}
+
+/** Order two handles by the name their #ModuleInfo declares.
+ *
+ * ircd_strcmp() rather than strcmp(): the names are compared the way IRC
+ * compares names everywhere else, so that two servers whose module lists
+ * differ only in case still agree on the order and so on the digest.
+ */
+static int module_cmp_name(const void *a, const void *b) {
+  const struct ModuleHandle *const *pa = (const struct ModuleHandle *const *)a;
+  const struct ModuleHandle *const *pb = (const struct ModuleHandle *const *)b;
+
+  return ircd_strcmp(module_name(*pa), module_name(*pb));
+}
+
+/** Collect the loaded modules into \a out, sorted by name.
+ * @param[out] out Receives the handles.
+ * @param[in] max Room in \a out.
+ * @return Number of handles written, which is module_count() clamped.
+ */
+static unsigned int module_sorted(const struct ModuleHandle **out,
+                                  unsigned int max) {
+  struct ModuleHandle *mod;
+  unsigned int n = 0;
+
+  if (!manager)
+    return 0;
+
+  for (mod = manager->mod_list; mod && n < max; mod = mod->mh_next)
+    out[n++] = mod;
+
+  if (n > 1)
+    qsort(out, n, sizeof(out[0]), module_cmp_name);
+
+  return n;
+}
+
+/** Most modules the digest and the listing walk.
+ *
+ * A server with more than this many modules loaded would have its set
+ * summarised from the first #MODULE_SET_MAX of them, so the number is far
+ * above anything a network runs rather than merely comfortable.
+ */
+#define MODULE_SET_MAX 256
+
+void module_set_digest(char *buf, size_t len) {
+  const struct ModuleHandle *mods[MODULE_SET_MAX];
+  unsigned char out[SHA256_DIGEST_LEN];
+  struct Sha256Ctx ctx;
+  unsigned int n;
+  unsigned int i;
+
+  assert(0 != buf);
+  assert(len >= MODULE_DIGEST_LEN);
+
+  n = module_sorted(mods, MODULE_SET_MAX);
+
+  /* The NUL between the two fields is what keeps "ab" version "c" from
+   * hashing the same as "a" version "bc".
+   */
+  ircd_sha256_init(&ctx);
+  for (i = 0; i < n; i++) {
+    const char *name = module_name(mods[i]);
+    const char *version = module_version(mods[i]);
+
+    ircd_sha256_update(&ctx, name, strlen(name) + 1);
+    ircd_sha256_update(&ctx, version ? version : "", version ? strlen(version)
+                                                             : 0);
+    ircd_sha256_update(&ctx, "\n", 1);
+  }
+  ircd_sha256_final(&ctx, out);
+
+  for (i = 0; i < SHA256_DIGEST_LEN; i++)
+    ircd_snprintf(0, buf + i * 2, 3, "%02x", out[i]);
+  buf[SHA256_DIGEST_LEN * 2] = '\0';
+}
+
+void module_set_names(char *buf, size_t len) {
+  const struct ModuleHandle *mods[MODULE_SET_MAX];
+  unsigned int n;
+  unsigned int i;
+  size_t at = 0;
+
+  assert(0 != buf);
+  assert(len > 4);
+
+  n = module_sorted(mods, MODULE_SET_MAX);
+  buf[0] = '\0';
+
+  for (i = 0; i < n; i++) {
+    const char *name = module_name(mods[i]);
+    size_t need = strlen(name) + (at ? 1 : 0);
+
+    /* Four bytes held back for the ellipsis and its NUL, so that a list
+     * that did not fit says so rather than looking like a shorter one.
+     */
+    if (at + need + 4 >= len) {
+      ircd_strncpy(buf + at, at ? " ..." : "...", len - at - 1);
+      return;
+    }
+
+    if (at)
+      buf[at++] = ' ';
+    memcpy(buf + at, name, strlen(name));
+    at += strlen(name);
+    buf[at] = '\0';
+  }
 }
 
 /** Mark a module as present in the running configuration. */
@@ -1780,10 +1832,24 @@ void module_init(void) {
   manager->mod_cb_depth = 0;
   manager->mod_list = 0;
 
+  module_load_configured();
+}
+
+/** Load, keep or replace every module the configuration file names.
+ *
+ * Run once at start-up and again at the end of every rehash.  The parser
+ * only records the Module{} blocks (conf_add_module_node()); acting on
+ * one means running its mi_init, which has no business seeing a
+ * half-read configuration.
+ *
+ * Every module the file still names ends up marked, so the module_sweep()
+ * that follows a rehash takes exactly the ones it dropped.
+ */
+void module_load_configured(void) {
   struct ModuleList *mod;
-  for (mod = GlobalModuleList; mod; mod = mod->next) {
+
+  for (mod = GlobalModuleList; mod; mod = mod->next)
     conf_add_module(mod->mod_name, mod->type);
-  }
 }
 
 /** Unload every module, in reverse order of loading. */

@@ -73,7 +73,7 @@
 struct HistDump {
   char   hd_numnick[10];        /**< The operator who asked. */
   time_t hd_born;               /**< When they connected. */
-  char   hd_account[NICKLEN + 1]; /**< Whose history. */
+  char   hd_account[ACCOUNTLEN + 1]; /**< Whose history. */
   char   hd_path[512];          /**< Where it is going. */
   FILE*  hd_file;               /**< The file, while it is open. */
   long long hd_rows;            /**< Written so far. */
@@ -110,7 +110,7 @@ static void hist_tell(const char* numnick, time_t born, const char* fmt, ...)
 struct HistAsking {
   char   ha_numnick[10];
   time_t ha_born;
-  char   ha_account[NICKLEN + 1];
+  char   ha_account[ACCOUNTLEN + 1];
 };
 
 /** The counts came back. */
@@ -337,7 +337,7 @@ static void hist_export(struct Client* sptr, const char* account)
   struct tm tm;
   time_t now = CurrentTime;
   FILE* out;
-  char canon[NICKLEN + 1];
+  char canon[ACCOUNTLEN + 1];
   char path[512];
 
   if (EmptyString(dir)) {

@@ -256,7 +256,7 @@ static int file_http_upload(http_req_t id, const struct HttpRequest* req,
       ircd_strncpy(row.fr_target, target + 1, CHANNELLEN);
     }
 
-    ircd_strncpy(row.fr_account, colon + 1, NICKLEN);
+    ircd_strncpy(row.fr_account, colon + 1, ACCOUNTLEN);
   }
 
   file_type_clean(row.fr_type, sizeof(row.fr_type),

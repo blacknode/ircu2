@@ -519,40 +519,59 @@ and letting it through because the module never answered would be the
 outcome it was asked to prevent.  Nothing is armed and nothing is
 checked while no module is holding anything.  See doc/readme.modules.
 
-ACCOUNT_TIMEOUT
- * Type: integer
- * Default: 10
-
-How long, in seconds, the identity provider may take to answer a
-question -- is this credential good, whose nickname is this -- before
-the server answers for it.  What waits on it is somebody trying to log
-in, so it is short.  A question that times out fails: for a credential
-that means the login is refused, and for a nickname it means ownership
-could not be established, which is not the same as the nickname being
-free.  See doc/proposals/007-identidad.md.
-
-ACCOUNT_REQUIRE_TLS
+MODULE_SYNC
  * Type: boolean
  * Default: TRUE
 
-Refuse authentication mechanisms that put the password on the wire in
-the clear -- SASL PLAIN and ACCOUNT LOGIN -- on a connection with no
-TLS.  On by default: a server that allows them by default is a server
-that collects passwords in plaintext, and the SASL specification says
-as much about PLAIN.  Turn it off only on a network where something
-else provides the transport security.
+Treat the set of loaded modules as a property of the network rather than
+of a server.  With it on, this server announces what it runs as soon as a
+link comes up and refuses the link if the peer runs anything else, and
+/MODULE LOAD, UNLOAD and RELOAD become transactions across every server
+at once -- all of them or none of them.  See doc/readme.modules, ONE
+MODULE SET FOR THE WHOLE NETWORK.
 
-GUEST_PREFIX
- * Type: string
- * Default: guest-
+Turning it off here does not turn it off for the peers: they will still
+refuse the link.  It is for a server deliberately outside the rule, such
+as a jupe or an instance linked to nothing.
 
-What a guest nickname starts with.  The server appends eight random
-base-62 characters, and refuses to start if prefix and suffix together
-would not fit in a nickname -- a prefix long enough to squeeze out the
-random part would make every guest the same guest.  Guests are what a
-client is renamed to when it could not prove a registered nickname is
-its own: a failed authentication, a logout, a grace period that ran
-out.
+MODULE_SYNC_TIMEOUT
+ * Type: integer
+ * Default: 30
+
+How long, in seconds, the server that was asked for a module change waits
+for the rest of the network to answer before abandoning it.  Generous
+compared with the other timeouts because what it spans is a dlopen() and
+a module's mi_init on every server there is.  A server that does not
+answer in time is a failure like any other: the change is abandoned
+everywhere, which is the outcome this whole mechanism exists to reach.
+
+CAP_ACCOUNTNOTIFY
+ * Type: boolean
+ * Default: TRUE
+
+Advertise the IRCv3 account-notify capability.  A client that
+negotiates it is told, with an ACCOUNT message, whenever somebody it
+shares a channel with logs in -- including itself.  Without it the
+login is invisible until the client asks (WHOIS 330, WHO %a).
+Turning it off withdraws the capability from the advertisement; a
+client that already negotiated it keeps it until it reconnects.
+
+CAP_EXTJOIN
+ * Type: boolean
+ * Default: TRUE
+
+Advertise the IRCv3 extended-join capability.  A client that
+negotiates it gets the account name and the real name on every JOIN it
+sees, instead of the bare form; every other client still sees the bare
+form, since the two are sent side by side.
+
+HIS_STATS_S
+ * Type: boolean
+ * Default: TRUE
+
+Hide /STATS S (the SASL exchanges this server has in flight with the
+network's services) from ordinary users, the way the other HIS_STATS_*
+features hide theirs.
 
 HISTORY_RETENTION
  * Type: integer
@@ -892,9 +911,11 @@ CAP_SASL
  * Default: TRUE
 
 Advertise "sasl", whose value is the mechanism list.  It is withdrawn
-anyway when no identity provider is loaded, because a server that
-cannot answer a credential should not offer to take one; this switch is
-for turning it off on a server that could.  See doc/readme.sasl.
+anyway when the network has no SASL server -- the netconf keys
+sasl.server and sasl.mechanisms, and a server by that name actually
+linked -- because a server that cannot relay a credential should not
+offer to take one; this switch is for turning it off on a server that
+could.  See doc/readme.accounting.
 
 CAP_LANGUAGES
  * Type: boolean

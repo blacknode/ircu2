@@ -117,8 +117,8 @@ struct HistQuery {
   enum HistShape hq_shape;              /**< Which of the six. */
   int            hq_channel;            /**< Target is a channel. */
   char           hq_canon[CHANNELLEN + 1]; /**< The channel, canonical. */
-  char           hq_self[NICKLEN + 1];  /**< The asker's account. */
-  char           hq_peer[NICKLEN + 1];  /**< The other end's account. */
+  char           hq_self[ACCOUNTLEN + 1]; /**< The asker's account. */
+  char           hq_peer[ACCOUNTLEN + 1]; /**< The other end's account. */
   struct HistPoint hq_a;                /**< The point, or the first. */
   struct HistPoint hq_b;                /**< The second, for BETWEEN. */
   unsigned int   hq_limit;              /**< Most rows to return. */
@@ -249,7 +249,7 @@ struct HistFound {
   char hf_time[40];                /**< When, ISO 8601, or "" if not found. */
   char hf_target[CHANNELLEN + 1];  /**< Channel or nickname, as addressed. */
   char hf_canon[CHANNELLEN + 1];   /**< Its canonical form. */
-  char hf_account[NICKLEN + 1];    /**< Who wrote it, or "". */
+  char hf_account[ACCOUNTLEN + 1]; /**< Who wrote it, or "". */
   int  hf_channel;                 /**< Whether the target is a channel. */
   enum HistKind hf_kind;           /**< What it arrived as. */
 };
@@ -330,9 +330,9 @@ extern int hist_store_marker_get(const char* account, const char* target,
  * decided.
  */
 struct HistSearch {
-  char hs_self[NICKLEN + 1];    /**< The asker's account, canonical. */
-  char hs_peer[NICKLEN + 1];    /**< One conversation, or "". */
-  char hs_from[NICKLEN + 1];    /**< Only from this account, or "". */
+  char hs_self[ACCOUNTLEN + 1]; /**< The asker's account, canonical. */
+  char hs_peer[ACCOUNTLEN + 1]; /**< One conversation, or "". */
+  char hs_from[ACCOUNTLEN + 1]; /**< Only from this account, or "". */
   const char* hs_channels;      /**< Channels, as a PostgreSQL array
                                      literal, or NULL for none. */
   char hs_text[BUFSIZE];        /**< What to look for, as a person wrote it. */

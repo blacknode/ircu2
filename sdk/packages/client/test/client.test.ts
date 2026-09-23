@@ -145,33 +145,75 @@ describe('identity', () => {
     expect(client.state.identified).toBe(false);
   });
 
-  test('+r sets identified, and the account is the nickname', () => {
-    // There is no account name here.  `+r` means "this person proved the
-    // nickname they are wearing", so when it is set the account *is*
-    // `state.nick`.
+  test('+r takes the account name as its parameter', () => {
+    // The account is not the nickname: it is what the network's services
+    // keep, and it rides in the mode string after the letters.
     const { client, transport, events } = make();
 
     client.connect();
     register(transport);
-    transport.say(':irc.example.net MODE alice :+r');
+    transport.say(':irc.example.net MODE alice +r mariacct');
 
     expect(client.state.identified).toBe(true);
-    expect(of(events, 'identified')[0]?.account).toBe('alice');
+    expect(client.state.account).toBe('mariacct');
+    expect(of(events, 'identified')[0]?.account).toBe('mariacct');
   });
 
-  test('-r clears it and releases the address with it', () => {
-    // An identification without its address is a state the model does
-    // not define, which is why the server releases them together.
+  test('the id and the flags that ride with it are between servers', () => {
+    // "<account>:<id>:<flags>" is one parameter on the wire; a client is
+    // told the name and has no use for the rest.
     const { client, transport } = make();
 
     client.connect();
     register(transport);
-    transport.say(':irc.example.net MODE alice :+r');
-    client.state.email = 'alice@example.com';
+    transport.say(':irc.example.net MODE alice +r mariacct:17:3');
+
+    expect(client.state.account).toBe('mariacct');
+  });
+
+  test('there is no -r', () => {
+    // The server cannot take away what it did not give, so a mode string
+    // asking for one changes nothing there and nothing here.
+    const { client, transport } = make();
+
+    client.connect();
+    register(transport);
+    transport.say(':irc.example.net MODE alice +r mariacct');
     transport.say(':irc.example.net MODE alice :-r');
 
-    expect(client.state.identified).toBe(false);
-    expect(client.state.email).toBeUndefined();
+    expect(client.state.identified).toBe(true);
+    expect(client.state.account).toBe('mariacct');
+  });
+
+  test('ACCOUNT says who logged in, and who logged out', () => {
+    const { client, transport, events } = make();
+
+    client.connect();
+    register(transport);
+    transport.say(':bob!u@h ACCOUNT :bobacct');
+
+    expect(client.state.user('bob')?.account).toBe('bobacct');
+    expect(client.state.user('bob')?.identified).toBe(true);
+    expect(of(events, 'account')[0]?.account).toBe('bobacct');
+
+    transport.say(':bob!u@h ACCOUNT :*');
+
+    expect(client.state.user('bob')?.account).toBeUndefined();
+    expect(client.state.user('bob')?.identified).toBe(false);
+  });
+
+  test('extended-join carries the account and the real name', () => {
+    const { client, transport } = make();
+
+    client.connect();
+    register(transport);
+    transport.say(':bob!u@h JOIN #chan bobacct :Bob Bobson');
+    transport.say(':carol!u@h JOIN #chan * :Carol');
+
+    expect(client.state.user('bob')?.account).toBe('bobacct');
+    expect(client.state.user('bob')?.realname).toBe('Bob Bobson');
+    expect(client.state.user('carol')?.account).toBeUndefined();
+    expect(client.state.user('carol')?.identified).toBe(false);
   });
 
   test('+f is reported, because a frozen client looks broken otherwise', () => {
@@ -219,17 +261,19 @@ describe('identity', () => {
     expect(of(events, 'renamed')[0]?.byServer).toBe(false);
   });
 
-  test('changing nickname leaves the account, because they are the same thing', () => {
+  test('changing nickname keeps the account, because they are two names', () => {
     const { client, transport } = make();
 
     client.connect();
     register(transport);
-    transport.say(':irc.example.net MODE alice :+r');
+    transport.say(':irc.example.net MODE alice +r mariacct');
     expect(client.state.identified).toBe(true);
 
     transport.say(':alice!u@h NICK :bob');
 
-    expect(client.state.identified).toBe(false);
+    expect(client.state.nick).toBe('bob');
+    expect(client.state.identified).toBe(true);
+    expect(client.state.account).toBe('mariacct');
   });
 });
 

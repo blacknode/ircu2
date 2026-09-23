@@ -69,13 +69,18 @@ const char *server = netconf_str(NETCONF_SLINE_SERVER);
 This approach ensures that features are accessed consistently and safely throughout the codebase. These are not modules, but configuration features/options. New features should be added as new enum values in `NetConf`.
 
 - `int config_set(const char *key, const char *value, time_t timestamp);`
-  - Set or update a configuration key/value with a timestamp.
+  - Set or update a configuration key/value with a timestamp, **on this
+    server only**.  Propagating it is then the caller's job, the way
+    `ms_config()` propagates what it accepted.
 - `const char *config_get(const char *key);`
   - Retrieve the value for a configuration key.
 - `void config_register_callback(const char *key_prefix, config_callback_f callback);`
   - Register a callback for changes to keys with the given prefix.
 - `void config_unregister_callback(const char *key_prefix);`
-  - Unregister a callback.
+  - Unregister a callback.  A callback is a pointer into the registering
+    code, so anything that can be unloaded has to take it back down
+    before it goes: a `CF` arriving a moment afterwards would otherwise
+    call into nothing.
 - `void config_burst(struct Client *cptr);`
   - Send all current configuration entries to a newly connected server.
 - `void config_stats(struct Client *sptr, const struct StatDesc *sd, char *param);`
@@ -87,15 +92,17 @@ Suppose you are writing a module that needs to react when the spam filter server
 
 ```c
 static void sline_update(const char *key, const char *old_value, const char *new_value) {
-    printf("sline config changed: %s: %s -> %s\n", key, old_value ? old_value : "(unset)", new_value ? new_value : "(deleted)");
-    // React to the change, e.g., update internal state
+    /* React to the change, e.g. update internal state.  Note that a burst
+     * delivers one call per key: if the reaction is expensive, set a flag
+     * here and do the work from a short timer. */
 }
 
-void module_init(void) {
+static int mi_init(struct ModuleHandle *mod) {
     config_register_callback("sline.", sline_update);
+    return 0;
 }
 
-void module_exit(void) {
+static void mi_fini(struct ModuleHandle *mod) {
     config_unregister_callback("sline.");
 }
 ```
@@ -144,6 +151,25 @@ CF 1711201234 sline.server
 - Centralized, real-time configuration for the entire IRC network
 - Reduces operational overhead and risk of configuration drift
 - Enables rapid deployment of new service features
+
+## A worked example: SASL
+
+`sasl.server`, `sasl.mechanisms` and `sasl.timeout` are where the network
+says which server answers a credential and what the `sasl` capability
+advertises.  They are netconf keys rather than features because the
+answer has to be the same everywhere: a server that advertised a
+mechanism its neighbour could not relay would offer a login that fails.
+
+```
+sasl.server       services.example.net
+sasl.mechanisms   PLAIN EXTERNAL
+sasl.timeout      30
+```
+
+The services node sets them with a `CF` when it links, and every server
+reads them back.  Two servers whose idea of this disagrees converge on
+whichever was set most recently, with no server having to be in charge.
+See `doc/readme.accounting`, SASL.
 
 ## See Also
 - `include/ircd_netconf.h`

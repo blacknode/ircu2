@@ -31,11 +31,11 @@ and afterwards
 is the file.  `/FILE LIST` is what this account is holding and
 `/FILE DELETE <id>` takes one back -- the row and the object together.
 
-**Only an identified client may upload.**  An account is a nickname
-(doc/proposals/007-identidad.md), and the only durable handle on a person
-here is the nickname they proved: filing an upload under a bare nick would
-file it under whoever wears that nick next week, and the quota, the
-listing and the deletion all hang off that name.
+**Only an identified client may upload.**  The only durable handle on a
+person here is the account the network's services say they are logged in
+to (doc/readme.accounting): filing an upload under a bare nick would file
+it under whoever wears that nick next week, and the quota, the listing
+and the deletion all hang off that name.
 
 There is deliberately no `draft/filehost` message tag.  A tag is read by
 clients, and the clients are the next phase; until they exist the URL in
@@ -50,8 +50,8 @@ Authorisation is a **signed statement, not a session**.  The server says
 
   <id>:<account>:<target>
 
-signed with the network's key (include/ircd_token.h, the mechanism
-doc/readme.mail describes) and good for fifteen minutes, and the upload
+signed with the network's key (include/ircd_token.h) and good for
+fifteen minutes, and the upload
 presents it.  Everything the route needs to know it therefore learns from
 something it signed itself: who is uploading, which identifier this is
 for, and what the file was meant for.  Nothing the client sends alongside
@@ -177,6 +177,6 @@ WHERE TO LOOK
   modules/services/filehost/file_cmd.c    /FILE
   modules/services/filehost/file_store.c  every statement it sends
   modules/services/filehost/migrations/   the table
-  include/ircd_token.h                    the ticket, and doc/readme.mail
+  include/ircd_token.h                    the ticket
   include/http.h                          hreq_file, http_request_save()
   tests/files/                            the round trip, end to end

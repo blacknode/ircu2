@@ -32,18 +32,29 @@ export type ClientEvent =
       readonly willRetry: boolean;
     }
 
-  /* --- identity (proposal 007) --- */
-  /** The account, which is the nickname, is now proved. */
+  /* --- identity --- */
+  /** We are logged in, to the account named here.
+   *
+   * The account is not the nickname: it is the name the network's
+   * services keep, and this connection may be wearing any nick.
+   */
   | { readonly type: 'identified'; readonly account: string }
   | { readonly type: 'identify-failed'; readonly reason: string }
   /**
+   * Somebody else logged in, or out (`ACCOUNT`, account-notify).
+   *
+   * `account` is undefined when they logged out.  It arrives for
+   * everybody sharing a channel with them, this connection included --
+   * so a UI that keys off this alone sees its own login twice, once
+   * here and once as `identified`.
+   */
+  | { readonly type: 'account'; readonly nick: string; readonly account?: string }
+  /**
    * The server renamed us.
    *
-   * Either because we logged out -- a client still called `maria`
-   * without `+r` is what an onlooker cannot tell from an impostor -- or
-   * because a grace period ran out on a registered nickname we never
-   * proved.  Both arrive as an ordinary NICK from the server, and both
-   * are worth showing rather than swallowing.
+   * The services rename a client that could not show a registered
+   * nickname was its own.  It arrives as an ordinary NICK from the
+   * server, and it is worth showing rather than swallowing.
    */
   | { readonly type: 'renamed'; readonly from: string; readonly to: string; readonly byServer: boolean }
   /**
@@ -52,7 +63,7 @@ export type ClientEvent =
    * While frozen almost nothing may be sent: the server allows only what
    * each command declares, narrowed to talking to the service that will
    * lift it.  A UI that does not show this shows a client that appears
-   * to be broken.
+   * to be broken.  Logging in lifts it.
    */
   | { readonly type: 'freeze'; readonly frozen: boolean }
 

@@ -8,9 +8,9 @@ file back out -- so what these tests are really pinning down is that a
 file bigger than anything the server would hold in memory survives the
 round trip unchanged.
 
-The topology is the identity one (marker ``identity``): the module keeps
-its metadata in PostgreSQL, so it needs the same database the accounts
-do, and a file belongs to an account, so it needs accounts too.
+The topology is the store one (marker ``store``): the module keeps its
+metadata in PostgreSQL, and a file belongs to an account, so the tests
+also need the network's services to log a client in.
 """
 
 import asyncio
@@ -25,7 +25,12 @@ import pytest
 
 from irc_client import IRCClient
 
-pytestmark = pytest.mark.identity
+pytestmark = pytest.mark.store
+
+#: A token unique to this run, put in every nickname and account name.
+#: PostgreSQL keeps what a previous run uploaded, and a listing is by
+#: account, so a fixed account name would read back somebody else's files.
+TAG = uuid.uuid4().hex[:6]
 
 #: What FILE UPLOAD tells the client, in the line with the command in it.
 #:
@@ -80,12 +85,25 @@ def _http(method, url, data=None, headers=None):
 
 
 @pytest.fixture
-async def uploader(ircd_identity, schema, address):
-    """A client identified to an account, which is what uploading needs."""
-    client = await _connect(ircd_identity, "up" + address["nick"][:10])
-    await client.send(
-        f"PRIVMSG NickServ :IDENTIFY {address['email']} {address['password']}")
-    await client.wait_for("900", timeout=20.0)
+async def uploader(ircd_store, schema, store_services):
+    """A client identified to an account, which is what uploading needs.
+
+    The account comes from the services, as it does on a real network:
+    an ACCOUNT from the U:lined server, and nothing this server decided.
+    """
+    nick = f"up{TAG}"
+    client = await _connect(ircd_store, nick)
+    await store_services.send_register(nick, account=f"acct{TAG}")
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 10.0
+    while True:
+        await client.send(f"MODE {nick}")
+        msg = await client.wait_for("221", timeout=5.0)
+        if "r" in msg.params[-1]:
+            break
+        assert loop.time() < deadline, f"{nick} never got an account"
+        await asyncio.sleep(0.2)
     await client.drain()
 
     yield client
@@ -114,7 +132,7 @@ async def _ticket(client, target=""):
     return ticket, f"{base}/u/{file_id}", link.group(1)
 
 
-async def test_upload_and_download(ircd_identity, uploader):
+async def test_upload_and_download(ircd_store, uploader):
     """A file goes up, comes back byte for byte, and is where it said."""
     ticket, upload_url, link = await _ticket(uploader, "#files")
 
@@ -139,7 +157,7 @@ async def test_upload_and_download(ircd_identity, uploader):
     assert len(got) == len(payload)
 
 
-async def test_a_ticket_is_for_one_upload(ircd_identity, uploader):
+async def test_a_ticket_is_for_one_upload(ircd_store, uploader):
     """The identifier is in the ticket as well as in the path.
 
     A ticket that worked for any identifier would be a ticket to overwrite
@@ -155,7 +173,7 @@ async def test_a_ticket_is_for_one_upload(ircd_identity, uploader):
     assert status == 403, body
 
 
-async def test_no_ticket_no_upload(ircd_identity, uploader):
+async def test_no_ticket_no_upload(ircd_store, uploader):
     """Without one, or with one this network never signed."""
     _ticket_value, upload_url, _link = await _ticket(uploader)
 
@@ -168,7 +186,7 @@ async def test_no_ticket_no_upload(ircd_identity, uploader):
     assert status == 403
 
 
-async def test_an_unknown_file_is_not_found(ircd_identity, uploader):
+async def test_an_unknown_file_is_not_found(ircd_store, uploader):
     """And an identifier that is not one, which must not reach a path."""
     base = (await _ticket(uploader))[2]
     root = base[:base.rindex("/f/")]
@@ -178,7 +196,7 @@ async def test_an_unknown_file_is_not_found(ircd_identity, uploader):
         assert status in (400, 404), bad
 
 
-async def test_list_and_delete(ircd_identity, uploader):
+async def test_list_and_delete(ircd_store, uploader):
     """What an account is holding, and taking one back."""
     ticket, upload_url, link = await _ticket(uploader)
     file_id = link.rsplit("/", 1)[1]
@@ -205,13 +223,13 @@ async def test_list_and_delete(ircd_identity, uploader):
     assert status == 404
 
 
-async def test_uploading_needs_an_account(ircd_identity, schema):
+async def test_uploading_needs_an_account(ircd_store, schema):
     """A bare nickname is not a handle on a person.
 
     Whoever wears it next week is not whoever uploaded this, and the
     quota, the listing and the deletion all hang off that name.
     """
-    client = await _connect(ircd_identity, "nofileacct")
+    client = await _connect(ircd_store, "nofileacct")
     try:
         await client.send("FILE UPLOAD")
         lines = await _notices(client)

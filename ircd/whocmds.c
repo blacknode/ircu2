@@ -237,6 +237,17 @@ void do_who(struct Client* sptr, struct Client* acptr, struct Channel* repchan,
       *p1++ = '0';
   }
 
+  if (fields & WHO_FIELD_ACC)
+  {
+    char *p2 = cli_user(acptr)->account;
+
+    *(p1++) = ' ';
+    if (*p2)
+      while ((*p2) && (*(p1++) = *(p2++)));
+    else
+      *(p1++) = '0';
+  }
+
   if (fields & WHO_FIELD_OPL)
   {
       if (!chan || !IsChanOp(chan))

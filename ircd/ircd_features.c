@@ -406,14 +406,19 @@ static struct FeatureDesc {
    */
   F_I(HOOK_TIMEOUT, FEAT_OPER, 10, 0),
 
-  /* Accounts.  The timeout bounds a question asked of a database, so it
-   * is short: what waits on it is somebody trying to log in.  Requiring
-   * TLS is on by default because both PLAIN and ACCOUNT LOGIN put the
-   * password on the wire as it is.
+  /* The module set is a property of the network, not of a server: two
+   * servers that do not run the same modules are refused a link, and
+   * loading or unloading one is a transaction across every server at
+   * once (include/module_sync.h, doc/readme.modules).  Turning this off
+   * on one server does not turn it off on its peers -- they will still
+   * refuse the link -- so it is off only for a server that is deliberately
+   * outside the rule, such as a jupe.  The timeout bounds how long the
+   * server that was asked waits for the rest of the network to answer
+   * before it abandons the change; it is generous because what it spans
+   * is a dlopen() and a module's mi_init on every server there is.
    */
-  F_I(ACCOUNT_TIMEOUT, FEAT_OPER, 10, 0),
-  F_B(ACCOUNT_REQUIRE_TLS, FEAT_OPER, 1, 0),
-  F_S(GUEST_PREFIX, FEAT_OPER, "guest-", 0),
+  F_B(MODULE_SYNC, FEAT_OPER, 1, 0),
+  F_I(MODULE_SYNC_TIMEOUT, FEAT_OPER, 30, 0),
 
   /* History.  Retention is in days and 0 means "keep everything", which
    * is a choice an operator has to make rather than one the server makes
@@ -498,6 +503,8 @@ static struct FeatureDesc {
   F_B(CAP_LABELEDRESPONSE, 0, 1, 0),
   F_B(CAP_MULTILINE, 0, 1, 0),
   F_B(CAP_SASL, 0, 1, 0),
+  F_B(CAP_ACCOUNTNOTIFY, 0, 1, 0),
+  F_B(CAP_EXTJOIN, 0, 1, 0),
   F_B(CAP_STANDARDREPLIES, 0, 1, 0),
 
   /* Translations: the language a client gets when it asked for none.
@@ -548,6 +555,7 @@ static struct FeatureDesc {
   F_B(HIS_STATS_q, 0, 1, 0),
   F_B(HIS_STATS_r, 0, 1, 0),
   F_B(HIS_STATS_R, 0, 1, 0),
+  F_B(HIS_STATS_S, 0, 1, 0),
   F_B(HIS_STATS_s, 0, 1, 0),
   F_B(HIS_STATS_t, 0, 1, 0),
   F_B(HIS_STATS_T, 0, 1, 0),

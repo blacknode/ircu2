@@ -171,7 +171,7 @@ static void hist_edit_written(long long rows, void* user)
 /** Non-zero if \a cptr may rewrite the message \a found describes. */
 static int hist_may_edit(struct Client* cptr, const struct HistFound* found)
 {
-  char mine[NICKLEN + 1];
+  char mine[ACCOUNTLEN + 1];
   int window;
   char now[40];
 

@@ -30,10 +30,14 @@ export const WANTED_CAPS = [
   'echo-message',
   'standard-replies',
 
-  // Identity (proposal 007).  `sasl` carries its mechanism list as the
-  // capability's value, and it is withdrawn when no provider is loaded,
-  // so its presence is the honest answer to "can I log in here".
+  // Identity.  `sasl` carries its mechanism list as the capability's
+  // value, and it is withdrawn when the network has no server to relay
+  // an exchange to, so its presence is the honest answer to "can I log
+  // in here".  The other two say who is logged in as what: without them
+  // an account is only ever learnt by asking (WHOIS, WHO).
   'sasl',
+  'account-notify',
+  'extended-join',
 
   // Long messages, as one message rather than several.
   'draft/multiline',

@@ -30,6 +30,7 @@
 #include "migration.h"
 #include "modhost.h"
 #include "module.h"
+#include "module_sync.h"
 #include "msg.h"
 #include "numeric.h"
 #include "numnicks.h"
@@ -47,6 +48,7 @@
 static void module_send_list(struct Client* sptr)
 {
   struct ModuleHandle* mod;
+  char digest[MODULE_DIGEST_LEN];
 
   for (mod = module_next(0); mod; mod = module_next(mod))
     /* The file name comes first: that is what LOAD, UNLOAD and RELOAD
@@ -72,6 +74,13 @@ static void module_send_list(struct Client* sptr)
 
   send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":%u module%s loaded"),
              module_count(), module_count() == 1 ? "" : "s");
+
+  /* The digest every link is compared on.  An operator looking at a
+   * refused link wants to read it off both servers, and this is where.
+   */
+  module_set_digest(digest, sizeof(digest));
+  send_reply(sptr, SND_EXPLICIT | RPL_STATSDEBUG, N_(":Module set: %s"),
+             digest);
 }
 
 /** Read a version out of an operator's argument.
@@ -214,11 +223,7 @@ static int module_migration(struct Client* sptr, int parc, char* parv[])
  */
 int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 {
-  struct ModuleHandle* mod;
-  const char* err = 0;
   char* subcmd;
-  char name[256];
-  int was_isolated = 0;
 
   if (!HasPriv(sptr, PRIV_MODULE))
     return send_reply(sptr, ERR_NOPRIVILEGES);
@@ -249,8 +254,13 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
   if (parc < 3)
     return send_reply(sptr, ERR_NEEDMOREPARAMS, "MODULE");
 
+  /* LOAD, UNLOAD and RELOAD are not this server's to do alone: every
+   * server on the network runs the same modules, so the change is a
+   * transaction over all of them and one failure anywhere abandons it
+   * everywhere.  See include/module_sync.h.
+   */
   if (0 == ircd_strcmp(subcmd, "LOAD")) {
-    enum ModuleIsolation iso = MODULE_NATIVE;
+    int iso = MODULE_NATIVE;
 
     /* MODULE LOAD <name> [native|process].  An operator loading by hand
      * says where it runs, because nothing else can: there is no Module{}
@@ -266,81 +276,38 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
       }
     }
 
-    if (!module_load_isolation(parv[2], cli_name(sptr), iso, &err)) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not load %s: %s"),
-                    sptr, parv[2], err ? err : "unknown error");
+    if (!modsync_begin(sptr, MODSYNC_LOAD, parv[2], iso))
       return 0;
-    }
 
-    sendto_opmask_butone(0, SNO_OLDSNO, "%s loaded module %s",
-                         cli_name(sptr), parv[2]);
-    log_write(LS_SYSTEM, L_INFO, 0, "%#C loaded module %s", sptr, parv[2]);
+    sendto_opmask_butone(0, SNO_OLDSNO, "%s is loading module %s on the whole "
+                         "network", cli_name(sptr), parv[2]);
+    log_write(LS_SYSTEM, L_INFO, 0, "%#C started a network-wide load of "
+              "module %s", sptr, parv[2]);
     return 0;
   }
 
   if (0 == ircd_strcmp(subcmd, "UNLOAD")) {
-    if (!(mod = module_find_file(parv[2]))) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr,
-                    _(sptr, "%C :No module named %s is loaded"),
-                    sptr, parv[2]);
+    if (!modsync_begin(sptr, MODSYNC_UNLOAD, parv[2], MODULE_NATIVE))
       return 0;
-    }
 
-    if (!module_unload(mod)) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not unload %s"),
-                    sptr, parv[2]);
-      return 0;
-    }
-
-    sendto_opmask_butone(0, SNO_OLDSNO, "%s unloaded module %s",
-                         cli_name(sptr), parv[2]);
-    log_write(LS_SYSTEM, L_INFO, 0, "%#C unloaded module %s", sptr, parv[2]);
+    sendto_opmask_butone(0, SNO_OLDSNO, "%s is unloading module %s on the "
+                         "whole network", cli_name(sptr), parv[2]);
+    log_write(LS_SYSTEM, L_INFO, 0, "%#C started a network-wide unload of "
+              "module %s", sptr, parv[2]);
     return 0;
   }
 
   if (0 == ircd_strcmp(subcmd, "RELOAD")) {
-    if (!(mod = module_find_file(parv[2]))) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr,
-                    _(sptr, "%C :No module named %s is loaded"),
-                    sptr, parv[2]);
+    /* Where it runs is not an argument here: each server keeps whichever
+     * its own copy had, the way a single-server reload always did.
+     */
+    if (!modsync_begin(sptr, MODSYNC_RELOAD, parv[2], MODULE_NATIVE))
       return 0;
-    }
 
-    /* module_unload() frees the handle, so keep the name before it goes --
-     * and where it was running, because a reload that quietly brought an
-     * isolated module back inside the server would be the one change an
-     * operator would never think to check for. */
-    ircd_strncpy(name, module_file(mod), sizeof(name) - 1);
-    name[sizeof(name) - 1] = '\0';
-    was_isolated = modhost_isolated(mod);
-
-    if (!module_unload(mod)) {
-      sendcmdto_one(&me, CMD_NOTICE, sptr, _(sptr, "%C :Could not unload %s"),
-                    sptr, parv[2]);
-      return 0;
-    }
-
-    if (!module_load_isolation(name, cli_name(sptr),
-                               was_isolated ? MODULE_PROCESS : MODULE_NATIVE,
-                               &err)) {
-      /* The old code is already gone; say so plainly rather than leaving
-       * the operator to guess whether the module is still running.
-       */
-      sendcmdto_one(&me, CMD_NOTICE, sptr,
-                    _(sptr, "%C :Unloaded %s but could not load it again: %s"),
-                    sptr, parv[2], err ? err : "unknown error");
-      sendto_opmask_butone(0, SNO_OLDSNO,
-                           "Module %s is now unloaded: reload failed: %s",
-                           parv[2], err ? err : "unknown error");
-      log_write(LS_SYSTEM, L_ERROR, 0,
-                "Reload of module %s failed, module is unloaded: %s",
-                parv[2], err ? err : "unknown error");
-      return 0;
-    }
-
-    sendto_opmask_butone(0, SNO_OLDSNO, "%s reloaded module %s",
-                         cli_name(sptr), parv[2]);
-    log_write(LS_SYSTEM, L_INFO, 0, "%#C reloaded module %s", sptr, parv[2]);
+    sendto_opmask_butone(0, SNO_OLDSNO, "%s is reloading module %s on the "
+                         "whole network", cli_name(sptr), parv[2]);
+    log_write(LS_SYSTEM, L_INFO, 0, "%#C started a network-wide reload of "
+              "module %s", sptr, parv[2]);
     return 0;
   }
 
@@ -361,4 +328,22 @@ int mo_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 int m_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 {
   return send_reply(sptr, ERR_NOPRIVILEGES);
+}
+
+/** Handle a MODULE message from another server.
+ *
+ * The whole server-to-server side of MODULE is the module-set protocol:
+ * the digest a link announces, and the two-phase commit behind a
+ * network-wide load or unload.  It is all in ircd/module_sync.c, which
+ * is where the state that goes with it lives; this is only the seam.
+ *
+ * @param[in] cptr Link the message arrived on.
+ * @param[in] sptr Server that sent it.
+ * @param[in] parc Number of arguments.
+ * @param[in] parv Argument vector.
+ * @return Zero, or CPTR_KILLED if the link was refused.
+ */
+int ms_module(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+{
+  return modsync_recv(cptr, sptr, parc, parv);
 }

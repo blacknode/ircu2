@@ -62,17 +62,18 @@ uv run pytest test_irc_client.py    # unit tests, no Docker
 uv run pytest -m single_server      # by topology marker
 ```
 
-Docker topologies (hub-only, full network, TLS, limits, **identity**, DNS,
+Docker topologies (hub-only, full network, TLS, limits, **store**, DNS,
 standalone TLS hub, NETWORK_FEATURES compat) share one compose project and are
 mutually exclusive; `tests/conftest.py` groups tests by topology at collection
 time, so any selection is safe. Markers are declared in `tests/pyproject.toml`.
-Regenerate the test PKI with `tests/docker/generate-certs.sh`. The `identity`
-topology is one ircd plus a PostgreSQL (`tests/identity_db/`, `tests/history/`,
-`tests/conversation/`); the image ships
-every module under `/opt/ircu/lib/modules`, and the tests create the schema
-themselves with `/MODULE MIGRATION APPLY identity` — **until they do, every
-client is renamed to `guest-*`**, because a lookup against a table that does
-not exist fails and a failed lookup is never "free".
+Regenerate the test PKI with `tests/docker/generate-certs.sh`. The `store`
+topology is one ircd plus a PostgreSQL (`tests/history/`,
+`tests/conversation/`, `tests/files/`); the image ships every module under
+`/opt/ircu/lib/modules`, and the tests create the schemas themselves with
+`/MODULE MIGRATION APPLY history` (and `filehost`). Accounts there come
+from the `store_services` fixture — `tests/p10_server.py` linked as the
+U:lined `services.test.net`, sending `ACCOUNT` — because this server has
+no accounts of its own.
 
 ## Architecture
 
@@ -100,161 +101,48 @@ All changes go through `do_user_mode()` in `ircd/s_user.c` (`set_user_mode()`
 for a user's own modes, `set_user_mode_on()` for a server or `+S` bot changing
 somebody else's — `m_mode.c` decides who may reach it).
 
-**Accounting** (`doc/readme.accounting` for the model, `doc/readme.sasl` for
-how a user earns `+r`). There are no account names, ids or flags: an account
-**is** a nickname. Umode `+r` means "identified to the nick in use",
-`cli_user()->account` is that nick, and only a server, a `+S` service bot
-(`bot_set_user_mode()`, never on an oper), a NICK burst or the core itself
-(`account_login()`, when the core is what checked the credential) sets or
-clears it;
-a nick change clears it on every server without anything on the wire, and the
-`+r` letter takes no parameter in P10. WHOIS reports it as 307. Every user is
-`+x` from `register_user()` on and cannot remove it: `hide_hostmask()` derives
-the visible host from the IP with the TEA cipher in `ircd/ircd_vhost.c`
-(`xxxxxx.yyyyyy.v4|v6`, unit-tested against IRC-Hispano vectors in
-`vhost_t`) under the mandatory `Security { virtual_host_key = "<12 base64
-chars>"; }` block, which must be identical on every server; bots (`+B`/`+S`)
-keep their configured host. account-notify, account-tag, extended-join,
-WHOX `%a` and the HOST_HIDING/HIDDEN_HOST features are gone and stay gone —
-with an account that *is* the nick, the first three repeat the prefix. SASL
-and `ACCOUNT` came back with phase 1 of the roadmap (proposal 007) and are
-documented in `doc/readme.sasl`; the `AC` P10 token did not, and is left
-unclaimed on purpose.
+**Accounting** (`doc/readme.accounting`). The classic ircu model, which
+this fork rolled back to: **an account is not a nickname**, and ircu does
+not manage the lifecycle of one. The network's services -- a separate
+program on a link of its own, U:lined -- keep the accounts and say who is
+logged in to what; this server records it and passes it on.
+`cli_user()->account` is the name (`ACCOUNTLEN` = 12), with `acc_id` and
+`acc_flags` beside it, and `IsAccount()` tests umode `+r`. It arrives two
+ways and only two: **`ACCOUNT` (token `AC`) from a U:lined server**
+(`ircd/m_account.c`, which checks the `Uworld{}` block against the
+originator *and* the uplink, sets the flag, lifts `+f`, fans out
+account-notify and relays on), or **`+r <account>[:<id>[:<flags>]]` in a
+NICK burst** (`do_user_mode()` reads it, `umode_str()` writes it).
+**There is no `-r`** -- the case acts on `UMODE_ADD` alone, because this
+server cannot take away what it did not give -- and **a nick change keeps
+the account**, since the two are different names for different things.
+WHOIS reports it as **330**. `account-notify`, `extended-join` and WHOX
+`%a`/`%A` are back with it; `account-tag` is not. Every user is still
+`+x` from `register_user()` on and cannot remove it: `hide_hostmask()`
+derives the visible host from the IP with the TEA cipher in
+`ircd/ircd_vhost.c` (`xxxxxx.yyyyyy.v4|v6`, unit-tested against
+IRC-Hispano vectors in `vhost_t`) under the mandatory `Security {
+virtual_host_key = "<12 base64 chars>"; }` block, which must be identical
+on every server; bots (`+B`/`+S`) keep their configured host. **An
+account never changes the host** -- upstream rewrote it to
+`<account>.<HIDDEN_HOST>` on login and this does not, so logging in
+changes what a user IS called and never what it LOOKS like. **No `SVS*`
+commands**: a command that is one network's policy goes through the
+module API.
 
-**Accounts** (`include/account.h`, `ircd/account.c` + `ircd/account_user.c`,
-proposal 007). An account **is** a nickname, so `+r` keeps its literal meaning
-and there is no mapping to maintain. The core does not know whether a password
-is right: one module registers as the *provider* (`account_register_provider()`,
-the shape of `db_register_driver()` and for the same two reasons) and answers
-`ap_verify()` / `ap_lookup()` later, in the main thread, through
-`account_complete()`. The file is split the way `migration.c` is split from
-`migration_run.c`: `account.c` is the register, the questions in flight and the
-guest-name generator and never dereferences a `struct Client` (unit-tested by
-`account_t`); `account_user.c` applies an answer, which needs the hash tables,
-the nick machinery and the send layer. A question has a deadline
-(`FEAT_ACCOUNT_TIMEOUT`) enforced by a timer of `account.c`'s own, is dropped
-when its client leaves, and is failed when the provider is unloaded still
-owing it. **`ACCOUNT_NICK_UNKNOWN` is not `ACCOUNT_NICK_FREE`** — a lookup that
-could not be answered must never be read as "nobody registered it". Granting
-`+r` and taking the nickname are one act (`account_login()`); `account_logout()`
-undoes both and renames to `guest-<8 base62>` (`FEAT_GUEST_PREFIX`), because a
-client still called `maria` without `+r` is what an onlooker cannot tell from an
-impostor. A guest name that is somehow taken is a KILL, not a retry: eight
-random base-62 characters make it not happen, and a loop around something that
-never runs is code that is never tested. `do_user_mode()`'s `+r`/`+f` gate
-accepts `IsMe(sptr)` so the core can grant what it is the authority for; no
-client is ever `&me` (the client path drops the prefix, and `m_mode.c` gates on
-`IsServer`/`IsServiceBot` first), so nothing off a socket reaches it.
-
-**SASL on the wire** (`ircd/m_authenticate.c`, proposal 007 §4.1). Where
-`sasl.c` (the exchange), `account.c` (the question) and `account_user.c` (the
-grant) meet, and the only place that holds all three. **AUTHENTICATE has no P10
-token on purpose** — every server runs the identity module against the same
-store, so there is nothing to route and no half-open session on the far side of
-a split; what travels is `+r`, which travelled already. The `sasl` capability's
-value is the mechanism list and it is **withdrawn when no provider is
-registered** (`sasl_advertise()`, called from both registers, `CAP NEW`/`CAP
-DEL` doing the announcing). The two ways in differ: a registered client is
-simply logged in, while one authenticating *during* registration cannot be —
-a client that is not a user yet cannot carry a user mode. So the nickname is
-taken immediately (`account_claim_nick()`, so it is introduced to the network
-as itself rather than renamed a moment later), the **900/903 are sent at once**
-(a client waits for 903 before sending `CAP END`, and `CAP END` is what lets
-registration finish — holding the numeric deadlocks both sides), and only the
-`+r` grant waits for `sasl_registered()` at the end of `register_user()`.
-`AR_SASL_PENDING` holds registration meanwhile, one more flag beside ident,
-DNS, CAP and the PING cookie. **A continuation of an exchange is charged bytes
-but not the flat per-command flood penalty** (`sasl_in_progress()` in
-`parse.c`), the same exemption multiline pieces get: a chunked credential would
-otherwise cost its length in chunks times two seconds before the client had
-finished connecting. Starting an exchange *is* charged in full, and
-`SASL_MAX_ATTEMPTS` caps how many times, so the exemption cannot be had free.
-
-**ACCOUNT** (`ircd/m_account.c`, proposal 007 §4.2). `ACCOUNT LOGIN <address>
-<password> [<account>]`, `ACCOUNT LOGOUT`, `ACCOUNT LIST` — SASL for every
-client that does not speak IRCv3, and the same question underneath: the
-credential goes to `sasl_login_request()` in `m_authenticate.c`, which is
-where AUTHENTICATE's go, so there is **one** path from a credential to `+r`.
-What the command decides on its own is only which numerics the client is
-answered in — a client that never negotiated `sasl` is never told about SASL
-(no 903, and failures come back as `ERR_ACCOUNTFAIL` 983 with the reason).
-`LOGIN` works before registration too, behaving like `PASS`. **`LIST` needs
-`cli_user()->email`**, which exists only because this client authenticated
-with it; there is no form that lists somebody else's accounts, because that
-is an enumerator whether or not the answer is filtered. `ACCOUNT` has these
-three subcommands and does not grow: registering an account or changing a
-password is policy, and policy is nickserv's. **Like AUTHENTICATE it has no
-P10 token**, for the same reason plus one more — `AC` is the historical ircu
-account burst, and reusing it would land an old peer's burst on a client
-command. The provider answers a listing through `ap_list()`, which is
-**required**, not optional: a provider that could verify but not list would
-make `LIST` say "not available" on a server where identity works, which is
-the one answer a user cannot tell from an outage. The attempt cap is three
-*consecutive failures*, reset by a success, because switching account is a
-login.
-
-**The identity module** (`modules/services/identity/`, proposal 007 §9.1).
-The provider behind `+r`, and only that: no bot, no commands, not one line
-sent to a user. It owns the schema — `identity` (an address) and `account`
-(a nickname), in `migrations/`, applied with `/MODULE MIGRATION APPLY
-identity` — and answers the three questions `AccountProvider` asks. A
-verification is **one query then one worker**: the row and the candidate
-account come back together, the Argon2 goes to `worker_submit()` (never the
-main thread — with `FEAT_WORKER_THREADS` at 0 it answers
-`ACCOUNT_ERR_UNAVAILABLE` and says so, because hashing here would stop the
-server for a quarter of a second per login), and nothing is revealed about
-the address until the password has been checked — "no such address" and
-"wrong password" are one answer. `ircd_pwhash_outdated()` re-hashes *after*
-the client has been answered, guarded by the hash it replaces so a password
-changed in between is not overwritten. The nickname lookup is
-**cache-then-database**: `nick:<canon>` in Redis, the row in PostgreSQL,
-misses cached too, and a cache that is down, empty or unparseable costs a
-query and nothing else — while a *database* that is down gives
-`ACCOUNT_NICK_UNKNOWN`, never `FREE`. `nick_canon` is `ToLower()`, not
-`lower()`, because `[`/`]`/`\` are IRC capitals; the email is ASCII
-lower-cased, because an address is not a nickname. The pepper comes from
-`$IRCU_PASSWORD_PEPPER`, not the config file. `cert_fingerprint` is what
-SASL EXTERNAL matches on, and matching it *is* the proof, so there is no
-hash to check. **Writing goes through `ap_change()`** — one entry point and
-one `struct AccountChange` for register, password and drop, `DbQuery`'s
-shape and for its reason — and every write is read the row, one Argon2 hop,
-one statement. That statement calls a **SQL function** created by migration
-v2, not SQL this module composes: counting an address's accounts and then
-inserting one is a race between two servers, `db.h` has no transactions
-(a pooled connection is not the caller's to hold), and a statement sent on
-its own runs in an implicit transaction — so `pg_advisory_xact_lock()`
-inside a function called by one statement is held for exactly that
-statement. The locks are taken address-then-nickname, always in that order,
-because the only thing preventing a deadlock is that nobody writes the
-other order. The unique indexes stay, as what catches a hand-written
-`INSERT`. Every successful write `cache_del()`s the nickname rather than
-waiting for the TTL, because the store is shared.
-
-**Mail and verifying an address** (`include/mail.h`, `ircd/mail.c`,
-`doc/readme.mail`, proposal 007 §11.8). Two halves that are not the same
-thing. **Verifying is the core's**, because it is a proof like a password
-is a proof and the answer is the same on every server: the token carries
-what it asserts (`expiry:address`) and an HMAC over it, keyed by a
-derivation of the `Security{}` key with a label of its own — so **nothing
-is stored**, any server recognises what another minted, and there is no
-table of outstanding tokens to keep, expire or leak. The price is that a
-token cannot be revoked before it expires, which is why the window is
-short and why all it grants is "this address is real" — never `+r`.
-**Delivering is a module's**: the core holds the `Mail{}` block and the
-messages in flight and dispatches to one registered provider, the
-`db.h`/`cache.h` arrangement, with `modules/workers/sendmail/` the one
-that ships — it runs the local MTA **on a worker** (fork, exec, write and
-wait all block) and refuses when `FEAT_WORKER_THREADS` is 0, the way the
-identity module refuses to hash. The core applies `Mail{from}` itself so
-a provider cannot forget it, and refuses a newline in an address or a
-subject, which is what would otherwise write somebody else's headers.
-`mail.c` never dereferences a `struct Client` (`mail_t`); composing the
-message — translated, and rationed per connection by `resend_interval` —
-is `m_account.c`'s, which is also where `ACCOUNT VERIFY [<token>]` lives:
-`VERIFY` is a proof and not a policy, so it is the one thing `ACCOUNT`
-grew, and NickServ's `VERIFY` comes back through the same function.
-`ACCOUNT_WRITE_VERIFY` is the one write that carries no password, because
-the core checked the proof before asking.
+**SASL is relayed, never answered** (`include/sasl.h`, `ircd/sasl.c`,
+`ircd/m_sasl.c`, `ircd/m_xreply.c`). One exchange per connection, keyed
+by a routing cookie in `cli_sasl()`, forwarded to the services server as
+`XQ <numnick> sasl:<cookie> :SASL ...` and answered by an `XREPLY` with
+the same prefix (`doc/readme.xquery`). The account in the answer is
+applied by `auth_set_account()` in `s_auth.c`, which parses
+`<account>[:<id>[:<flags>]]` exactly as the burst form does. Three
+**netconf** keys configure it, so the network configures it and not each
+server: `sasl.server`, `sasl.mechanisms`, `sasl.timeout`. The `sasl`
+capability is advertised only while a server name and a mechanism list
+are set *and* a server by that name is linked (`sasl_available()`);
+`/STATS S` lists the exchanges in flight. `FLAG_SASL` marks a
+registration with one under way.
 
 **Signed tokens** (`include/ircd_token.h`, `ircd/ircd_token.c`). What the
 mail verification and the upload ticket are both made of, extracted
@@ -291,71 +179,32 @@ object storage one file's worth of work the day it is wanted. There is
 deliberately no `draft/filehost` tag: a tag is read by clients, and the
 clients are the next phase.
 
-**The grace period** (`modules/services/irc_services/nick_policy.c`,
-proposal 007 §§5–7). What happens to a local client using a registered
-nickname it has not proved is its own: NickServ warns it, sets `+f`, and
-renames it to `guest-*` when the grace period (`"grace_period"` in the
-`Service{}` block, 60s by default) runs out. It is a grace period and not a
-veto because the answer comes from a database and neither registration nor
-a nick change can be held waiting for one. **It lives inside
-`irc_services`, not in a module of its own** — that module already creates
-the bot the `Service { type = "nickserv"; }` block declares, and a second
-module creating a bot for the same block is a collision, not a layer.
-Three things lift a freeze, and the first is the core's: `do_user_mode()`
-clears `+f` in the same mode change that grants `+r`, so *every* path in
-(SASL, `ACCOUNT`, `/msg NickServ IDENTIFY`) lifts it without having to
-remember to. The other two are the deadline and a change to an
-unregistered nick. **The hold is advisory and the deadline is where it is
-checked**: identifying under the nickname already in use produces no nick
-change to hang an event on, so the condition is re-tested where it
-matters. **`ACCOUNT_NICK_UNKNOWN` is acted on, never ignored**: at
-registration the client comes in as `guest-*`, at a nick change it is put
-back under the name it had (which grants it nothing new) — but **none of
-this runs with no provider registered**, because §7 is about a service
-that failed, not a network without accounts. When the provider is unloaded
-with people still frozen, `account_provider_gone()` renames them all:
-unfreezing them in place would leave a possible impostor holding the name
-with nobody watching. `/msg NickServ IDENTIFY` hands its credential to
-`sasl_login_request()` like everything else, and defaults the account to
-the nickname in use when the client is frozen, since that is the one it is
-being asked to prove; `svc_dispatch()` wipes its copy of every line on
-every way out, so a command that carries a password cannot forget to.
-`REGISTER <address> <password>` takes the nickname **in use** (an account
-is a nickname, so registering one you are not wearing is registering a name
-you have not shown you can hold) and logs the client in on the spot with
-`account_login()` — the password was just checked or just set, so asking
-again would be ceremony; `PASSWORD <old> <new>` and `DROP <password>` need
-`cli_user()->email`, and a drop ends with `account_logout()`, because a
-`+r` to an account that no longer exists is not a state the model defines.
-`"max_accounts"` rides in the request as `ach_max`: the limit is the
-service's policy, but enforcing it has to happen inside the lock.
-
 **Never `timer_add(timer_init(&t), …)` from inside `t`'s own callback.**
 `timer_init()` zeroes the generator's flags, `GEN_MARKED` among them, and
 that flag is the only thing telling `timer_add()` it is re-arming a timer
 `timer_run()` still holds — without it the timer is queued twice and the
 server dies later on an event for a generator that is no longer active.
 Every deadline timer here re-arms from inside its own expiry (a callback
-starts new work), so `account.c`, `cache.c`, `hooks.c` and `nick_policy.c`
-all `timer_init()` once and `timer_add()` the same struct thereafter, the
-way `check_pings()` does.
+starts new work), so `cache.c`, `hooks.c` and `sasl.c` all `timer_init()`
+once and `timer_add()` the same struct thereafter, the way
+`check_pings()` does.
 
-**Identity: two pieces of core state** (proposal 007). `cli_user()->email` is the
-address a client authenticated with: **local and only local** — it never
-crosses P10 (a remote user has `NULL`, which is this server saying it does not
-know), `WHOIS` reports it with 691 **only to the user themselves**, not even to
-an operator, and it is released together with `+r` in `do_user_mode()`, because
-an identification without its address is a state the model does not define.
-Set it with `user_set_email()`, never by hand. Umode **`+f` (freeze)** marks a
-client carrying a registered nick it has not proved is its own: it is a core
-mode only a server or a `+S` bot may set, restored in both directions for
-anyone else by the same gate that guards `+r`, shown in `WHOIS` as 692, and
-enforced in `parse_dispatch()` — the one place both dispatch paths meet and
-past the point the parameters are laid out. What a frozen client may still send
-is declared by each command with `MFLG_FROZEN_OK` in `msgtab[]` rather than
-listed in `parse.c`, so a module's command can declare it too; `PRIVMSG` and
-`NOTICE` carry the flag but are narrowed to a single local `+S` target, since
-what the state must allow is talking to the service that will lift it.
+**Umode `+f`, the freeze** (`include/user_flags.h`, `ircd/parse.c`). Marks
+a client the services are holding while they work out whether it may keep
+the nickname it is wearing. It is a core mode only a server or a `+S` bot
+may set, restored in both directions for anyone else by the same gate that
+guards `+r`, shown in `WHOIS` as 692, and enforced in `parse_dispatch()` —
+the one place both dispatch paths meet and past the point the parameters
+are laid out. What a frozen client may still send is declared by each
+command with `MFLG_FROZEN_OK` in `msgtab[]` rather than listed in
+`parse.c`, so a module's command can declare it too; `PRIVMSG` and
+`NOTICE` carry the flag but are narrowed to a single local `+S` target,
+since what the state must allow is talking to the service that will lift
+it. **An account lifts it** — both `ms_account()` and the `+r` case in
+`do_user_mode()` clear it, because an account is exactly the proof `+f`
+says is missing — and so does a `-f` from a server or a bot. What happens
+*after* the freeze (a grace period, a rename, a KILL) is the services
+node's policy and not this server's.
 
 **History** (`modules/services/history/`, `doc/readme.history`, proposal 006
 §7.1). What was said, kept, on PostgreSQL through `db.h` — phase 2. It
@@ -561,6 +410,44 @@ and refusing a name found under two. `Module { name = "nocaps"; };` and
 directory (`modules/hooks/nocaps.so`), never the absolute one. A module reaches
 its resources through `module_dir()`.
 
+**The module set is the network's** (`include/module_sync.h`,
+`ircd/module_sync.c`, `doc/readme.modules`). A module changes what the
+server does with what arrives on a link, so **every server runs exactly
+the same modules for the whole time it is on the network** — and the
+difference, when there is one, shows up as a desync rather than an error,
+which is why it is enforced rather than documented. Two halves. **A link
+whose sets differ is refused**: `modsync_announce()` sends the digest
+(`module_set_digest()`, SHA-256 over the modules sorted by name, each with
+its *version* — two versions of a module are two modules; isolation is
+not in it, being about failure and not behaviour) as the first thing after
+the SERVER line, each side compares and each drops the link by itself, and
+a peer that never says is refused at its `END_OF_BURST` because a set that
+could not be compared is not one that matched. **Loading is a transaction
+over every server**: `/MODULE LOAD|UNLOAD|RELOAD` makes the operator's
+server a coordinator, everybody prepares, and **one failure anywhere
+abandons it everywhere** — `FEAT_MODULE_SYNC_TIMEOUT`, and a server that
+splits before answering counts as a failure, since it would come back
+without the change. Preparing a load *is* the load (nothing short of
+`dlopen()` and `mi_init` can say whether it will work), so an abort
+unloads; an unload does nothing until the commit, because it cannot be
+taken back; a reload converges on the module being **gone** everywhere
+when one server fails, since half a network running it is worse than none.
+One transaction at a time, network-wide: a server asked while busy refuses,
+which aborts the newcomer. The `Module{}` blocks are the server's own file
+and a rehash is **not** propagated — it is *detected*, by re-announcing the
+digest and dropping the links that no longer match. An announcement that
+arrives mid-transaction is ignored, not acted on: that is exactly the
+window in which two servers legitimately disagree. `FEAT_MODULE_SYNC`
+turns it off for one server and not for its peers, who still refuse the
+link.
+
+**Reading the config is not the same as acting on it.** The parser only
+*records* `Module{}` blocks (`conf_add_module_node()`); `module_load_configured()`
+acts on them, at start-up and at the end of every rehash, before
+`module_sweep()` — and `module_sweep()` does not run at all after a parse
+error, because the blocks past the error were never seen and every one of
+them would look like a module the operator had dropped.
+
 **Isolated modules** (`include/modhost.h`, `ircd/modhost.c`,
 `ircd/modhost/`, `doc/readme.isolation`, proposal 006 §7.7). `Module {
 name = "x"; isolation = "process"; }` runs a module in a host process of
@@ -734,8 +621,8 @@ after `worker_shutdown()` there is single-threaded again, and the modules
 are still unloaded where they always were, after the event loop, with
 their workers already gone — which the worker API allows for.
 
-**Cache** (`include/cache.h`, `ircd/cache.c`, `doc/readme.cache`, proposal 007
-§3.3). A key-value store in front of the database, with the `Database{}`
+**Cache** (`include/cache.h`, `ircd/cache.c`, `doc/readme.cache`). A
+key-value store in front of the database, with the `Database{}`
 arrangement exactly: the core holds the `Redis{}` block and the calls in
 flight and dispatches to one registered driver — a module —
 `modules/workers/redis/` being it (hiredis, one dedicated worker per pooled
@@ -773,6 +660,18 @@ may take. Each migration is one transaction (script + its `migrations` row),
 runs on its own connection off the pool, and gets `migration_timeout` rather
 than the 5s query cap.
 
+**A bot a module creates exists on every server** (`doc/readme.services`).
+Every server runs the same module set, so a module that introduces
+NickServ introduces it once per server and the copies collide, for ever.
+There is no mechanism in the core that hides one: `bot_create()` makes a
+real client, bursted like any other. A module that wants one bot per
+*network* has to arrange that itself — introduce it only where a
+configured name matches this server, or only on the server the operator
+ran `/BOT` on. The `irc_services` module, which used a non-propagating
+local bot per server with its `Service{}` blocks published over netconf,
+is gone: the network's services are a separate program on a link of
+their own (`doc/readme.accounting`).
+
 **Bots and services** (`include/bot.h`, `ircd/bot.c`, `doc/readme.services`).
 A bot is a `struct Client` the server introduces on its own behalf
 (`make_client(&me, ...)`, no connection); `bot_create()` takes the owning
@@ -781,24 +680,18 @@ module, and unloading a module destroys its bots. `BOT_SERVICE` makes a
 `+k`, `+o` and `+B`; `+B` and `+S` are core modes only a server may set —
 `set_user_mode()` undoes both directions for any local client, opers included.
 A service bot may change any non-oper's modes through `bot_set_user_mode()`
-(what a user may set on itself, plus `+r`/`-r`). The relay layer (`ircd/ircd_relay.c`)
+(what a user may set on itself; `+r` reaches the gate in `do_user_mode()`
+only from a bot on the far side of a link, since that one asks for a
+server source). The relay layer (`ircd/ircd_relay.c`)
 never delivers to a local service bot; it calls `bot_deliver_private()` /
 `bot_deliver_channel()`, which run `HOOK_MESSAGE_RECEIVED` (sender local or
 remote, PRIVMSG or NOTICE, `hc_notice` says which; channel messages once per
-service bot on the channel). `Service{}` blocks (`struct ServiceConf`,
-`conf_service_list()`) declare the bots; `modules/services/irc_services/`
-creates them on `HOOK_CONFIG_LOADED` (fires after start-up and after each
-rehash — `mi_init`/`mi_rehash` run mid-parse and must not read config
-lists), reconciles them on rehash, and brings one back after a KILL or
-collision. `modules/commands/m_bot/` is only the `/BOT` front end. Past the
-six fields the grammar knows, a `Service{}` block takes **free-form options**
-— `"max_accounts" = 3;`, a quoted name and a string or number — kept verbatim
-by the core and read by the module implementing the type
-(`conf_find_service_type()`, `conf_service_option()`,
-`conf_service_option_int()`, which returns its default for an absent *or*
-unreadable value). That is where a service's own settings live: there is no
-`NickServ{}` block and no keyword per option, because a block per service
-would mean a lexer keyword for everything any service ever grows.
+service bot on the channel). `modules/commands/m_bot/` is the `/BOT` front
+end and the reference for the API. There is no `Service{}` block any more:
+the network's services are a separate program, so a bot here is whatever a
+module wants one for, and a module that reads configuration lists does it
+from `HOOK_CONFIG_LOADED` (fires after start-up and after each rehash —
+`mi_init`/`mi_rehash` run mid-parse and must not read config lists).
 
 **Translations** (`include/ircd_i18n.h`, `ircd/ircd_i18n.c`, `ircd/ircd_po.c`,
 `ircd/m_language.c`, `doc/readme.translations`, proposal 005). Plain GNU PO
@@ -958,23 +851,12 @@ port. `bun test` needs no server; `packages/client/test/live.ts` needs
 one and is not part of it — it is what found both halves of the multiline
 bug, which no fake transport could have.
 
-**SASL** (`include/sasl.h`, `ircd/sasl.c`, proposal 007). The *shape* of an
-authentication, never the answer: it turns the AUTHENTICATE lines a client
-sends into a credential — an authcid (the email), an authzid (which of that
-email's accounts) and a secret — and stops there. Whether the credential is
-good belongs to the identity module, because the exchange is the same on every
-server and the answer is not. The mechanisms are a run-time register, the same
-shape as `capab.c` and the mode registers, sorted by name so the advertised
-`sasl=` value does not depend on module load order; the core brings `PLAIN`
-(`SASL_MECH_NEEDS_TLS` — it sends the password in the clear) and `EXTERNAL`
-(the credential is the certificate fingerprint the server already has), and a
-module adds its own with `module_add_sasl_mechanism()`. `sasl.c` knows nothing
-about a `struct Client` or a socket — the caller copies the TLS flag and the
-fingerprint into the session before starting it — which is what lets the whole
-state machine be unit-tested (`sasl_t`), the same split as `migration.c`
-against `migration_run.c`. The 400-character chunking, `+` and `*` live here
-too. A session holds a password, so `sasl_session_clear()` wipes rather than
-frees and every way out goes through it.
+**SASL** (`include/sasl.h`, `ircd/sasl.c`). The *shape* of an exchange and
+the routing, never the answer: the AUTHENTICATE lines become an `XQUERY`
+to the services server and the `XREPLY` comes back through
+`m_xreply.c`'s `sasl:` prefix. See **SASL is relayed, never answered**
+above. A session holds a password, so every way out wipes it rather than
+just freeing it.
 
 **Base64** (`include/ircd_base64.h`, `ircd/ircd_base64.c`). RFC 4648, the
 standard alphabet — not the P10 one in `numnicks.h`, which avoids `+` and `/`
@@ -1075,26 +957,26 @@ not a subsystem design but the roadmap for turning this into a unified
 communications server: read it before starting anything that belongs to one of
 its phases, and **read what it says about a phase against what is in the tree**
 — each finished phase has been written back into it, including where the
-implementation decided otherwise. Phases 0 (foundations), 1 (identity),
-2 (history), 3–4 (conversation and rich text), 5 (HTTP and files) and 7
-(module isolation, which is `modhost`) are done. What is left is 6 — web and
+implementation decided otherwise. Phases 0 (foundations), 2 (history),
+3–4 (conversation and rich text), 5 (HTTP and files) and 7 (module
+isolation, which is `modhost`) are done. What is left is 6 — web and
 mobile clients, of which the SDK is the half that lives here — and §7.5,
 voice and video, deferred on purpose and with no dependencies in either
-direction.  `007` (in Spanish,
-revision 2) is that roadmap's phase 1, the identity model —
-SASL, `ACCOUNT`, an account that *is* a nickname, the `guest-*` rename, the
-freeze, Redis in front of PostgreSQL, and the split between the `identity`
-module (the mechanism) and `nickserv` (the policy and the voice); §11 has its
-slices in order. Other useful docs:
-`doc/p10.html` (protocol), `doc/readme.accounting` (the identity model),
-`doc/readme.sasl` (how a user earns `+r`: AUTHENTICATE, `ACCOUNT`, NickServ
-and the provider behind all three), `doc/readme.modules`,
+direction.  `007` (in Spanish, revision 2) was that roadmap's phase 1 —
+an account that *is* a nickname, an identity module inside the server,
+NickServ as a module, the `guest-*` rename, mail — and it is **reverted**:
+the file is kept as the record of a design that was built and then taken
+back out, and nothing in it describes the tree. The accounting model is
+the classic ircu one; read `doc/readme.accounting` instead.
+Other useful docs:
+`doc/p10.html` (protocol), `doc/readme.accounting` (the account and the
+hidden host), `doc/readme.services` (bots, `+S`, `+B`),
+`doc/readme.xquery` (how SASL reaches the services), `doc/readme.modules`,
 `doc/readme.workers`,
 `doc/readme.database`, `doc/readme.http`, `doc/readme.files`,
 `doc/readme.isolation`,
 `doc/readme.migrations`, `doc/readme.history`,
 `doc/readme.richtext`, `doc/readme.translations`, `doc/readme.sdk`,
-`doc/readme.mail`,
 `doc/features.txt`, `doc/api/` (subsystem notes; `Doxyfile` at the root
 generates reference docs).
 

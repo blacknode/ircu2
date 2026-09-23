@@ -57,7 +57,7 @@ extern struct ModuleHandle* file_mod;
 /** One row, as much of it as anything here needs. */
 struct FileRow {
   char   fr_id[FILE_ID_LEN + 1];
-  char   fr_account[NICKLEN + 1];
+  char   fr_account[ACCOUNTLEN + 1];
   char   fr_target[CHANNELLEN + 1];
   char   fr_name[FILE_NAME_MAX + 1];
   char   fr_type[HTTP_HVALUE_MAX + 1];

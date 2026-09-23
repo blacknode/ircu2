@@ -115,11 +115,8 @@ enum Feature {
 
   /* Modules (see doc/readme.modules) */
   FEAT_HOOK_TIMEOUT,
-
-  /* Accounts (see doc/proposals/007-identidad.md) */
-  FEAT_ACCOUNT_TIMEOUT,
-  FEAT_ACCOUNT_REQUIRE_TLS,
-  FEAT_GUEST_PREFIX,
+  FEAT_MODULE_SYNC,
+  FEAT_MODULE_SYNC_TIMEOUT,
 
   /* History (see doc/proposals/006-comunicaciones-unificadas.md 7.1) */
   FEAT_HISTORY_RETENTION,
@@ -159,6 +156,8 @@ enum Feature {
   FEAT_CAP_LABELEDRESPONSE,
   FEAT_CAP_MULTILINE,
   FEAT_CAP_SASL,
+  FEAT_CAP_ACCOUNTNOTIFY,
+  FEAT_CAP_EXTJOIN,
   FEAT_CAP_STANDARDREPLIES,
 
   /* Translations (see doc/readme.translations) */
@@ -199,6 +198,7 @@ enum Feature {
   FEAT_HIS_STATS_q,
   FEAT_HIS_STATS_r,
   FEAT_HIS_STATS_R,
+  FEAT_HIS_STATS_S,
   FEAT_HIS_STATS_s,
   FEAT_HIS_STATS_t,
   FEAT_HIS_STATS_T,

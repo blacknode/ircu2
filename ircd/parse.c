@@ -505,7 +505,7 @@ struct Message msgtab[] = {
     TOK_MODULE,
     0, MAXPARA, MFLG_SLOW, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_unregistered, m_module, m_ignore, mo_module, m_ignore }
+    { m_unregistered, m_module, ms_module, mo_module, m_ignore }
   },
   {
     MSG_MOTD,
@@ -695,14 +695,14 @@ struct Message msgtab[] = {
     TOK_AUTHENTICATE,
     0, MAXPARA, MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_authenticate, m_authenticate, m_ignore, m_authenticate, m_ignore }
+    { m_sasl, m_sasl, m_ignore, m_sasl, m_ignore }
   },
   {
     MSG_ACCOUNT,
     TOK_ACCOUNT,
     0, MAXPARA, MFLG_UNREG | MFLG_FROZEN_OK, 0, NULL,
     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-    { m_account, m_account, m_ignore, m_account, m_ignore }
+    { m_ignore, m_ignore, ms_account, m_ignore, m_ignore }
   },
   /* This command is an alias for QUIT during the unregistered part of
    * of the server.  This is because someone jumping via a broken web
@@ -1361,7 +1361,7 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
      * an exchange is charged in full, and there are only so many of those
      * (SASL_MAX_ATTEMPTS), so the exemption cannot be had for free.
      */
-    if (multiline_in_progress(cptr) || sasl_in_progress(cptr))
+    if (multiline_in_progress(cptr))
       cli_since(cptr) += (i / 120 + tag_len / 512);
     else
       cli_since(cptr) += (2 + i / 120 + tag_len / 512);

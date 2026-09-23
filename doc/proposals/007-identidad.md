@@ -1,6 +1,18 @@
 # Propuesta 007 — Identidad: SASL, `ACCOUNT` y el modelo de cuentas
 
-**Estado:** propuesta, revisión 2 (aprobada con correcciones).
+**Estado:** REVERTIDA (2026-09-23).  Se implementó completa y después se
+retiró del árbol: el accounting volvió al modelo clásico de ircu, en el que
+una cuenta **no** es un nick y el ciclo de vida lo lleva el nodo que aloja
+los bots de servicio, no el ircd.  Se conservan de esta propuesta el `+x`
+obligatorio, el vhost por TEA, el modo `+f` y la capa SASL (que ahora sólo
+retransmite el intercambio al nodo de servicios por `XQUERY`).  Desaparecen
+`account.c`/`account_user.c`, `mail.c`, el módulo `identity`, el módulo
+`sendmail`, `irc_services` y los bloques `Service{}` y `Mail{}`.  Este
+documento se deja como registro de un diseño que se construyó y se deshizo;
+**nada de lo que sigue describe el árbol**.  Lo que sí lo describe es
+`doc/readme.accounting`.
+
+**Estado original:** propuesta, revisión 2 (aprobada con correcciones).
 **Es la fase 1 de la 006** (§6), que dejó tomadas las decisiones de fondo; esto
 las convierte en un diseño con el que se puede escribir código.
 **Depende de:** 001 (API de módulos), 006 §5.1 (capacidades dinámicas),

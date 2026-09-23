@@ -14,6 +14,7 @@
 struct Client;
 struct ModuleHandle;
 
+#include "ircd_netconf.h"
 #include "s_conf.h"
 #include "msg.h"
 #include "parse.h"
@@ -171,11 +172,9 @@ const char* feature_str(enum Feature feat)
   return "";
 }
 
-/* account.c is linked in whole, so that module_add_account_provider()
- * registers into the register the server uses.  What it reaches for is
- * the server's randomness, for a guest nickname these tests never ask
- * for; a constant is enough to link, and account_t is where the generator
- * is actually checked.
+/* The server's randomness, which something linked in here reaches for.
+ * These tests never look at what it returns, so a constant is enough to
+ * link.
  */
 unsigned int ircrandom(void)
 {
@@ -227,4 +226,28 @@ const char* visible_username(const struct Client* cptr)
 void bot_drop_module(struct ModuleHandle* mod)
 {
   (void) mod;
+}
+
+/** Stubs for the network configuration a module may follow.
+ *
+ * ircd_netconf.c is the key-value store the whole network shares, and it
+ * reaches the other servers through send.c; no fixture module registers a
+ * callback, so nothing here is ever called with anything to do.
+ */
+void config_register_callback_owned(const char *key_prefix,
+                                    config_callback_f callback, void *owner)
+{
+  (void) key_prefix;
+  (void) callback;
+  (void) owner;
+}
+
+void config_unregister_callback(const char *key_prefix)
+{
+  (void) key_prefix;
+}
+
+void config_unregister_owner(void *owner)
+{
+  (void) owner;
 }

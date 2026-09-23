@@ -326,10 +326,10 @@ released when it ends, server crash included.  The locking then lives
 beside the tables it protects, in the same migration, rather than in C
 that has to remember to take the locks in the same order every time.
 
-modules/services/identity/migrations/v2_account_writes.up.sql is the
-worked example: counting an address's accounts and then inserting one is a
-race the moment there are two servers, and the count and the insert are
-one function call.
+The worked example is any write that has to read before it writes:
+counting something and then inserting one more is a race the moment
+there are two servers, and the count and the insert belong in one
+function call.
 
 
 MIGRATIONS

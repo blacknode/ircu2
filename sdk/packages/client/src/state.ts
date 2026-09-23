@@ -3,13 +3,12 @@
  *
  * Plain data with no I/O: `Client` feeds it lines and the UI reads it.
  *
- * The one thing worth stating twice, because every IRC SDK ever written
- * gets it wrong for this server: **an account is a nickname.**  There is
- * no account name, no account id, no mapping to keep.  `+r` means "this
- * person has proved the nickname they are wearing", and when it is set
- * the account *is* `nick`.  Modelling them separately would be modelling
- * a server that does not exist -- and it is why there is no `account`
- * field on `User` below.
+ * The one thing worth stating twice: **an account is not a nickname.**
+ * The network's services keep the accounts, and they say which one a
+ * user is logged in to; the nickname is what that user happens to be
+ * wearing.  So `account` and `nick` are two fields, a nick change
+ * leaves both alone, and a UI that wants to say "this really is maria"
+ * has to show the account rather than the prefix.
  */
 
 /** Somebody on the network. */
@@ -18,16 +17,22 @@ export interface User {
   user?: string;
   host?: string;
   realname?: string;
-  /** They have proved this nickname is theirs (umode `+r`).
+  /** They are logged in to an account (umode `+r`).
    *
-   * Which means: when this is true, the account is `nick`.  When it is
-   * false, the nickname is just a nickname somebody is wearing, and an
-   * onlooker cannot tell it from an impostor -- which is precisely why
-   * the server renames an unproven claim to `guest-*` rather than
-   * letting it sit.
+   * When it is false, the nickname is just a nickname somebody is
+   * wearing and an onlooker cannot tell it from an impostor.
    */
   identified: boolean;
-  /** Carrying a registered nickname they have not proved (umode `+f`).
+  /** The account they are logged in to, when {@link identified}.
+   *
+   * At most twelve characters, and not the nickname: a person may wear
+   * any nick while logged in to `maria`.  It arrives on an `ACCOUNT`
+   * (account-notify), on a `JOIN` (extended-join), or from `WHOIS` 330
+   * and `WHO %a` when neither capability is in force.
+   */
+  account?: string;
+  /** Held by the services while they work out whether this person may
+   * keep the nickname they are wearing (umode `+f`).
    *
    * A frozen client may send almost nothing -- the server allows only
    * what each command declares with `MFLG_FROZEN_OK`, narrowed to
@@ -112,23 +117,17 @@ export interface StoredMessage {
 
 /** Everything one connection knows. */
 export class NetworkState {
-  /** This connection's own nickname, which is also its account when
-   * {@link identified} is true. */
+  /** This connection's own nickname. */
   nick = '';
 
-  /** We have proved the nickname (umode `+r`). */
+  /** We are logged in to an account (umode `+r`). */
   identified = false;
+
+  /** The account we are logged in to, when {@link identified}. */
+  account: string | undefined;
 
   /** We are frozen (umode `+f`). */
   frozen = false;
-
-  /** The address we authenticated with.
-   *
-   * Local to this connection on the server too: it never crosses a
-   * server link, and `WHOIS` shows it only to the person themselves --
-   * not even to an operator.
-   */
-  email: string | undefined;
 
   /** Our own user modes, as letters. */
   readonly modes = new Set<string>();
@@ -231,11 +230,9 @@ export class NetworkState {
     this.users.delete(oldKey);
 
     if (user) {
+      // The account is left alone: it is not the nickname, and nothing
+      // about changing one says anything about the other.
       user.nick = to;
-      // A nick change clears `+r` on every server without anything on
-      // the wire: the account *is* the nickname, so changing the
-      // nickname is leaving the account.
-      user.identified = false;
       this.users.set(NetworkState.fold(to), user);
     }
 
@@ -248,10 +245,7 @@ export class NetworkState {
       channel.members.set(NetworkState.fold(to), { ...member, nick: to });
     }
 
-    if (NetworkState.fold(this.nick) === oldKey) {
-      this.nick = to;
-      this.identified = false;
-    }
+    if (NetworkState.fold(this.nick) === oldKey) this.nick = to;
   }
 
   /** Somebody left the network. */
@@ -346,8 +340,8 @@ export class NetworkState {
     this.modes.clear();
     this.isupport.clear();
     this.identified = false;
+    this.account = undefined;
     this.frozen = false;
-    this.email = undefined;
     // Messages and read markers are *not* cleared: they are what the
     // user was reading a moment ago, and a reconnection is not a reason
     // to blank the screen.

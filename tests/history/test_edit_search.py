@@ -6,7 +6,7 @@ live in the history module because neither can be done by a server that
 kept nothing.  You cannot search what nobody stored and you cannot edit
 it either.
 
-The topology is the identity one, for the reason the rest of history/ is:
+The topology is the store one, for the reason the rest of history/ is:
 an edit is allowed only to the author, and the only durable name for an
 author is the account they proved.
 
@@ -28,7 +28,7 @@ from history.test_history import (  # noqa: F401  (pytest fixtures)
     schema,
 )
 
-pytestmark = pytest.mark.identity
+pytestmark = pytest.mark.store
 
 #: What these tests negotiate on top of what test_history.py asks for.
 CAPS = [
@@ -47,24 +47,26 @@ async def _client(hub, nick):
     return await _connect(hub, nick, caps=CAPS)
 
 
-async def _identified(hub, nick):
-    """A client that has proved its nickname, with our capabilities."""
+async def _identified(hub, services, nick):
+    """A client the services have vouched for, with our capabilities.
+
+    The account comes from an ACCOUNT out of the U:lined server, which is
+    the only way one ever arrives (doc/readme.accounting).
+    """
     client = await _client(hub, nick)
-    await client.send(f"PRIVMSG NickServ :REGISTER {nick}@example.org "
-                      "hunter2hunter2")
+    await services.send_register(nick, account=nick)
 
     loop = asyncio.get_event_loop()
     deadline = loop.time() + 15
     while loop.time() < deadline:
-        try:
-            msg = await client.recv(timeout=1.0)
-        except (asyncio.TimeoutError, TimeoutError):
-            continue
-        if msg.command == "MODE" and "r" in msg.params[-1]:
+        await client.send(f"MODE {nick}")
+        msg = await client.wait_for("221", timeout=3.0)
+        if "r" in msg.params[-1]:
             await _drain(client)
             return client
+        await asyncio.sleep(0.3)
 
-    raise AssertionError(f"{nick} never got +r")
+    raise AssertionError(f"{nick} never got an account")
 
 
 async def _wait_for(client, *commands, timeout=10.0):
@@ -96,10 +98,10 @@ async def _say(client, target, text):
 # --------------------------------------------------------------------- #
 
 
-async def test_search_finds_one_message_in_a_channel(schema, ircd_identity):
+async def test_search_finds_one_message_in_a_channel(schema, ircd_store):
     """The word, and only the message that has it."""
     chan = f"#srch1{TAG}"
-    speaker = await _client(ircd_identity, f"ssp1{TAG}")
+    speaker = await _client(ircd_store, f"ssp1{TAG}")
     await speaker.send(f"JOIN {chan}")
     await _drain(speaker)
 
@@ -119,7 +121,7 @@ async def test_search_finds_one_message_in_a_channel(schema, ircd_identity):
     await speaker.disconnect()
 
 
-async def test_search_reaches_only_what_you_may_read(schema, ircd_identity):
+async def test_search_reaches_only_what_you_may_read(schema, ircd_store):
     """A channel you are not on is not searched, and is not an error.
 
     Being told "no results" and being told "you may not" are the same
@@ -129,12 +131,12 @@ async def test_search_reaches_only_what_you_may_read(schema, ircd_identity):
     chan = f"#srch2{TAG}"
     other = f"#srch3{TAG}"
 
-    speaker = await _client(ircd_identity, f"ssp2{TAG}")
+    speaker = await _client(ircd_store, f"ssp2{TAG}")
     await speaker.send(f"JOIN {chan}")
     await _drain(speaker)
     await _say(speaker, chan, "the aardvark has escaped")
 
-    stranger = await _client(ircd_identity, f"ssp3{TAG}")
+    stranger = await _client(ircd_store, f"ssp3{TAG}")
     await stranger.send(f"JOIN {other}")
     await _drain(stranger)
     await asyncio.sleep(2)
@@ -152,11 +154,11 @@ async def test_search_reaches_only_what_you_may_read(schema, ircd_identity):
 
 
 async def test_search_everywhere_covers_channels_and_conversations(
-        schema, ircd_identity):
+        schema, ircd_store, store_services):
     """`*` is every place this client may look, which is both kinds."""
     chan = f"#srch4{TAG}"
-    a = await _identified(ircd_identity, f"ssa{TAG}")
-    b = await _identified(ircd_identity, f"ssb{TAG}")
+    a = await _identified(ircd_store, store_services, f"ssa{TAG}")
+    b = await _identified(ircd_store, store_services, f"ssb{TAG}")
 
     await a.send(f"JOIN {chan}")
     await _drain(a)
@@ -181,11 +183,11 @@ async def test_search_everywhere_covers_channels_and_conversations(
     await b.disconnect()
 
 
-async def test_search_can_be_narrowed(schema, ircd_identity):
+async def test_search_can_be_narrowed(schema, ircd_store, store_services):
     """from= and limit= are filters on the same query."""
     chan = f"#srch5{TAG}"
-    a = await _identified(ircd_identity, f"ssc{TAG}")
-    b = await _identified(ircd_identity, f"ssd{TAG}")
+    a = await _identified(ircd_store, store_services, f"ssc{TAG}")
+    b = await _identified(ircd_store, store_services, f"ssd{TAG}")
 
     for client in (a, b):
         await client.send(f"JOIN {chan}")
@@ -208,9 +210,9 @@ async def test_search_can_be_narrowed(schema, ircd_identity):
     await b.disconnect()
 
 
-async def test_a_search_with_no_text_is_refused(schema, ircd_identity):
+async def test_a_search_with_no_text_is_refused(schema, ircd_store):
     """And so is an option the command does not know."""
-    client = await _client(ircd_identity, f"sse{TAG}")
+    client = await _client(ircd_store, f"sse{TAG}")
     await client.send(f"JOIN #srch6{TAG}")
     await _drain(client)
 
@@ -231,14 +233,14 @@ async def test_a_search_with_no_text_is_refused(schema, ircd_identity):
 
 
 async def test_a_search_that_is_not_an_expression_still_answers(
-        schema, ircd_identity):
+        schema, ircd_store):
     """What arrives is what somebody typed, brackets and apostrophes and all.
 
     to_tsquery() raises an error on any of that; websearch_to_tsquery()
     takes prose, which is what a box somebody types into needs.
     """
     chan = f"#srch7{TAG}"
-    client = await _client(ircd_identity, f"ssf{TAG}")
+    client = await _client(ircd_store, f"ssf{TAG}")
     await client.send(f"JOIN {chan}")
     await _drain(client)
     await _say(client, chan, "it is what it is")
@@ -258,11 +260,11 @@ async def test_a_search_that_is_not_an_expression_still_answers(
 
 
 async def test_an_edit_changes_the_message_and_keeps_its_name(
-        schema, ircd_identity):
+        schema, ircd_store, store_services):
     """The channel is told, and the store now says the new thing."""
     chan = f"#edit1{TAG}"
-    author = await _identified(ircd_identity, f"eda{TAG}")
-    watcher = await _identified(ircd_identity, f"edb{TAG}")
+    author = await _identified(ircd_store, store_services, f"eda{TAG}")
+    watcher = await _identified(ircd_store, store_services, f"edb{TAG}")
 
     for client in (author, watcher):
         await client.send(f"JOIN {chan}")
@@ -297,11 +299,11 @@ async def test_an_edit_changes_the_message_and_keeps_its_name(
     await watcher.disconnect()
 
 
-async def test_only_the_author_may_edit(schema, ircd_identity):
+async def test_only_the_author_may_edit(schema, ircd_store, store_services):
     """Not a channel operator, who may redact instead."""
     chan = f"#edit2{TAG}"
-    author = await _identified(ircd_identity, f"edc{TAG}")
-    op = await _identified(ircd_identity, f"edd{TAG}")
+    author = await _identified(ircd_store, store_services, f"edc{TAG}")
+    op = await _identified(ircd_store, store_services, f"edd{TAG}")
 
     # The operator joins first, so the channel is theirs.
     await op.send(f"JOIN {chan}")
@@ -323,10 +325,10 @@ async def test_only_the_author_may_edit(schema, ircd_identity):
     await op.disconnect()
 
 
-async def test_an_empty_edit_is_not_a_deletion(schema, ircd_identity):
+async def test_an_empty_edit_is_not_a_deletion(schema, ircd_store, store_services):
     """There is a command for that, and this is not it."""
     chan = f"#edit3{TAG}"
-    author = await _identified(ircd_identity, f"ede{TAG}")
+    author = await _identified(ircd_store, store_services, f"ede{TAG}")
     await author.send(f"JOIN {chan}")
     await _drain(author)
 
@@ -342,12 +344,12 @@ async def test_an_empty_edit_is_not_a_deletion(schema, ircd_identity):
     await author.disconnect()
 
 
-async def test_editing_a_message_that_is_not_there(schema, ircd_identity):
+async def test_editing_a_message_that_is_not_there(schema, ircd_store, store_services):
     """A name nobody has heard of, and the right message named in the
     wrong place."""
     chan = f"#edit4{TAG}"
     other = f"#edit5{TAG}"
-    author = await _identified(ircd_identity, f"edf{TAG}")
+    author = await _identified(ircd_store, store_services, f"edf{TAG}")
 
     for name in (chan, other):
         await author.send(f"JOIN {name}")

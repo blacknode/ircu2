@@ -418,8 +418,8 @@ struct HistCell {
   char hc_target[CHANNELLEN + 1];
   char hc_prefix[NICKLEN + USERLEN + HOSTLEN + 3];
   char hc_body[BUFSIZE];
-  char hc_from[NICKLEN + 1];
-  char hc_to[NICKLEN + 1];
+  char hc_from[ACCOUNTLEN + 1];
+  char hc_to[ACCOUNTLEN + 1];
   char hc_reply[MSGIDLEN + 1];
   char hc_edited[40];
 };
@@ -798,7 +798,7 @@ int hist_store_read(const struct HistQuery* q, HistReadFn cb, void* user)
 
 /** One export in flight. */
 struct HistExport {
-  char         hx_account[NICKLEN + 1];   /**< Whose. */
+  char         hx_account[ACCOUNTLEN + 1]; /**< Whose. */
   HistExportFn hx_cb;                     /**< Who to hand the pages to. */
   void*        hx_user;                   /**< What to hand them with. */
   char         hx_time[40];               /**< Last row of the page before. */
@@ -845,8 +845,8 @@ static void hist_export_done(const struct DbResult* res, void* user)
   struct HistExport* hx = (struct HistExport*) user;
   struct HistExportRow* rows;
   struct HistCell* cells;
-  char from[NICKLEN + 1];
-  char to[NICKLEN + 1];
+  char from[ACCOUNTLEN + 1];
+  char to[ACCOUNTLEN + 1];
   unsigned int count;
   unsigned int i;
   int last;

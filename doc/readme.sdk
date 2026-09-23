@@ -90,8 +90,9 @@ THE CONNECTION, AND HOW MANY OF THEM
     client.connect();
 
 Registration is CAP first, SASL before CAP END, and the client waits for
-903 before ending negotiation because the server sends it at once for
-exactly that reason (doc/readme.sasl).
+903 before ending negotiation: the exchange is relayed to the network's
+services and CAP END is what lets registration finish
+(doc/readme.accounting).
 
 In a browser that connection belongs in a worker:
 
@@ -123,20 +124,21 @@ regular-expression syntax -- and folded with the server's casemapping,
 where [ ] \ are the capitals of { } |.
 
 
-AN ACCOUNT IS A NICKNAME
-========================
+AN ACCOUNT IS NOT A NICKNAME
+===========================
 
-Modelled the way proposal 007 defines it, which means there is no
-`account` field anywhere in this SDK.  A `User` has `identified` (umode
-+r: this person proved the nickname they are wearing) and `frozen` (umode
-+f: they have not, yet, and the clock is running).  An SDK that carried
-an account name beside the nickname would be modelling a server that does
-not exist, and every consumer would have to decide which of the two to
-show.
+The network's services keep the accounts; the nickname is what somebody
+happens to be wearing.  So a `User` has both: `account` (the name they
+are logged in to, when `identified` is true) and `nick`, and a nick
+change leaves the account exactly where it was.  `frozen` (umode +f) is
+the services holding somebody still while they work out whether the
+nickname is theirs.
 
-So: the authcid in a PLAIN credential is the **address**, the authzid is
-**which of that address's nicknames** is being claimed, and what comes
-back is the nickname.
+An account reaches this SDK three ways, and all three land in the same
+field: `+r <account>` in a MODE, `ACCOUNT <account>` (account-notify),
+and the account parameter of a JOIN (extended-join).  Both capabilities
+are in `WANTED_CAPS`; without them an account is only ever learnt by
+asking, which this SDK does not do for you.
 
 
 TESTS

@@ -205,12 +205,6 @@ msgctxt "306"
 msgid ":You have been marked as being away"
 msgstr ":Has sido marcado como ausente"
 
-#: ircd/s_err.c:659
-#, no-c-format
-msgctxt "307"
-msgid "%s :is a registered user"
-msgstr "%s :es un usuario registrado"
-
 #: ircd/s_err.c:671
 #, no-c-format
 msgctxt "313"
@@ -847,23 +841,11 @@ msgctxt "690"
 msgid "%s %s :can speak these languages."
 msgstr "%s %s :habla estos idiomas."
 
-#: ircd/s_err.c:1427
-#, no-c-format
-msgctxt "691"
-msgid "%s %s :is the address this account belongs to"
-msgstr "%s %s :es la dirección a la que pertenece esta cuenta"
-
 #: ircd/s_err.c:1429
 #, no-c-format
 msgctxt "692"
 msgid "%s :must identify to this nickname before doing anything else"
 msgstr "%s :tiene que identificarse a este nick antes de hacer nada más"
-
-#: ircd/s_err.c:1845
-#, no-c-format
-msgctxt "900"
-msgid "%s %s :You are now logged in as %s"
-msgstr "%s %s :Has iniciado sesión como %s"
 
 #: ircd/s_err.c:1847
 #, no-c-format
@@ -883,12 +865,6 @@ msgctxt "903"
 msgid ":SASL authentication successful"
 msgstr ":Autenticación SASL correcta"
 
-#: ircd/s_err.c:1853
-#, no-c-format
-msgctxt "904"
-msgid ":SASL authentication failed"
-msgstr ":La autenticación SASL ha fallado"
-
 #: ircd/s_err.c:1855
 #, no-c-format
 msgctxt "905"
@@ -907,12 +883,6 @@ msgctxt "907"
 msgid ":You have already authenticated using SASL"
 msgstr ":Ya te has autenticado con SASL"
 
-#: ircd/s_err.c:1861
-#, no-c-format
-msgctxt "908"
-msgid "%s :are the available SASL mechanisms"
-msgstr "%s :son los mecanismos SASL disponibles"
-
 #: ircd/s_err.c:2007
 #, no-c-format
 msgctxt "981"
@@ -924,30 +894,6 @@ msgstr "%u :Has indicado demasiados idiomas."
 msgctxt "982"
 msgid "%s :Languages are not supported by this server."
 msgstr "%s :Este servidor no dispone de esos idiomas."
-
-#: ircd/s_err.c:2011
-#, no-c-format
-msgctxt "983"
-msgid ":Authentication failed: %s"
-msgstr ":La autenticación ha fallado: %s"
-
-#: ircd/s_err.c:2013
-#, no-c-format
-msgctxt "984"
-msgid "%s %s :%s"
-msgstr "%s %s :%s"
-
-#: ircd/s_err.c:2015
-#, no-c-format
-msgctxt "985"
-msgid ":End of ACCOUNT LIST"
-msgstr ":Fin de ACCOUNT LIST"
-
-#: ircd/s_err.c:2017
-#, no-c-format
-msgctxt "986"
-msgid ":You have not authenticated to an account"
-msgstr ":No te has autenticado a ninguna cuenta"
 
 #: ircd/s_err.c:2019
 #, no-c-format
@@ -1054,11 +1000,6 @@ msgstr "%C :El nick %s no está en tu servidor"
 msgid "%C :Highest connection count: %d (%d clients)"
 msgstr "%C :Máximo de conexiones: %d (%d clientes)"
 
-#: ircd/m_module.c:59
-#, no-c-format
-msgid ":Module %s (%s %s, ABI %u): modules/%s -- %s [loaded by %s]"
-msgstr ":Módulo %s (%s %s, ABI %u): modules/%s -- %s [cargado por %s]"
-
 #: ircd/m_module.c:66
 #, no-c-format
 msgid ":%u module%s loaded"
@@ -1088,21 +1029,6 @@ msgstr "%C :No hay ningún módulo cargado llamado %s"
 #, no-c-format
 msgid "%C :%s is not a version; migrations are numbered v1, v2 and so on"
 msgstr "%C :%s no es una versión; las migraciones se numeran v1, v2 y así sucesivamente"
-
-#: ircd/m_module.c:244
-#, no-c-format
-msgid "%C :Could not load %s: %s"
-msgstr "%C :No se ha podido cargar %s: %s"
-
-#: ircd/m_module.c:264 ircd/m_module.c:288
-#, no-c-format
-msgid "%C :Could not unload %s"
-msgstr "%C :No se ha podido descargar %s"
-
-#: ircd/m_module.c:298
-#, no-c-format
-msgid "%C :Unloaded %s but could not load it again: %s"
-msgstr "%C :%s se ha descargado pero no se ha podido volver a cargar: %s"
 
 #: ircd/m_module.c:316
 #, no-c-format
@@ -1193,11 +1119,6 @@ msgstr "%C :El módulo %s no tiene v%u; declara de v1 a v%u"
 #, no-c-format
 msgid "%C :A migration of %s is already running; wait for it"
 msgstr "%C :Ya hay una migración de %s en marcha; espera a que termine"
-
-#: ircd/motd.c:337
-#, no-c-format
-msgid ":Type /MOTD to read the AUP before continuing using this service."
-msgstr ":Escribe /MOTD para leer las normas de uso antes de seguir usando este servicio."
 
 #: ircd/motd.c:339
 #, no-c-format
@@ -1356,97 +1277,20 @@ msgstr "%C :UPING: No se ha podido iniciar el ping a %s"
 msgid "%s :Registration is being checked, try again in a moment"
 msgstr "%s :Se está comprobando el registro, inténtalo dentro de un momento"
 
-#: ircd/m_account.c:139
+#: ircd/s_err.c:705
 #, no-c-format
-msgid "in use, default"
-msgstr "en uso, por defecto"
+msgctxt "330"
+msgid "%s %s :is logged in as"
+msgstr "%s %s :ha iniciado sesión como"
 
-#: ircd/m_account.c:140
+#: ircd/s_err.c:1843
 #, no-c-format
-msgid "in use"
-msgstr "en uso"
+msgctxt "900"
+msgid "%s!%s@%s %s :You are now logged in as %s"
+msgstr "%s!%s@%s %s :Has iniciado sesión como %s"
 
-#: ircd/m_account.c:141
+#: ircd/s_err.c:1859
 #, no-c-format
-msgid "default"
-msgstr "por defecto"
-
-#: ircd/m_account.c:142
-#, no-c-format
-msgid "available"
-msgstr "disponible"
-
-#: ircd/m_account.c:170
-#, no-c-format
-msgid "that is not an address"
-msgstr "eso no es una dirección"
-
-#: ircd/m_account.c:174
-#, no-c-format
-msgid "that password is too long"
-msgstr "esa contraseña es demasiado larga"
-
-#: ircd/m_account.c:198
-#, no-c-format
-msgid "another login is already under way"
-msgstr "ya hay otra identificación en curso"
-
-#: ircd/m_account.c:202
-#, no-c-format
-msgid "you have already authenticated"
-msgstr "ya te has autenticado"
-
-#: ircd/m_account.c:206
-#, no-c-format
-msgid "too many failed attempts on this connection"
-msgstr "demasiados intentos fallidos en esta conexión"
-
-#: ircd/m_account.c:210
-#, no-c-format
-msgid "this server will not take a password over an unencrypted connection"
-msgstr "este servidor no acepta contraseñas por una conexión sin cifrar"
-
-#: ircd/account.c:156
-#, no-c-format
-msgid "authentication succeeded"
-msgstr "autenticación correcta"
-
-#: ircd/account.c:157
-#, no-c-format
-msgid "no such account, or the password is wrong"
-msgstr "no existe esa cuenta, o la contraseña no es correcta"
-
-#: ircd/account.c:158
-#, no-c-format
-msgid "that identity has no such account"
-msgstr "esa identidad no tiene esa cuenta"
-
-#: ircd/account.c:159
-#, no-c-format
-msgid "that account is suspended"
-msgstr "esa cuenta está suspendida"
-
-#: ircd/account.c:160
-#, no-c-format
-msgid "somebody else is using that nickname"
-msgstr "otra persona está usando ese nick"
-
-#: ircd/account.c:161
-#, no-c-format
-msgid "the identity service is not available"
-msgstr "el servicio de identidad no está disponible"
-
-#: ircd/account.c:162
-#, no-c-format
-msgid "the identity service did not answer in time"
-msgstr "el servicio de identidad no ha respondido a tiempo"
-
-#: ircd/account.c:166
-#, no-c-format
-msgid "that nickname is registered already"
-msgstr "ese nick ya está registrado"
-
-#: ircd/account.c:167
-#, no-c-format
-msgid "that address already holds as many accounts as it may"
-msgstr "esa dirección ya tiene todas las cuentas que puede tener"
+msgctxt "908"
+msgid "%s :are available SASL mechanisms"
+msgstr "%s :son los mecanismos SASL disponibles"

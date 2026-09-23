@@ -345,9 +345,9 @@ static void hist_answer(int ok, const struct HistRow* rows,
 
 /** Work out who the two ends of a conversation are.
  *
- * An account is a nickname, so the other end is the nickname the client
- * named; there is nothing to look up and the person does not have to be
- * online for their side of the conversation to be readable.
+ * The other end is named by its account, which is what the rows are
+ * filed under; there is nothing to look up and the person does not have
+ * to be online for their side of the conversation to be readable.
  *
  * @param[in] sptr Who asked.
  * @param[in] target The nickname they named.

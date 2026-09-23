@@ -42,6 +42,7 @@
 #include "numeric.h"
 #include "numnicks.h"
 #include "querycmds.h"
+#include "s_debug.h"
 #include "s_misc.h"
 #include "s_user.h"
 #include "send.h"

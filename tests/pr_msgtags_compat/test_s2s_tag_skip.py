@@ -34,8 +34,8 @@ async def services(ircd_network):
 
 
 async def test_tagged_user_mode_applied(ircd_network, services):
-    """A server MODE (+r for another user) with a leading @tag section must
-    still be applied."""
+    """A server MODE (+r with the account name, for another user) with a
+    leading @tag section must still be applied."""
     hub = ircd_network["hub"]
 
     user = IRCClient()
@@ -49,14 +49,15 @@ async def test_tagged_user_mode_applied(ircd_network, services):
     try:
         await services.wait_for_user("mtagacct")
         await services._send(
-            f"@msgid=compat1;label=x {services._num} M mtagacct :+r"
+            f"@msgid=compat1;label=x {services._num} M mtagacct +r mtagacctname"
         )
         await asyncio.sleep(0.3)
 
         await observer.send("WHOIS mtagacct")
         whois = await observer.collect_until("318", timeout=5.0)
-        reg_lines = [m for m in whois if m.command == "307"]
-        assert reg_lines, f"expected 307 registered line, got: {whois}"
+        acct = [m for m in whois if m.command == "330"]
+        assert acct, f"expected 330 account line, got: {whois}"
+        assert acct[0].params[2] == "mtagacctname", acct[0].raw
     finally:
         for c in (user, observer):
             try:

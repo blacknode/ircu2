@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS file (
   -- from a client in any other shape: an identifier that could be a path
   -- is a path.
   id           text        PRIMARY KEY,
-  -- The account that uploaded it, which is a nickname (proposal 007).
+  -- The account that uploaded it, as the network's services named it.
   -- The only durable handle on a person there is: a bare nickname would
   -- file somebody's uploads under whoever wears the name next week.
   account      text        NOT NULL,

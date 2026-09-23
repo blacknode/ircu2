@@ -905,8 +905,40 @@ void sendjointo_channel_butserv(struct Client *from, struct Channel *chptr,
 				int require,
 				int forbid)
 {
-  sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
-    0, require, forbid, "%H", chptr);
+  struct MsgBuf *plain;
+  struct MsgBuf *extended;
+  struct Membership *member;
+  struct TagSendCache tcache;
+
+  /* One JOIN, two bodies: a client that asked for extended-join gets the
+   * account and the real name on the line, everybody else gets the JOIN
+   * they have always got.  The two cannot be one call, because the
+   * recipient decides which it is -- and they cannot be two calls to the
+   * capflag sender either, since that takes one capability each way and
+   * this needs the caller's require/forbid as well as extended-join.
+   */
+  plain = msgq_make(0, "%:#C %s %H", from, MSG_JOIN, chptr);
+  extended = msgq_make(0, "%:#C %s %H %s :%s", from, MSG_JOIN, chptr,
+                       IsAccount(from) ? cli_account(from) : "*",
+                       cli_info(from));
+
+  tagsendcache_init_cmd(&tcache, TOK_JOIN);
+
+  for (member = chptr->members; member; member = member->next_member) {
+    if (!MyConnect(member->user)
+        || IsZombie(member)
+        || (require != CAP_NONE && !CapHas(cli_active(member->user), require))
+        || (forbid != CAP_NONE && CapHas(cli_active(member->user), forbid)))
+      continue;
+
+    send_buffer(member->user, from,
+                CapHas(cli_active(member->user), E_CAP_EXTJOIN) ? extended
+                                                                : plain,
+                0, NULL, &tcache);
+  }
+
+  msgq_clean(extended);
+  msgq_clean(plain);
 }
 
 /* Send JOIN to a single user.
@@ -918,7 +950,11 @@ void sendjointo_one(struct Client *from,
 		    struct Channel *chptr,
 		    struct Client *one)
 {
-  sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
+  if (CapHas(cli_active(one), E_CAP_EXTJOIN))
+    sendcmdto_one(from, CMD_JOIN, one, "%H %s :%s", chptr,
+                  IsAccount(from) ? cli_account(from) : "*", cli_info(from));
+  else
+    sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
 }
 
 /** Send a (prefixed) command to all local users on a channel.

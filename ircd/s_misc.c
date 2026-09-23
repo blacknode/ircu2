@@ -28,7 +28,6 @@
 
 #include "s_misc.h"
 #include "IPcheck.h"
-#include "account.h"
 #include "batch.h"
 #include "bot.h"
 #include "channel.h"
@@ -45,6 +44,7 @@
 #include "ircd_string.h"
 #include "list.h"
 #include "match.h"
+#include "module_sync.h"
 #include "msg.h"
 #include "numeric.h"
 #include "numnicks.h"
@@ -192,6 +192,12 @@ static void exit_one_client(struct Client* bcptr, const char* comment)
   struct SLink *lp;
   struct Ban *bp;
 
+  /* Before anything else touches it: a transaction waiting on this
+   * server has to stop waiting while the pointer is still good.
+   */
+  if (IsServer(bcptr))
+    modsync_server_gone(bcptr);
+
   if (cli_serv(bcptr) && cli_serv(bcptr)->client_list)  /* Was SetServerYXX called ? */
     ClearServerYXX(bcptr);      /* Removes server from server_list[] */
 
@@ -266,6 +272,11 @@ static void exit_one_client(struct Client* bcptr, const char* comment)
     else
       Count_remoteserverquits(UserStats);
 
+    /* The services may have been behind that link: whether SASL is on
+     * offer depends on their being reachable, so the capability is
+     * re-checked and CAP DEL goes out if they are gone.
+     */
+    sasl_check_capability();
   }
   else if (IsMe(bcptr))
   {
@@ -405,13 +416,14 @@ int exit_client(struct Client *cptr,
    * exit_client() for a client already exiting.
    */
   hook_pending_cancel(victim);
-  /* And a question the identity provider has not answered: the same
-   * reasoning, and the same reason not to answer it -- there is nobody
-   * left for the answer to be about.
+  /* And the SASL exchange this connection had with the services: there
+   * is nobody left for the answer to be about.
    */
-  account_client_exiting(victim);
-  /* And the SASL exchange, which holds a password until it is wiped. */
-  sasl_client_exiting(victim);
+  if (cli_sasl(victim)) {
+    sasl_stop_timeout(victim);
+    sasl_session_remove(cli_sasl(victim));
+    cli_sasl(victim) = 0;
+  }
 
   if (MyConnect(victim))
   {

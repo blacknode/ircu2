@@ -228,7 +228,8 @@ IRCv3 capabilities:
 
  message-tags, server-time, batch, labeled-response, echo-message,
  away-notify, chghost, invite-notify, userhost-in-names,
- standard-replies, sasl, draft/multiline, draft/multiline-concat,
+ standard-replies, sasl, account-notify, extended-join,
+ cap-notify, draft/multiline, draft/multiline-concat,
  draft/languages, draft/chathistory, draft/read-marker,
  draft/message-redaction, blacknode/richtext, blacknode/search,
  blacknode/message-edit
@@ -240,11 +241,13 @@ IRCv3 capabilities:
  module is loaded and withdrawn with CAP DEL when it is not, so what a
  server offers is what it can actually answer.
 
-Identity: AUTHENTICATE, ACCOUNT
- An account *is* a nickname; umode +r means "identified to the nickname
- in use", and there are no account names to keep beside it.  ACCOUNT
- LOGIN/LOGOUT/LIST/VERIFY is the same thing for a client that does not
- speak IRCv3.  See doc/readme.accounting and doc/readme.sasl.
+Identity: AUTHENTICATE
+ Umode +r means the user is logged in to an account, and the account is
+ whatever the network's services said it is: they send ACCOUNT (token
+ AC) from a U:lined server, or +r with the name in a NICK burst.  This
+ server keeps no passwords and decides nothing; AUTHENTICATE is relayed
+ to the services server as an XQUERY (doc/readme.xquery) and the answer
+ comes back as an XREPLY.  See doc/readme.accounting.
 
  Additional Numerics:
   RPL_LOGGEDIN          900
@@ -256,14 +259,8 @@ Identity: AUTHENTICATE, ACCOUNT
   ERR_SASLABORTED       906
   ERR_SASLALREADY       907
   RPL_SASLMECHS         908
-  ERR_ACCOUNTFAIL       983
-  RPL_ACCOUNTLIST       984
-  RPL_ENDOFACCOUNTLIST  985
-  ERR_NOTAUTHENTICATED  986
   ERR_FROZEN            987
-  RPL_VERIFYSENT        988
-  RPL_VERIFIED          989
-  RPL_WHOISEMAIL        691   (to that user alone, never to an operator)
+  RPL_WHOISACCOUNT      330
   RPL_WHOISFROZEN       692
 
 History: CHATHISTORY, SEARCH, EDIT, REDACT, MARKREAD

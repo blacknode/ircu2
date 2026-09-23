@@ -227,8 +227,8 @@ async def test_silenced_sender_still_dropped_after_unset_R_invite(make_client):
 async def test_authenticated_sender_allowed(make_client, ulined_server):
     """A sender identified to its nick (+r, IsAccount() true) bypasses +R.
 
-    +r is granted here the way a services server does it: a MODE for the
-    user on the server's own authority (doc/readme.accounting).
+    The account is granted here the way the network's services grant one:
+    an ACCOUNT from a U:lined server (doc/readme.accounting).
     """
     target = await make_client("tgt33e")
     await target.set_umode("+R")

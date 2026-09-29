@@ -1295,7 +1295,8 @@ static int do_user_mode(struct Client *cptr, struct Client *sptr,
    * that claims otherwise is not believed either -- a bot may identify
    * users, not op them.
    */
-  if (!IsServer(cptr) || (IsServiceBot(sptr) && sptr != acptr))
+  if (!IsServer(cptr) || (IsServiceBot(sptr) && sptr != acptr
+                           && !is_network_service(cptr, sptr)))
   {
     if (!WasOper(setflags) && IsOper(acptr))
       ClearOper(acptr);
@@ -1498,14 +1499,41 @@ int set_user_mode_on(struct Client *cptr, struct Client *sptr,
 
   if (!IsUser(acptr) || parc < 3)
     return 0;
-  /* A server, this server itself, or a service bot on a non-operator.
-   * IsMe() is the core's own hand and is not reachable by anything that
-   * arrives on a socket.
+  /* A server, this server itself, a network service (on anybody), or
+   * any other service bot on a non-operator.  IsMe() is the core's own
+   * hand and is not reachable by anything that arrives on a socket.
    */
-  if (!IsServer(sptr) && !IsMe(sptr)
+  if (!IsServer(sptr) && !IsMe(sptr) && !is_network_service(cptr, sptr)
       && !(IsServiceBot(sptr) && !IsAnOper(acptr)))
     return 0;
   return do_user_mode(cptr, sptr, acptr, parc, parv, ALLOWMODES_ANY);
+}
+
+/** Whether \a sptr is one of the network's services: a +S client whose
+ * server is U:lined.  Such a client acts with its server's authority --
+ * on a channel it neither has to be on nor be an operator of, and on a
+ * user whatever that user's modes -- so the services can act as the
+ * pseudo-client a user talked to (ChanServ, NickServ) rather than as a
+ * server.  The U:line is what makes it believable: +S alone is set by
+ * whichever server introduced the client.  A service bot this server
+ * introduced (a module's) is not one, unless this server is U:lined on
+ * every other: the others would refuse what it did and the network would
+ * disagree about it.
+ * @param[in] cptr Link the command arrived on.
+ * @param[in] sptr Source of the command.
+ * @return Non-zero if \a sptr is a network service.
+ */
+int is_network_service(struct Client *cptr, struct Client *sptr)
+{
+  struct Client *server;
+
+  if (!IsUser(sptr) || !IsServiceBot(sptr) || !cli_user(sptr)->server)
+    return 0;
+  server = cli_user(sptr)->server;
+  /* Prefer UWorld attached to the originator (works across multi-hop
+   * relays); fall back to the immediate uplink for direct links. */
+  return find_conf_byhost(cli_confs(server), cli_name(server), CONF_UWORLD)
+      || find_conf_byhost(cli_confs(cptr), cli_name(server), CONF_UWORLD);
 }
 
 /** Build a mode string to describe modes for \a cptr.

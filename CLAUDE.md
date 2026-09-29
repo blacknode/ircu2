@@ -108,10 +108,10 @@ program on a link of its own, U:lined -- keep the accounts and say who is
 logged in to what; this server records it and passes it on.
 `cli_user()->account` is the name (`ACCOUNTLEN` = 12), with `acc_id` and
 `acc_flags` beside it, and `IsAccount()` tests umode `+r`. It arrives two
-ways and only two: **`ACCOUNT` (token `AC`) from a U:lined server**
-(`ircd/m_account.c`, which checks the `Uworld{}` block against the
-originator *and* the uplink, sets the flag, lifts `+f`, fans out
-account-notify and relays on), or **`+r <account>[:<id>[:<flags>]]` in a
+ways and only two: **`ACCOUNT` (token `AC`) from a U:lined server** or
+one of its network services (`ircd/m_account.c`, which checks the
+`Uworld{}` block against the originator *and* the uplink, sets the flag,
+lifts `+f`, fans out account-notify and relays on), or **`+r <account>[:<id>[:<flags>]]` in a
 NICK burst** (`do_user_mode()` reads it, `umode_str()` writes it).
 **There is no `-r`** -- the case acts on `UMODE_ADD` alone, because this
 server cannot take away what it did not give -- and **a nick change keeps
@@ -128,7 +128,13 @@ account never changes the host** -- upstream rewrote it to
 `<account>.<HIDDEN_HOST>` on login and this does not, so logging in
 changes what a user IS called and never what it LOOKS like. **No `SVS*`
 commands**: a command that is one network's policy goes through the
-module API.
+module API. **A network service** — a `+S` client whose server is
+U:lined (`is_network_service()` in `s_user.c`) — acts with its server's
+authority: its channel `MODE` and `KICK` apply on a channel it is not on
+or has no status on, with no HACK and no bounce, and its `MODE` on a user
+applies to anybody, opers included. That is what lets the services act
+as ChanServ on a channel and NickServ on a user rather than as a server.
+A module's own bot is not one: the other servers would refuse it.
 
 **SASL is relayed, never answered** (`include/sasl.h`, `ircd/sasl.c`,
 `ircd/m_sasl.c`, `ircd/m_xreply.c`). One exchange per connection, keyed

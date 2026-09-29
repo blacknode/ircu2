@@ -91,6 +91,7 @@
 #include "msg.h"
 #include "numeric.h"
 #include "numnicks.h"
+#include "s_user.h"
 #include "send.h"
 #include "ircd_features.h"
 
@@ -232,9 +233,11 @@ int ms_kick(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
 
   /* Unless someone accepted it downstream (or the user isn't on the channel
    * here), if kicker is not on channel, or if kicker is not a channel
-   * operator, bounce the kick
+   * operator, bounce the kick -- unless the kicker is one of the network's
+   * services, which need to be neither.
    */
-  if (!IsServer(sptr) && member && cli_from(who) != cptr &&
+  if (!IsServer(sptr) && !is_network_service(cptr, sptr) && member &&
+      cli_from(who) != cptr &&
       (!(sptr_link = find_member_link(chptr, sptr)) || !IsChanOp(sptr_link))) {
     sendto_opmask_butone(0, SNO_HACK2, "HACK: %C KICK %H %C %s", sptr, chptr,
 			 who, comment);

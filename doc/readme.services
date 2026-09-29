@@ -106,7 +106,9 @@ may set on itself: +o, +O, +k, +S, +B, +z and -x are dropped from the
 string.  The rule is enforced on every server the change passes
 through, so a peer that claims a bot did more is not believed.
 doc/readme.accounting has the detail, including who may set +r and +f
-and why a bot this server created is not among them.
+and why a bot this server created is not among them.  A +S client of a
+U:lined server -- the services node's ChanServ, NickServ -- is not held
+to any of this: see NETWORK SERVICES there.
 
 
 PSEUDO{}

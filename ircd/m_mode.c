@@ -194,11 +194,13 @@ ms_mode(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
     else if (sptr == acptr)
       return set_user_mode(cptr, sptr, parc, parv, ALLOWMODES_ANY);
 
-    /* Somebody else's modes.  A server may change anyone's, a service
-     * bot anyone's but an operator's (doc/readme.accounting); a MODE for
-     * another user from anything else is a peer misbehaving.
+    /* Somebody else's modes.  A server or a network service may change
+     * anyone's, any other service bot anyone's but an operator's
+     * (doc/readme.accounting); a MODE for another user from anything
+     * else is a peer misbehaving.
      */
-    if (IsServer(sptr) || (IsServiceBot(sptr) && !IsAnOper(acptr)))
+    if (IsServer(sptr) || is_network_service(cptr, sptr)
+        || (IsServiceBot(sptr) && !IsAnOper(acptr)))
       return set_user_mode_on(cptr, sptr, acptr, parc, parv);
 
     sendwallto_group_butone(&me, WALL_WALLOPS, 0,
@@ -235,6 +237,17 @@ ms_mode(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
 		MODE_PARSE_STRICT | /* Interpret it strictly */
 		MODE_PARSE_FORCE),  /* And force it to be accepted */
 	        NULL);
+  } else if (is_network_service(cptr, sptr)) {
+    /* One of the network's services (ChanServ): what it sets is set,
+     * whether it is on the channel or not, and it is nobody's hack. */
+    modebuf_init(&mbuf, sptr, cptr, chptr,
+		 (MODEBUF_DEST_CHANNEL | /* Send mode to clients */
+		  MODEBUF_DEST_SERVER)); /* Send mode to servers */
+    mode_parse(&mbuf, cptr, sptr, chptr, parc - 2, parv + 2,
+	       (MODE_PARSE_SET    | /* Set the mode */
+		MODE_PARSE_STRICT | /* Interpret it strictly */
+		MODE_PARSE_FORCE),  /* And force it to be accepted */
+		NULL);              /* With a server's authority */
   } else {
     if (!(member = find_member_link(chptr, sptr)) || !IsChanOp(member)) {
       modebuf_init(&mbuf, sptr, cptr, chptr,

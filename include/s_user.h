@@ -91,6 +91,7 @@ extern int set_user_mode(struct Client *cptr, struct Client *sptr,
                          int parc, char *parv[], int allow_modes);
 extern int set_user_mode_on(struct Client *cptr, struct Client *sptr,
                             struct Client *acptr, int parc, char *parv[]);
+extern int is_network_service(struct Client *cptr, struct Client *sptr);
 extern int is_silenced(struct Client *sptr, struct Client *acptr);
 extern int hunt_server_cmd(struct Client *from, const char *cmd,
 			   const char *tok, struct Client *one,

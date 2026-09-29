@@ -9,8 +9,10 @@ every user carries.  The model is described in doc/readme.accounting.
   in a NICK burst; the ircd records it, sets +r and passes it on.  There
   is no ``-r``: this server cannot take away what it did not give.
 * WHOIS shows 330 "is logged in as" with the account name.
-* A service bot (+S) may change another user's modes, but not an
-  operator's, and not the modes only a server may set.
+* A service bot (+S) of a U:lined server is a network service: it acts
+  with its server's authority, so it may change anybody's modes -- an
+  operator's included -- set channel modes and kick on a channel it is
+  not on, and send ACCOUNT.  A remote user without +S may do none of it.
 """
 
 import asyncio
@@ -408,7 +410,7 @@ async def test_service_bot_sets_modes_on_another_user(ircd_network, services):
         await _quit(user)
 
 
-async def test_service_bot_cannot_touch_an_operator(ircd_network, services):
+async def test_network_service_may_change_an_operator(ircd_network, services):
     hub = ircd_network["hub"]
     oper, _ = await _connect(hub, "acc21op")
     await oper.send("OPER testoper operpass")
@@ -421,27 +423,107 @@ async def test_service_bot_cannot_touch_an_operator(ircd_network, services):
         bot = await services.introduce_user("acc21bot", modes="+oikS")
         await services.wait_for_user("acc21op")
         await services.send_user_mode("acc21op", "+d", from_numnick=bot)
-        await oper.assert_no_message("MODE", timeout=1.5)
-        assert "d" not in await _umodes(oper)
+        msg = await _wait_mode(oper, "d", "+")
+        assert msg.prefix and msg.prefix.startswith("acc21bot!"), msg.raw
+        assert "d" in await _umodes(oper)
     finally:
         await _quit(oper)
 
 
-async def test_service_bot_cannot_grant_server_only_modes(ircd_network, services):
-    """+o, +k, +S, +B and -x are dropped; the rest of the string applies."""
+async def test_network_service_is_not_held_to_the_user_rules(ircd_network,
+                                                             services):
+    """What a user may not set on itself (+k here) a network service may,
+    exactly as its server could."""
     hub = ircd_network["hub"]
     user, _ = await _connect(hub, "acc22")
     try:
         bot = await services.introduce_user("acc22bot", modes="+oikS")
         await services.wait_for_user("acc22")
-        await services.send_user_mode("acc22", "+okSBd-x", from_numnick=bot)
+        await services.send_user_mode("acc22", "+kd", from_numnick=bot)
         await _wait_mode(user, "d", "+")
         modes = await _umodes(user)
-        assert "d" in modes and "x" in modes, modes
-        for letter in "okSB":
-            assert letter not in modes, modes
+        assert "d" in modes and "k" in modes, modes
     finally:
         await _quit(user)
+
+
+async def test_network_service_acts_on_a_channel_it_is_not_on(ircd_network,
+                                                              services):
+    """ChanServ need not be on a channel, nor an operator of it: its MODE
+    is applied as it sent it and its KICK is not bounced."""
+    hub = ircd_network["hub"]
+    user, _ = await _connect(hub, "acc25")
+    try:
+        await user.send("JOIN #acc25")
+        await user.wait_for("366", timeout=5.0)
+        await user.drain()
+        bot = await services.introduce_user("acc25bot", modes="+oikS")
+        num = await services.wait_for_user("acc25")
+
+        await services._send(f"{bot} M #acc25 +mv {num}")
+        msg = await user.wait_for("MODE", timeout=5.0)
+        assert msg.prefix and msg.prefix.startswith("acc25bot!"), msg.raw
+        assert msg.params[1] == "+mv", msg.raw
+        await user.send("MODE #acc25")
+        msg = await user.wait_for("324", timeout=5.0)
+        assert "m" in msg.params[2], msg.raw
+
+        await services._send(f"{bot} K #acc25 {num} :acc25 bye")
+        msg = await user.wait_for("KICK", timeout=5.0)
+        assert msg.prefix and msg.prefix.startswith("acc25bot!"), msg.raw
+        assert msg.params[1] == "acc25", msg.raw
+        await user.assert_no_message("JOIN", timeout=1.5)
+    finally:
+        await _quit(user)
+
+
+async def test_plain_remote_user_mode_on_a_channel_is_bounced(ircd_network,
+                                                             services):
+    """Without +S the same MODE from the same server is not applied."""
+    hub = ircd_network["hub"]
+    user, _ = await _connect(hub, "acc26")
+    try:
+        await user.send("JOIN #acc26")
+        await user.wait_for("366", timeout=5.0)
+        await user.drain()
+        other = await services.introduce_user("acc26x", modes="+i")
+        await services.wait_for_user("acc26")
+        await services._send(f"{other} M #acc26 +m")
+        await user.assert_no_message("MODE", timeout=1.5)
+        await user.send("MODE #acc26")
+        msg = await user.wait_for("324", timeout=5.0)
+        assert "m" not in msg.params[2], msg.raw
+    finally:
+        await _quit(user)
+
+
+async def test_network_service_sends_account(ircd_network, services):
+    """NickServ logs a user in itself: ACCOUNT from a network service."""
+    hub = ircd_network["hub"]
+    user, _ = await _connect(hub, "acc27")
+    observer, _ = await _connect(hub, "acc27o")
+    try:
+        bot = await services.introduce_user("acc27bot", modes="+oikS")
+        num = await services.wait_for_user("acc27")
+        await services._send(f"{bot} AC {num} acc27acct")
+        await asyncio.sleep(0.3)
+        assert _account_in(await _whois(observer, "acc27")) == "acc27acct"
+    finally:
+        await _quit(user, observer)
+
+
+async def test_plain_remote_user_cannot_send_account(ircd_network, services):
+    hub = ircd_network["hub"]
+    user, _ = await _connect(hub, "acc28")
+    observer, _ = await _connect(hub, "acc28o")
+    try:
+        other = await services.introduce_user("acc28x", modes="+i")
+        num = await services.wait_for_user("acc28")
+        await services._send(f"{other} AC {num} acc28acct")
+        await asyncio.sleep(0.3)
+        assert _account_in(await _whois(observer, "acc28")) is None
+    finally:
+        await _quit(user, observer)
 
 
 async def test_plain_remote_user_cannot_set_modes_on_others(ircd_network, services):

@@ -118,15 +118,17 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
   if (parc < 3)
     return need_more_params(sptr, "ACCOUNT");
 
-  if (!IsServer(sptr))
-    return protocol_violation(cptr, "ACCOUNT from non-server %s",
-			      cli_name(sptr));
-
-  /* Prefer UWorld attached to the originator (works across multi-hop
-   * relays); fall back to the immediate uplink for direct links. */
-  if (!(conf = find_conf_byhost(cli_confs(sptr), cli_name(sptr), CONF_UWORLD)) &&
-      !(conf = find_conf_byhost(cli_confs(cptr), cli_name(sptr), CONF_UWORLD)))
-    return protocol_violation(cptr, "ACCOUNT from non U:lined server %s", cli_name(sptr)); /* Ignore ACCOUNT from non U:lined servers. */
+  /* From the services server itself, or from one of its services
+   * (NickServ) acting with its authority. */
+  if (IsServer(sptr)) {
+    /* Prefer UWorld attached to the originator (works across multi-hop
+     * relays); fall back to the immediate uplink for direct links. */
+    if (!(conf = find_conf_byhost(cli_confs(sptr), cli_name(sptr), CONF_UWORLD)) &&
+        !(conf = find_conf_byhost(cli_confs(cptr), cli_name(sptr), CONF_UWORLD)))
+      return protocol_violation(cptr, "ACCOUNT from non U:lined server %s", cli_name(sptr)); /* Ignore ACCOUNT from non U:lined servers. */
+  } else if (!is_network_service(cptr, sptr))
+    return protocol_violation(cptr, "ACCOUNT from %s, neither a server nor a "
+			      "network service", cli_name(sptr));
 
   if (!(acptr = findNUser(parv[1])))
     return 0; /* Ignore ACCOUNT for a user that QUIT; probably crossed */

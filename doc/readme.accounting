@@ -159,8 +159,10 @@ There are two ways an account reaches a server.
 
     ircd/m_account.c.  Only a U:lined server may send it -- a Uworld{}
     block naming the source, checked against the originator and then
-    against the uplink, so a multi-hop relay works -- and anything else
-    is reported in WALLOPS as a protocol violation and dropped.  The
+    against the uplink, so a multi-hop relay works -- or one of that
+    server's network services (see NETWORK SERVICES below), such as
+    NickServ; anything else is reported in WALLOPS as a protocol
+    violation and dropped.  The
     server records the name, sets +r, clears +f if it was set (see
     below), tells the client's common channels through account-notify,
     and relays the line on.
@@ -253,7 +255,9 @@ where the account database, the passwords, the nickname policy and the
 service bots live.  From this server's side the whole interface is:
 
   - ACCOUNT (AC), to say who a user is;
-  - MODE, to set +f or -f and whatever else a +S bot may set;
+  - MODE, to set +f or -f and anything else on a user, and any channel
+    mode on any channel;
+  - KICK, TOPIC, INVITE on any channel;
   - XQUERY / XREPLY (doc/readme.xquery), for anything that needs an
     answer -- SASL among them;
   - the ordinary things any server does: KILL, NICK, PRIVMSG.
@@ -310,6 +314,27 @@ trusts another about the users it introduces.
 
 A remote +S bot is one a NICK burst introduced with S among its modes;
 only a server puts +S on a user, as before.
+
+
+NETWORK SERVICES
+================
+
+A +S client whose server is U:lined (is_network_service() in
+ircd/s_user.c) is one of the network's services, and acts with its
+server's authority.  That is what lets the services node act as the
+pseudo-client a user talked to -- ChanServ on a channel, NickServ on a
+user -- instead of as a server:
+
+  - a channel MODE or KICK from it is applied, on a channel it is not on
+    or has no status on, with no HACK notice and no bounce;
+  - a MODE on another user is applied whatever that user's modes, opers
+    included, and is not held to the rule above;
+  - it may send ACCOUNT.
+
+The U:line is what makes +S believable here: +S alone only says which
+server introduced the client.  A bot this server introduced (a module's)
+is not a network service unless this server is itself U:lined on every
+other one, because the others would refuse what it did.
 
 
 WHAT A CLIENT SEES
